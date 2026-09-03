@@ -12,6 +12,8 @@
   --peach-ink: #bf504b;
   --gold-ink: #7d5b2c;
   --line: rgba(215, 117, 112, .55);
+  /* trái tim dùng cho mark ngày cưới — mask nên co giãn theo ô, không cần kích thước cứng */
+  --heart-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 88'%3E%3Cpath d='M50 88C18 64 2 46 2 28 2 12 14 2 27 2c9 0 18 5 23 13 5-8 14-13 23-13 13 0 25 10 25 26 0 18-16 36-48 60z'/%3E%3C/svg%3E");
   --serif: "Cormorant Garamond", Georgia, serif;
   --script: "Dancing Script", cursive;
   --sans: "Be Vietnam Pro", sans-serif;
@@ -129,6 +131,30 @@ a { color: inherit; }
 .cover-content > *:nth-child(3) { animation-delay: .57s; }
 .cover-content > *:nth-child(4) { animation-delay: .68s; }
 .cover-content > *:nth-child(5) { animation-delay: .79s; }
+/* trang cá nhân hoá chèn thêm dòng tên khách → có 6 phần tử */
+.cover-content > *:nth-child(6) { animation-delay: .90s; }
+
+/* Tên người nhận (chỉ có trên link riêng của từng khách) */
+/* Serif thường thay vì uppercase: tên tiếng Việt có dấu khi viết hoa vừa rộng
+   vừa khó đọc, tên dài sẽ đội bìa lên 3 dòng ở màn 320px. */
+.guest-cover {
+  max-width: 26ch;
+  margin: .3rem 0 .1rem;
+  color: var(--ink-soft);
+  font-family: var(--serif);
+  font-size: clamp(.95rem, 3.4vw, 1.08rem);
+  line-height: 1.4;
+  text-wrap: balance;
+}
+.guest-cover b { color: var(--peach-ink); font-weight: 500; }
+.guest-hero {
+  margin: -.4rem 0 1.6rem;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: clamp(1.35rem, 4.6vw, 1.9rem);
+  font-weight: 500;
+  letter-spacing: .01em;
+}
 .cover-date { margin: 1rem 0 1.5rem; font-size: .78rem; letter-spacing: .2em; }
 .open-button {
   min-height: 48px;
@@ -197,10 +223,12 @@ body.opened .site {
   transform-origin: 0 50%;
   pointer-events: none;
 }
-.nav-brand { font-family: var(--serif); font-size: 1.25rem; text-decoration: none; }
+/* min-height 44px: vùng chạm tối thiểu theo iOS HIG — trước đó link nav chỉ cao 20px */
+/* gap thay cho khoảng trắng: flex container bỏ qua text node trắng giữa các item */
+.nav-brand { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; font-family: var(--serif); font-size: 1.25rem; text-decoration: none; }
 .nav-brand span { color: var(--peach); }
 .nav nav { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.6rem); }
-.nav nav a { font-size: .75rem; font-weight: 500; letter-spacing: .1em; text-decoration: none; text-transform: uppercase; }
+.nav nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: .75rem; font-weight: 500; letter-spacing: .1em; text-decoration: none; text-transform: uppercase; }
 .nav-rsvp { border: 1px solid var(--peach-ink); border-radius: 999px; padding: .5rem 1rem; color: var(--peach-ink); }
 
 .hero {
@@ -234,7 +262,7 @@ body.opened .site {
 .couple-name + .couple-family { margin-top: .1rem; }
 .couple-heart { display: block; margin: -.25rem 0; color: var(--peach); font-family: var(--serif); font-size: 2rem; line-height: 1.6; }
 .hero .honor { margin-top: 2.25rem; }
-.text-link { display: inline-flex; align-items: center; gap: .75rem; color: var(--peach-ink); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
+.text-link { display: inline-flex; align-items: center; min-height: 44px; gap: .75rem; color: var(--peach-ink); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
 .text-link span { font-size: 1.1rem; }
 .hero-flower { position: absolute; z-index: 1; pointer-events: none; }
 .hero-flower--left { width: min(560px, 48vw); left: -10%; top: 5%; transform: translate3d(0, var(--parallax-left, 0), 0) rotate(6deg); transition: transform .12s linear; animation: flora-breathe 7s ease-in-out infinite alternate; }
@@ -270,10 +298,15 @@ body.opened .site {
 .count-grid span { font-size: .75rem; letter-spacing: .13em; text-transform: uppercase; }
 
 .details { padding: clamp(5rem, 11vw, 9rem) 1.25rem; background: #efe7de; }
-.details-grid { display: grid; grid-template-columns: minmax(320px, .86fr) 1.14fr; gap: clamp(3rem, 8vw, 8rem); align-items: center; }
+/* sàn 380px: dưới mức này card lễ cưới không đủ rộng để giữ tỉ lệ 12:17
+   ở dải 821–900px ngay sau breakpoint desktop. */
+.details-grid { display: grid; grid-template-columns: minmax(380px, .86fr) 1.14fr; gap: clamp(3rem, 8vw, 8rem); align-items: center; }
 .printed-card {
   position: relative;
   display: grid;
+  /* Track cố định: nếu để cột `auto`, spacer ::before có aspect-ratio sẽ suy ngược
+     chiều rộng từ chiều cao và kéo cột rộng hơn card → nội dung bị overflow cắt. */
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
   border: 1px solid var(--peach);
@@ -349,11 +382,28 @@ body.opened .site {
 .weekday { margin-bottom: .7rem; color: var(--ink-soft); font-size: .75rem; letter-spacing: .06em; }
 .dates { row-gap: .48rem; }
 .dates span, .dates i { position: relative; min-height: 40px; display: grid; place-items: center; font-family: var(--serif); font-size: 1rem; font-style: normal; }
-.wedding-day { color: #fff; }
-.wedding-day::before { content: ""; position: absolute; z-index: -1; width: 36px; height: 36px; border-radius: 50%; background: var(--peach-ink); }
-.wedding-day b { position: absolute; top: -18px; right: 0; color: var(--peach-ink); font-family: var(--serif); font-size: 1.25rem; }
+.wedding-day { color: #fff; font-weight: 500; }
+/* Mark ngày cưới là trái tim, kích thước bám theo ô lịch nên không tràn ở màn nhỏ.
+   translate lệch -42% (thay vì -50%) để số 4 nằm đúng phần đầy của trái tim. */
+.wedding-day::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 50%;
+  /* bám theo ô để không tràn ở màn nhỏ, nhưng có trần để không phình ở ô rộng */
+  width: min(92%, 2.4em);
+  aspect-ratio: 100 / 88;
+  translate: -50% -46%;
+  background: var(--peach-ink);
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+}
+/* Trình duyệt không hỗ trợ mask thì quay lại hình tròn thay vì ra khối vuông. */
+@supports not ((-webkit-mask-image: url("")) or (mask-image: url(""))) {
+  .wedding-day::before { width: 82%; aspect-ratio: 1; border-radius: 50%; translate: -50% -50%; }
+}
 .month-card.visible .wedding-day::before { animation: date-heartbeat 2.1s ease-in-out infinite; }
-.month-card.visible .wedding-day b { animation: tiny-heart 2.1s .12s ease-in-out infinite; }
 
 .rsvp { padding: clamp(5rem, 11vw, 9rem) 1.25rem; background: #f2ddd5; }
 .rsvp-grid { display: grid; grid-template-columns: .82fr 1.18fr; gap: clamp(3rem, 8vw, 7rem); align-items: start; }
@@ -447,10 +497,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   86% { transform: scale(1.03); }
   93% { transform: scale(1.1); }
 }
-@keyframes tiny-heart {
-  0%, 70%, 100% { transform: translateY(0); }
-  80% { transform: translateY(-4px); }
-}
 @keyframes success-in {
   from { opacity: 0; transform: translateY(16px) scale(.98); }
   to { opacity: 1; transform: none; }
@@ -496,6 +542,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   #rsvp-form { grid-template-columns: 1fr; }
   #rsvp-form label { grid-column: 1 / -1; }
   footer { flex-direction: column; text-align: center; }
+}
+
+@media (max-width: 360px) {
+  /* Nới chỗ cho tên khách dài (có thể xuống 3 dòng) trên màn hẹp nhất:
+     bìa giữ tỉ lệ 12:17 cố định nên phải bớt khoảng trắng, không nới cao được. */
+  .cover-content { padding: 2rem 1.1rem; }
+  .cover-content .kicker { margin: .8rem 0 .35rem; }
+  .cover-date { margin: .7rem 0 1rem; }
+  .guest-cover { font-size: .92rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

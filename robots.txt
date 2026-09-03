@@ -1,0 +1,4 @@
+User-agent: *
+# Link riêng của từng khách có kèm tên người nhận — không cho lập chỉ mục.
+Disallow: /t/
+Allow: /

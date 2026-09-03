@@ -1,0 +1,16 @@
+{
+  "name": "Khắc Doãn & Đông Tiên — 04.10.2026",
+  "short_name": "KD ♡ ĐT",
+  "description": "Thiệp cưới Khắc Doãn & Đông Tiên — Chủ nhật 04.10.2026.",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffaf3",
+  "theme_color": "#fffaf3",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

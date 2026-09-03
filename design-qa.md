@@ -133,7 +133,48 @@ Khi có endpoint, chỉ cần gán `wedding.rsvp.endpoint = 'https://...'` — p
 
 ---
 
-## 6. Chạy lại QA
+## 6. Vòng 2 — mark lịch, brand asset, thiệp cá nhân hoá
+
+### 6.1. Lỗi responsive phát hiện thêm
+
+| Mức | Vấn đề | Trước | Sau |
+|---|---|---|---|
+| P1 | Nội dung trong card lễ cưới **bị cắt ngang**. Spacer `::before` có `aspect-ratio` nằm trong cột grid `auto` nên trình duyệt suy ngược chiều rộng từ chiều cao, đẩy cột lên 375px trong khi card chỉ 280–350px. `overflow:hidden` cắt phần thừa, `body{overflow-x:hidden}` che luôn dấu vết. | `.event-body` rộng 375px ở cả 320/360/390 | `grid-template-columns: minmax(0,1fr)` → khớp đúng bề rộng card |
+| P2 | Tỉ lệ 12:17 vỡ ở dải 821–900px (card bị ép về sàn 320px ngay sau breakpoint desktop) | ratio 0.59 @834px | sàn cột 380px → 0.707 |
+| P2 | Vùng chạm nhỏ hơn khuyến nghị iOS | link nav cao 20px, `.text-link` 30px, `.nav-brand` 34px | tất cả ≥ 44px |
+| P3 | Mark ngày cưới là hình tròn **36px cố định** → tràn ra khỏi ô lịch trên màn nhỏ (ô chỉ ~33px ở 320px) | tràn | trái tim `min(92%, 2.4em)`, co theo ô |
+
+Sau khi sửa: **0 issue** trên 13 bề rộng (320 → 1920px), cả trang chung lẫn trang khách. Tỉ lệ card 12:17 giữ đúng **0.707 từ 414px trở lên**; dưới mức đó card cao hơn tỉ lệ để không cắt nội dung (xem §3.2).
+
+### 6.2. Mark ngày cưới
+
+Đổi từ hình tròn sang trái tim, dùng `mask-image` (SVG data URI) nên đổi màu bằng `background` và co giãn theo ô. Số 4 lệch `translate: -50% -46%` để nằm đúng phần đầy của trái tim — Cormorant dùng oldstyle figures nên chữ số không cân giữa như font thường. Có `@supports` fallback về hình tròn nếu trình duyệt không hỗ trợ mask. Bỏ trái tim nhỏ phía trên vì đã thừa.
+
+### 6.3. Brand asset
+
+Chữ được convert thành path từ Cormorant Garamond (weight 500) nên **không phụ thuộc webfont**. Sinh lại bằng `tools/build-brand.py` + `tools/render-icons.sh` (xem `tools/README.md`).
+
+- `logo.svg` — monogram KD ♡ ĐT vector
+- `favicon.svg` / `favicon.ico` (16/32/48) — bản nhỏ **bỏ viền vàng**, vì ở 16px viền chỉ còn ~0.4px và bị khử răng cưa thành vệt xám
+- `apple-touch-icon.png` (180), `icon-192/512.png`, `icon-maskable-512.png` — bản lớn giữ viền
+- `og-image.png` (1200×630) — render từ `tools/og-source.html`, dùng chính font và hoa của thiệp
+
+### 6.4. Thiệp cá nhân hoá theo khách
+
+Trước đây nằm trong "ngoài phạm vi" (§13 HANDOFF), nay đã triển khai.
+
+- `guests.csv` là nguồn duy nhất. `tools/guests.py assign` sinh mã ngẫu nhiên 6 ký tự, `links` in ra danh sách URL để dán vào danh sách gửi.
+- Trang riêng sinh **trong Docker build stage** → repo không chứa hàng trăm file HTML gần giống nhau, và không có file nào liệt kê toàn bộ danh sách khách.
+- Link: `doantien.love/t/<mã>/`. Tên khách nằm sẵn trong HTML (không cần JS) nên `og:title` / `og:description` khi share qua Zalo/Messenger hiện đúng tên người nhận.
+- Tên hiện ở 3 chỗ: dòng "Thân mời" trên bìa, dưới "Trân trọng kính mời" ở phần lời mời, và điền sẵn ô RSVP. Payload RSVP kèm `guestCode` để biết chính xác ai phản hồi.
+- Mã sai → rơi về thiệp chung thay vì 404.
+- `noindex, nofollow` ở cả thẻ meta lẫn header, cộng `robots.txt` chặn `/t/` — không để tên khách lọt lên Google.
+
+**Kiểm chứng:** tên dài nhất thử nghiệm ("Gia đình Ông Bà Nguyễn Hoàng Phương Thảo Anh", 45 ký tự) xuống 3 dòng ở 320px vẫn nằm gọn trong bìa 12:17 sau khi siết khoảng trắng ở breakpoint ≤360px. Dòng tên trên bìa dùng serif thường thay vì in hoa — tiếng Việt có dấu viết hoa vừa rộng vừa khó đọc.
+
+> Lưu ý vận hành: sửa `guests.csv` xong phải deploy lại thì link mới có hiệu lực. Đừng sửa `code` của khách đã gửi link — link cũ sẽ hỏng.
+
+## 7. Chạy lại QA
 
 ```bash
 python3 -m http.server 4321      # phục vụ tĩnh từ thư mục dự án

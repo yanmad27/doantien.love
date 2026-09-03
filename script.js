@@ -221,13 +221,26 @@ function validate() {
   return !firstInvalid
 }
 
+/* Trang riêng của từng khách (/t/<mã>) gắn sẵn data-guest-* lên <body>.
+   Trang chung không có thuộc tính này nên guest.name rỗng. */
+const guest = {
+  name: document.body.dataset.guestName || '',
+  code: document.body.dataset.guestCode || '',
+}
+
+if (guest.name && !form.elements.name.value) {
+  form.elements.name.value = guest.name
+}
+
 function buildPayload() {
-  return {
+  const payload = {
     name: form.elements.name.value.trim(),
     attendance: form.elements.attendance.value,
     guests: Number(form.elements.guests.value),
     message: form.elements.message.value.trim(),
   }
+  if (guest.code) payload.guestCode = guest.code
+  return payload
 }
 
 function sendRsvp(payload) {

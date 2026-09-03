@@ -1,0 +1,15 @@
+code,title,name
+# Danh sách khách mời — nguồn duy nhất sinh ra link riêng cho từng người.
+#
+#   code  : mã trong URL (doantien.love/t/<code>). ĐỂ TRỐNG khi thêm khách mới,
+#           chạy `python3 tools/guests.py assign` để tự sinh mã ngẫu nhiên.
+#           Mã đã có thì ĐỪNG sửa — sửa là link đã gửi đi sẽ hỏng.
+#   title : xưng hô — Anh / Chị / Cô / Chú / Bác / Bạn / Gia đình / Anh chị...
+#           để trống nếu không cần.
+#   name  : tên hiển thị trên thiệp.
+#
+# Xem toàn bộ link để dán vào danh sách gửi:  python3 tools/guests.py links
+# Dòng bắt đầu bằng # sẽ bị bỏ qua.
+k7m2qx,Anh,Nguyễn Văn Nam
+p4d9tz,Chị,Trần Thu Hà
+w8x3vb,Gia đình,Cô Lê Thị Lan

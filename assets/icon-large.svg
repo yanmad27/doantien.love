@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Thiệp cưới Khắc Doãn và Đông Tiên">
+  <title>Khắc Doãn &amp; Đông Tiên</title>
+  <rect width="64" height="64" fill="#fffaf3"/>
+  <rect x="2.5" y="2.5" width="59" height="59" fill="none" stroke="#aa8356" stroke-opacity=".55" stroke-width="1.5"/>
+  <g transform="translate(9.00 12.76) scale(0.46)" fill="#bf504b">
+    <path d="M50 88 C18 64 2 46 2 28 C2 12 14 2 27 2 C36 2 45 7 50 15 C55 7 64 2 73 2 C86 2 98 12 98 28 C98 46 82 64 50 88 Z"/>
+  </g>
+</svg>
