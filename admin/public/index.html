@@ -38,10 +38,17 @@
       <h2>Thêm khách</h2>
       <form id="add-form" class="row">
         <label class="grow-1">Xưng hô
-          <input name="title" placeholder="Anh / Chị / Gia đình" list="titles">
+          <input name="title" placeholder="Anh / Chị / Gia đình anh..." list="titles">
+          <!-- "Gia đình" đứng một mình rồi ghép thẳng tên đọc không thuận
+               ("Gia đình Lê Thị Lan"), nên gợi ý sẵn dạng ghép đầy đủ. -->
           <datalist id="titles">
-            <option>Anh</option><option>Chị</option><option>Cô</option><option>Chú</option>
-            <option>Bác</option><option>Bạn</option><option>Gia đình</option><option>Anh chị</option>
+            <option>Anh</option><option>Chị</option><option>Em</option><option>Bạn</option>
+            <option>Cô</option><option>Chú</option><option>Bác</option>
+            <option>Ông</option><option>Bà</option><option>Thầy</option>
+            <option>Anh chị</option><option>Cô chú</option><option>Ông bà</option>
+            <option>Gia đình anh</option><option>Gia đình chị</option><option>Gia đình bạn</option>
+            <option>Gia đình cô</option><option>Gia đình chú</option><option>Gia đình bác</option>
+            <option>Gia đình ông bà</option><option>Gia đình anh chị</option>
           </datalist>
         </label>
         <label class="grow-2">Họ và tên
@@ -56,7 +63,7 @@
       <details class="bulk">
         <summary>Thêm nhiều cùng lúc</summary>
         <p class="muted">Mỗi dòng một khách. Có thể ghi <code>Anh, Nguyễn Văn Nam</code> hoặc chỉ <code>Nguyễn Văn Nam</code>.</p>
-        <textarea id="bulk-text" rows="6" placeholder="Anh, Nguyễn Văn Nam&#10;Chị, Trần Thu Hà&#10;Gia đình, Cô Lê Thị Lan"></textarea>
+        <textarea id="bulk-text" rows="6" placeholder="Anh, Nguyễn Văn Nam&#10;Chị, Trần Thu Hà&#10;Gia đình cô, Lê Thị Lan"></textarea>
         <button class="btn" id="bulk-add" type="button">Thêm hàng loạt</button>
       </details>
     </section>
