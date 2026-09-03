@@ -100,7 +100,7 @@ function render() {
   const rsvps = [...state.rsvps].reverse()
   $('#rsvp-count').textContent = `(${rsvps.length})`
   $('#rsvps-empty').hidden = rsvps.length > 0
-  $('#rsvps tbody').innerHTML = rsvps.map((r) => `<tr>
+  $('#rsvps tbody').innerHTML = rsvps.map((r) => `<tr data-id="${esc(r.id)}">
     <td>${new Date(r.at).toLocaleString('vi-VN')}</td>
     <td>${esc(r.name)}</td>
     <td>${r.attendance === 'yes'
@@ -108,6 +108,7 @@ function render() {
       : '<span class="pill pill-no">không</span>'}</td>
     <td>${esc(r.guests)}</td>
     <td>${esc(r.message)}</td>
+    <td><div class="actions"><button class="btn-mini btn-del" data-act="del-rsvp">Xoá</button></div></td>
   </tr>`).join('')
 }
 
@@ -217,6 +218,21 @@ $('#guests').addEventListener('click', async (e) => {
     await refresh()
     toast('Đã xoá')
   }
+})
+
+$('#rsvps').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-act="del-rsvp"]')
+  if (!button) return
+  const id = button.closest('tr').dataset.id
+  const rsvp = state.rsvps.find((r) => r.id === id)
+  if (!rsvp) return
+  const note = rsvp.message ? `\n\nLời nhắn sẽ mất: "${rsvp.message}"` : ''
+  if (!window.confirm(`Xoá phản hồi của "${rsvp.name}"?${note}`)) return
+  try {
+    await api(`/api/rsvps/${id}`, { method: 'DELETE' })
+    await refresh()
+    toast('Đã xoá phản hồi')
+  } catch (err) { toast(err.message) }
 })
 
 $('#export').addEventListener('click', () => {

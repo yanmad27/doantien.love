@@ -382,6 +382,15 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { added: added.length, guests: added })
       }
 
+      const rsvpMatch = p.match(/^\/api\/rsvps\/([0-9a-fA-F-]{36})$/)
+      if (rsvpMatch && req.method === 'DELETE') {
+        const before = db.rsvps.length
+        db.rsvps = db.rsvps.filter((r) => r.id !== rsvpMatch[1])
+        if (db.rsvps.length === before) return json(res, 404, { error: 'Không tìm thấy phản hồi' })
+        await saveDb()
+        return json(res, 200, { ok: true })
+      }
+
       const editMatch = p.match(/^\/api\/guests\/([a-z0-9]{4,16})$/)
       if (editMatch) {
         const code = editMatch[1]
