@@ -356,10 +356,8 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .lunar-date { margin: 0; color: var(--ink-soft); font-size: .75rem; }
 .card-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1.3rem; }
 
-/* Menu chọn loại lịch.
-   position: fixed vì .printed-card có overflow:hidden — menu absolute sẽ bị cắt.
-   Toạ độ do JS tính từ vị trí nút; cuộn trang thì đóng menu. */
-.save-date-wrap { position: relative; display: inline-flex; }
+/* Menu chọn loại lịch. Nằm ở cấp <body> (xem index.html) và position: fixed,
+   toạ độ do JS tính từ vị trí nút. */
 .save-menu {
   position: fixed;
   z-index: 60;
@@ -659,7 +657,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .event-body { padding: 2rem 1.5rem; }
   .event-lead { max-width: 245px; }
   .card-actions { flex-direction: column; }
-  .save-date-wrap { width: 100%; }
   .button { width: 100%; }
   .month-card { padding: 1.4rem 1rem; }
   .dates span, .dates i { min-height: 36px; }

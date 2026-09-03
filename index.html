@@ -111,14 +111,8 @@
               <p class="lunar-date">Nhằm ngày <span data-w="ceremony.lunarDate">24 tháng 08 năm Bính Ngọ</span></p>
               <div class="card-actions">
                 <a class="button" data-w-href="ceremony.mapsUrl" href="https://maps.app.goo.gl/YupybswuAHtPZ6ZY7" target="_blank" rel="noopener noreferrer">Xem bản đồ</a>
-                <div class="save-date-wrap">
-                  <button class="button button--outline save-date" type="button"
-                          aria-haspopup="menu" aria-expanded="false" aria-controls="save-menu">Lưu ngày cưới</button>
-                  <div class="save-menu" id="save-menu" role="menu" hidden>
-                    <a class="save-menu-item" role="menuitem" id="save-google" href="#" target="_blank" rel="noopener noreferrer">Google Calendar</a>
-                    <button class="save-menu-item" role="menuitem" id="save-ics" type="button">Apple Calendar / Outlook</button>
-                  </div>
-                </div>
+                <button class="button button--outline save-date" type="button"
+                        aria-haspopup="menu" aria-expanded="false" aria-controls="save-menu">Lưu ngày cưới</button>
               </div>
             </div>
           </article>
@@ -205,6 +199,13 @@
           <p class="closing-date" data-w="ceremony.dateDottedShort">04.10.2026</p>
         </div>
       </section>
+      <!-- Đặt ở cuối <main>, ngoài mọi phần tử có overflow:hidden: Safari iOS
+           vẫn để tổ tiên overflow:hidden cắt phần tử position:fixed. Nằm trong
+           <main> để không rơi ra ngoài landmark. -->
+      <div class="save-menu" id="save-menu" role="menu" hidden>
+        <a class="save-menu-item" role="menuitem" id="save-google" href="#" target="_blank" rel="noopener noreferrer">Google Calendar</a>
+        <button class="save-menu-item" role="menuitem" id="save-ics" type="button">Apple Calendar / Outlook</button>
+      </div>
     </main>
 
     <footer>
