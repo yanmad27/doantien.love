@@ -146,6 +146,7 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 |---|---|
 | `public/assets/floral-cluster.webp` | Cụm hoa lớn ở cover, hero và calendar |
 | `public/assets/floral-branch.webp` | Nhánh hoa dọc ở cover, card và closing |
+| `public/assets/nhac-cuoi.mp3` | Nhạc nền, phát khi bấm "Mở thiệp". Tuỳ chọn — thiếu file thì thiệp tự bỏ qua phần nhạc |
 
 Yêu cầu asset:
 
@@ -203,7 +204,13 @@ Khi `prefers-reduced-motion: reduce`:
 - Trigger: click/tap nút `Mở thiệp`.
 - Xóa trạng thái khóa scroll.
 - Ẩn cover khỏi accessibility tree sau transition.
-- Không tự phát nhạc.
+- Bay tên cô dâu chú rể từ bìa về đúng vị trí trong trang (`flyCoverNamesIntoPlace`).
+- Phát nhạc nền `assets/nhac-cuoi.mp3` (loop). Chỉ phát từ chính cú bấm này —
+  trình duyệt chặn nhạc không do người dùng chủ động.
+- Vào nhạc bằng fade âm lượng 0 → 0.55 trong ~1.4s.
+- Nút bật/tắt nhạc ở góc dưới phải, chỉ hiện khi đọc được file nhạc.
+- Thiếu `assets/nhac-cuoi.mp3` thì bỏ qua nhạc và ẩn nút, thiệp vẫn chạy bình thường.
+- Lựa chọn tắt nhạc lưu trong `sessionStorage` (`kd-dt-music-muted`).
 
 ### Save the date
 
@@ -211,6 +218,11 @@ Khi `prefers-reduced-motion: reduce`:
 - Thời gian bắt đầu UTC: `20261004T050000Z`.
 - Thời gian kết thúc UTC: `20261004T080000Z`.
 - Tên file: `dam-cuoi-khac-doan-dong-tien.ics`.
+- Hai lời nhắc kèm trong `.ics` (`VALARM`): trước **7 ngày** (`TRIGGER:-P7D`) và
+  trước **1 ngày** (`-P1D`), đều rơi vào 12:00 giờ Việt Nam.
+- Lối "Google Calendar" **không** mang được lời nhắc: URL template của Google
+  không có tham số cho reminder, khách sẽ dùng mức nhắc mặc định của họ. Muốn có
+  đúng hai mốc trên thì phải chọn "Apple Calendar / Outlook" để tải `.ics`.
 
 ### Google Maps
 
@@ -321,7 +333,7 @@ Không hard-code nội dung vào nhiều section. Các section phải đọc t�
 
 - Trang quản trị danh sách khách mời.
 - Đăng nhập.
-- Phát nhạc tự động.
+- Phát nhạc tự động khi vừa vào trang (nhạc chỉ chạy sau khi bấm "Mở thiệp").
 - Album ảnh cưới.
 - Mừng cưới qua QR/chuyển khoản.
 - Chia sẻ thiệp cá nhân hóa theo từng khách.

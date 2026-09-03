@@ -29,7 +29,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Dancing+Script:wght@500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Dancing+Script:wght@500;600&family=Great+Vibes&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="is-closed">
@@ -40,10 +40,10 @@
       <img class="cover-flower cover-flower--top" src="./assets/floral-cluster.webp" alt="" aria-hidden="true">
       <img class="cover-flower cover-flower--bottom" src="./assets/floral-branch.webp" alt="" aria-hidden="true">
       <div class="cover-content">
-        <div class="monogram" role="img" aria-label="Khắc Doãn và Đông Tiên">KD<span aria-hidden="true">♡</span>ĐT</div>
+        <img class="monogram-mark monogram-mark--cover" src="./assets/heart-logo.webp" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
         <p class="kicker">Thiệp mời cưới</p>
         <!--GUEST_COVER-->
-        <p class="cover-title" id="cover-title"><span data-w="couple.groom.displayName">Khắc Doãn</span> <small>&</small> <span data-w="couple.bride.displayName">Đông Tiên</span></p>
+        <p class="cover-title" id="cover-title"><span data-w="couple.groom.displayName">Khắc Doãn</span> <small class="heart-mark" role="img" aria-label="và"></small> <span data-w="couple.bride.displayName">Đông Tiên</span></p>
         <p class="cover-date" data-w="ceremony.dateDotted">04 · 10 · 2026</p>
         <button class="open-button" id="open-invitation" type="button">Mở thiệp</button>
       </div>
@@ -53,10 +53,19 @@
 
   <div class="site" id="site" aria-hidden="true">
     <header class="nav" aria-label="Điều hướng chính">
-      <a class="nav-brand" href="#invitation">KD <span>♡</span> ĐT</a>
+      <a class="nav-brand" href="#invitation" aria-label="Khắc Doãn và Đông Tiên — về đầu thiệp">
+        <img class="monogram-mark monogram-mark--nav" src="./assets/heart-logo.webp" width="320" height="236" alt="">
+      </a>
       <nav>
         <a href="#details">Lễ cưới</a>
         <a href="#calendar">Ngày cưới</a>
+        <!-- Nút nhạc đặt trong nav: nền nav đặc nên icon luôn rõ, còn thả nổi ở
+             góc màn hình thì nó trôi trên nền hoa và chìm nghỉm. JS chỉ bỏ
+             [hidden] khi trình duyệt xác nhận đọc được file nhạc. -->
+        <button class="music-toggle" id="music-toggle" type="button" hidden
+                aria-pressed="false" aria-label="Tắt nhạc">
+          <span class="music-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        </button>
         <a class="nav-rsvp" href="#rsvp">Xác nhận</a>
       </nav>
       <span class="nav-progress" aria-hidden="true"></span>
@@ -64,10 +73,16 @@
 
     <main>
       <section class="hero" id="invitation" aria-labelledby="invitation-title">
-        <img class="hero-flower hero-flower--left" src="./assets/floral-cluster.webp" alt="" aria-hidden="true">
-        <img class="hero-flower hero-flower--right" src="./assets/floral-branch.webp" alt="" aria-hidden="true">
+        <!-- Ba mảnh rời cắt từ ảnh gốc, mỗi mảnh đặt ở đúng góc của nó và hiển thị
+             ở cỡ KHÔNG vượt quá kích thước thật (xem .hero-flower trong styles.css).
+             Trước đây dùng một tấm nền phủ cover cho cả hero nên ảnh bị phóng to
+             lên gần gấp rưỡi và nhòe. -->
+        <img class="hero-flower hero-flower--left" src="./assets/bloom-corner.webp" width="532" height="600" alt="" aria-hidden="true">
+        <img class="hero-flower hero-flower--right" src="./assets/bloom-side.webp" width="468" height="844" alt="" aria-hidden="true">
+        <img class="hero-wave" src="./assets/wave-blush.webp" width="788" height="424" alt="" aria-hidden="true">
         <div class="hero-frame" data-reveal data-stagger>
           <p class="overline">Trân trọng kính mời</p>
+          <span class="ornament" aria-hidden="true"></span>
           <!--GUEST_HERO-->
           <p class="hero-copy">Đến dự tiệc chung vui cùng gia đình chúng tôi<br>nhân ngày lễ cưới của</p>
           <h1 class="couple" id="invitation-title">
@@ -194,7 +209,7 @@
       <section class="closing">
         <img src="./assets/floral-branch.webp" alt="" aria-hidden="true">
         <div data-reveal data-stagger>
-          <p class="monogram">KD<span>♡</span>ĐT</p>
+          <img class="monogram-mark monogram-mark--closing" src="./assets/heart-logo.webp" width="320" height="236" alt="" aria-hidden="true">
           <h2 class="closing-title">Hẹn gặp bạn!</h2>
           <p class="closing-date" data-w="ceremony.dateDottedShort">04.10.2026</p>
         </div>
@@ -213,6 +228,11 @@
       <span data-w="ceremony.dateDotted">04 · 10 · 2026</span>
     </footer>
   </div>
+
+  <!-- Nhạc nền: chỉ chạy sau khi khách bấm "Mở thiệp" (trình duyệt chặn phát
+       nhạc không do người dùng chủ động). preload="none" để không tốn data của
+       khách nếu họ chưa mở thiệp. JS tự ẩn nút nếu thiếu file nhạc. -->
+  <audio id="wedding-music" src="./assets/nhac-cuoi.mp3" loop preload="none"></audio>
 
   <script type="module" src="./script.js"></script>
 </body>

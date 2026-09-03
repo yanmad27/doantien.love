@@ -142,7 +142,6 @@ function flyCoverNamesIntoPlace() {
       position: 'absolute',
       left: from.left + 'px',
       top: from.top + 'px',
-      transformOrigin: '0 0',
       whiteSpace: 'pre',
       fontFamily: cs.fontFamily,
       fontSize: cs.fontSize,
@@ -153,6 +152,21 @@ function flyCoverNamesIntoPlace() {
       color: cs.color,
     })
     layer.appendChild(clone)
+
+    /* Hộp element của bản sao KHÔNG trùng hộp chữ của nó: hộp element là hộp
+       dòng, tính cả half-leading, mà line-height ở đây nhỏ hơn 1 nên half-leading
+       âm và chữ tụt xuống cả chục px. Đặt left/top theo hộp chữ đo được ở nguồn
+       mà không bù phần lệch này thì chữ nhảy một phát ngay khi bấm, rồi nhảy lần
+       nữa lúc trao lại cho chữ thật. Đo hộp chữ của chính bản sao rồi bù. */
+    const box = clone.getBoundingClientRect()
+    const own = rangeRect(clone)
+    const insetX = own.left - box.left
+    const insetY = own.top - box.top
+    clone.style.left = from.left - insetX + 'px'
+    clone.style.top = from.top - insetY + 'px'
+    // gốc scale đặt ngay tại góc hộp CHỮ, nhờ vậy translate bên dưới chỉ cần là
+    // khoảng cách giữa hai hộp chữ, không phải bù thêm phần lệch nhân theo scale
+    clone.style.transformOrigin = `${insetX}px ${insetY}px`
 
     // giấu chữ thật ở đích trong lúc bản sao đang bay, nếu không có hai chữ cùng lúc
     target.style.visibility = 'hidden'
@@ -177,6 +191,117 @@ function flyCoverNamesIntoPlace() {
   return true
 }
 
+/* ---------------------------------------------------------
+   Nhạc nền
+   --------------------------------------------------------- */
+
+const music = document.getElementById('wedding-music')
+const musicToggle = document.getElementById('music-toggle')
+const MUSIC_VOLUME = 0.55
+const MUSIC_MUTED_KEY = 'kd-dt-music-muted'
+
+/* Lựa chọn tắt nhạc của khách phải được tôn trọng khi họ mở lại thiệp trong
+   cùng phiên. sessionStorage bị chặn ở chế độ riêng tư trên một số máy nên
+   luôn bọc try/catch, hỏng chỗ này không được làm chết cả thiệp. */
+function readMuted() {
+  try {
+    return window.sessionStorage.getItem(MUSIC_MUTED_KEY) === '1'
+  } catch (error) {
+    return false
+  }
+}
+
+function writeMuted(value) {
+  try {
+    window.sessionStorage.setItem(MUSIC_MUTED_KEY, value ? '1' : '0')
+  } catch (error) {
+    /* không lưu được thì thôi, không ảnh hưởng phiên hiện tại */
+  }
+}
+
+function syncMusicToggle() {
+  if (!musicToggle) return
+  const playing = Boolean(music) && !music.paused
+  musicToggle.classList.toggle('is-muted', !playing)
+  musicToggle.setAttribute('aria-pressed', playing ? 'false' : 'true')
+  musicToggle.setAttribute('aria-label', playing ? 'Tắt nhạc' : 'Bật nhạc')
+}
+
+/* Vào nhạc bằng cách dâng dần âm lượng: đúng lúc bấm mở thiệp mà nhạc vào ngay
+   ở mức đầy thì giật mình, nhất là khi khách đang để loa to. */
+function fadeInMusic() {
+  if (!music) return
+  const steps = 24
+  let step = 0
+  const timer = window.setInterval(() => {
+    step += 1
+    music.volume = Math.min(MUSIC_VOLUME, (step / steps) * MUSIC_VOLUME)
+    if (step >= steps) window.clearInterval(timer)
+  }, 60)
+}
+
+function startMusic() {
+  if (!music || readMuted()) return
+  // Hạ volume TRƯỚC khi play() và dâng lên ngay, không chờ promise: promise của
+  // play() có thể resolve rất trễ (hoặc không) tuỳ trình duyệt/thiết bị âm thanh,
+  // mà chờ nó mới fade thì trong lúc chờ nhạc đã phát ở volume 1.0 — to hơn hẳn
+  // mức định và đúng vào lúc khách vừa bấm mở thiệp.
+  music.volume = 0
+  const attempt = music.play()
+  fadeInMusic()
+  // Phải bắt reject của play(), nếu không console đầy unhandled rejection.
+  // Nhưng KHÔNG được ẩn nút ở đây:
+  //  - khách bấm tắt nhạc trong lúc play() còn đang chờ thì chính pause() đó làm
+  //    promise reject bằng AbortError — ẩn nút là khách mất luôn đường bật lại;
+  //  - trình duyệt chặn (NotAllowedError) thì lại càng cần nút để bấm thủ công.
+  // Nút chỉ ẩn khi bản thân file nhạc hỏng/thiếu, xử lý ở sự kiện 'error' bên dưới.
+  if (attempt && typeof attempt.catch === 'function') {
+    attempt.catch(syncMusicToggle)
+  }
+}
+
+function hideMusicToggle() {
+  if (musicToggle) musicToggle.hidden = true
+}
+
+/* Gọi khi mở thiệp. Trường hợp khách đã tắt nhạc từ trước vẫn phải nạp metadata:
+   không nạp thì không biết file có tồn tại, nút sẽ không hiện và khách mất luôn
+   đường bật nhạc lại. */
+function prepareMusic() {
+  if (!music) return
+  music.preload = 'metadata'
+  if (readMuted()) {
+    music.load()
+    return
+  }
+  startMusic()
+}
+
+if (music && musicToggle) {
+  // Chỉ hiện nút khi trình duyệt xác nhận đọc được file: thiếu assets/nhac-cuoi.mp3
+  // thì thà không có nút, hơn là nút bấm mà không ra tiếng.
+  music.addEventListener('loadedmetadata', () => {
+    if (document.body.classList.contains('opened')) {
+      musicToggle.hidden = false
+      syncMusicToggle()
+    }
+  })
+  music.addEventListener('error', hideMusicToggle)
+  music.addEventListener('play', syncMusicToggle)
+  music.addEventListener('pause', syncMusicToggle)
+
+  musicToggle.addEventListener('click', () => {
+    if (music.paused) {
+      writeMuted(false)
+      startMusic()
+    } else {
+      music.pause()
+      writeMuted(true)
+    }
+    syncMusicToggle()
+  })
+}
+
 function rangeRect(element) {
   const range = document.createRange()
   range.selectNodeContents(element)
@@ -193,6 +318,9 @@ function openInvitation() {
   if (flyCoverNamesIntoPlace()) document.body.classList.add('names-flying')
   document.body.classList.add('opened')
   site.setAttribute('aria-hidden', 'false')
+  // Phải gọi ngay trong handler của click: trình duyệt chỉ cho phát nhạc khi
+  // lệnh play() nằm trong cùng cử chỉ của người dùng, đẩy vào setTimeout là bị chặn.
+  prepareMusic()
   // 950ms = lúc bìa đã tan hẳn (xem khối chuyển cảnh trong styles.css).
   // Nhả focus sớm hơn thì màn hình giật về nav lúc bìa còn đang mở dở.
   window.setTimeout(() => {
@@ -277,6 +405,25 @@ function foldIcsLine(line) {
   return chunks.join('\r\n ')
 }
 
+/* Nhắc trước 7 ngày và 1 ngày. Mỗi VALARM phải có UID + đúng thứ tự thuộc tính
+   để Apple Calendar chịu nhận; thiếu ACTION/DESCRIPTION là nó bỏ qua lời nhắc
+   mà vẫn nhập sự kiện bình thường, nên lỗi rất khó phát hiện. */
+const ICS_REMINDERS = [
+  { trigger: '-P7D', label: 'Còn 7 ngày nữa' },
+  { trigger: '-P1D', label: 'Ngày mai rồi!' },
+]
+
+function icsAlarms(title) {
+  return ICS_REMINDERS.flatMap(({ trigger, label }, i) => [
+    'BEGIN:VALARM',
+    `UID:nhac-${i}-khac-doan-dong-tien@doantien.love`,
+    `TRIGGER:${trigger}`,
+    'ACTION:DISPLAY',
+    `DESCRIPTION:${escapeIcs(`${label} — ${title}`)}`,
+    'END:VALARM',
+  ])
+}
+
 function saveDate() {
   const { venueName, venueRegion, venueAddress } = wedding.ceremony
   const location = [venueName, venueAddress, venueRegion].filter(Boolean).join(', ')
@@ -294,6 +441,7 @@ function saveDate() {
     `SUMMARY:${escapeIcs(title)}`,
     `LOCATION:${escapeIcs(location)}`,
     `DESCRIPTION:${escapeIcs(`Trân trọng mời bạn đến chung vui cùng ${wedding.couple.groom.displayName} và ${wedding.couple.bride.displayName}.`)}`,
+    ...icsAlarms(title),
     'END:VEVENT',
     'END:VCALENDAR',
   ]
@@ -521,9 +669,14 @@ const progressBar = document.querySelector('.nav-progress')
 // Ghi thẳng vào property translate/rotate (thay vì transform + custom property)
 // cho đồng bộ với cách các keyframes khác trong file này dùng translate/scale.
 // Đã đo: không đổi gì về số lần recalc style so với cách cũ.
+// baseRot phải là 0: bộ hoa cũ được cắt nghiêng nên cần xoay bù 6deg/-15deg,
+// bộ mới (bloom-corner/bloom-side) đã cắt thẳng — giữ số cũ là ảnh bị xoay lệch
+// ngay từ khung hình đầu.
 const parallaxLayers = [
-  { el: document.querySelector('.hero-flower--left'), rate: 0.055, min: 0, max: 42, baseRot: 6, rotAmp: 1.5 },
-  { el: document.querySelector('.hero-flower--right'), rate: -0.035, min: -32, max: 0, baseRot: -15, rotAmp: -2 },
+  { el: document.querySelector('.hero-flower--left'), rate: 0.11, min: 0, max: 90, baseRot: 0, rotAmp: 2.5 },
+  { el: document.querySelector('.hero-flower--right'), rate: -0.085, min: -72, max: 0, baseRot: 0, rotAmp: -3 },
+  // mây trôi chậm hơn hẳn để tạo chiều sâu, và không xoay (xoay dải nước nhìn giả)
+  { el: document.querySelector('.hero-wave'), rate: 0.045, min: 0, max: 40, baseRot: 0, rotAmp: 0 },
 ]
 const closingFlower = document.querySelector('.closing > img')
 
@@ -553,7 +706,11 @@ function paint() {
       eased[i] = target
     }
     layer.el.style.translate = `0 ${eased[i].toFixed(2)}px`
-    layer.el.style.rotate = `${(layer.baseRot + eased[i] / 42 * layer.rotAmp).toFixed(2)}deg`
+    // rotAmp 0 thì không ghi rotate: ghi "0deg" vẫn tạo thêm một thuộc tính phải
+    // hợp nhất mỗi khung hình, mà dải mây thì không cần xoay
+    if (layer.rotAmp) {
+      layer.el.style.rotate = `${(layer.baseRot + eased[i] / 42 * layer.rotAmp).toFixed(2)}deg`
+    }
   })
 
   if (closingFlower) {
