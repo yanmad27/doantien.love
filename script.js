@@ -12,9 +12,12 @@ const wedding = {
     venueShortName: 'Long Phụng',
     venueName: 'Nhà hàng Long Phụng',
     venueRegion: 'Khánh Hòa',
-    venueAddress: '',
-    // TODO: thay bằng URL địa điểm chính xác sau khi chủ thiệp xác nhận (HANDOFF §3)
-    mapsUrl: 'https://www.google.com/maps/search/?api=1&query=Nha+hang+Long+Phung+Khanh+Hoa',
+    // không kèm tỉnh ở đây — venueRegion đã có, .ics ghép cả ba trường lại
+    venueAddress: '1995 Hùng Vương, Cam Linh',
+    // Link chủ thiệp xác nhận, ghim đúng địa điểm:
+    // Trung Tâm Hội Nghị Tiệc Cưới Long Phụng, 1995 Hùng Vương, Cam Linh, Khánh Hòa
+    // ftid 0x3170ed28fcc611f5:0x4ed743a805f534da
+    mapsUrl: 'https://maps.app.goo.gl/YupybswuAHtPZ6ZY7',
   },
   rsvp: {
     deadline: '2026-09-24T23:59:59+07:00',

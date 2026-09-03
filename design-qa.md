@@ -110,8 +110,10 @@ Palette gốc ở HANDOFF §5 không đạt WCAG AA khi dùng cho chữ nhỏ:
 
 | Việc | Người quyết | Vị trí sửa |
 |---|---|---|
-| Địa chỉ đầy đủ nhà hàng | Chủ thiệp | `wedding.ceremony.venueAddress` |
-| URL Google Maps chính xác | Chủ thiệp | `wedding.ceremony.mapsUrl` |
+| ~~Địa chỉ đầy đủ nhà hàng~~ — đã có: 1995 Hùng Vương, Cam Linh, Khánh Hòa | ✅ 03.09.2026 | `wedding.ceremony.venueAddress` |
+| ~~URL Google Maps~~ — đã ghim đúng địa điểm | ✅ 03.09.2026 | `wedding.ceremony.mapsUrl` |
+| **Tên hiển thị của địa điểm.** Google ghi là "Trung Tâm Hội Nghị Tiệc Cưới Long Phụng", thiệp đang ghi "Nhà hàng Long Phụng". Chưa đổi vì tên chính thức dài hơn nhiều, sẽ ảnh hưởng bố cục card 12:17 | Chủ thiệp | `wedding.ceremony.venueName` |
+| **Có hiện địa chỉ đường trên card không.** Hiện card chỉ ghi "Nhà hàng Long Phụng / Khánh Hòa"; địa chỉ mới chỉ nằm trong file `.ics`. Khánh Hòa là tỉnh rộng, địa điểm thực ở Cam Ranh — khách dễ nhầm hướng Nha Trang | Chủ thiệp | `.venue` trong `index.html` |
 | Thông tin hai bên gia đình | Chủ thiệp | chưa có trong bản hiện tại |
 | Xác nhận giờ kết thúc tiệc (đang để 15:00) | Chủ thiệp | `wedding.ceremony.endAt` |
 | Endpoint nhận RSVP + chống spam / rate limit | Backend | `wedding.rsvp.endpoint` |
