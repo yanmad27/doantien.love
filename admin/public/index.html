@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Quản lý khách mời — Khắc Doãn &amp; Đông Tiên</title>
+<link rel="icon" href="https://doantien.love/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+
+<div id="login" class="gate" hidden>
+  <form id="login-form" class="card gate-card">
+    <h1>Quản lý khách mời</h1>
+    <p class="muted">Khắc Doãn &amp; Đông Tiên — 04.10.2026</p>
+    <label>Mật khẩu
+      <input type="password" name="password" autocomplete="current-password" required autofocus>
+    </label>
+    <button class="btn" type="submit">Đăng nhập</button>
+    <p class="error" id="login-error" role="alert"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <strong>Khách mời</strong>
+    <div class="topbar-actions">
+      <a class="btn btn-ghost" href="https://doantien.love" target="_blank" rel="noopener">Xem thiệp</a>
+      <button class="btn btn-ghost" id="logout" type="button">Đăng xuất</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats" id="stats"></section>
+
+    <section class="card">
+      <h2>Thêm khách</h2>
+      <form id="add-form" class="row">
+        <label class="grow-1">Xưng hô
+          <input name="title" placeholder="Anh / Chị / Gia đình" list="titles">
+          <datalist id="titles">
+            <option>Anh</option><option>Chị</option><option>Cô</option><option>Chú</option>
+            <option>Bác</option><option>Bạn</option><option>Gia đình</option><option>Anh chị</option>
+          </datalist>
+        </label>
+        <label class="grow-2">Họ và tên
+          <input name="name" placeholder="Nguyễn Văn Nam" required>
+        </label>
+        <label class="grow-2">Ghi chú
+          <input name="note" placeholder="bên nhà trai, bạn cấp 3...">
+        </label>
+        <button class="btn" type="submit">Thêm</button>
+      </form>
+
+      <details class="bulk">
+        <summary>Thêm nhiều cùng lúc</summary>
+        <p class="muted">Mỗi dòng một khách. Có thể ghi <code>Anh, Nguyễn Văn Nam</code> hoặc chỉ <code>Nguyễn Văn Nam</code>.</p>
+        <textarea id="bulk-text" rows="6" placeholder="Anh, Nguyễn Văn Nam&#10;Chị, Trần Thu Hà&#10;Gia đình, Cô Lê Thị Lan"></textarea>
+        <button class="btn" id="bulk-add" type="button">Thêm hàng loạt</button>
+      </details>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Danh sách <span class="muted" id="guest-count"></span></h2>
+        <div class="row-tight">
+          <input id="search" type="search" placeholder="Tìm tên...">
+          <button class="btn btn-ghost" id="export" type="button">Tải CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="guests">
+          <thead><tr><th>Khách</th><th>Link riêng</th><th>Phản hồi</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="guests-empty" hidden>Chưa có khách nào.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Phản hồi RSVP <span class="muted" id="rsvp-count"></span></h2>
+        <button class="btn btn-ghost" id="export-rsvp" type="button">Tải CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table id="rsvps">
+          <thead><tr><th>Thời điểm</th><th>Tên</th><th>Tham dự</th><th>Số người</th><th>Lời nhắn</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="rsvps-empty" hidden>Chưa có phản hồi nào.</p>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/admin.js" type="module"></script>
+</body>
+</html>

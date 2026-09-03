@@ -21,8 +21,8 @@ const wedding = {
   },
   rsvp: {
     deadline: '2026-09-24T23:59:59+07:00',
-    // Để null nếu chưa có backend: form sẽ chạy ở chế độ demo (HANDOFF §4.6)
-    endpoint: null,
+    // App quanly nhận và lưu phản hồi. Đặt null để quay lại chế độ demo.
+    endpoint: 'https://quanly.doantien.love/api/rsvp',
   },
 }
 

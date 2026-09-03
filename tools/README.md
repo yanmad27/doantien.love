@@ -2,6 +2,11 @@
 
 Script sinh brand asset. Không nằm trong Docker image (`Dockerfile` chỉ COPY file cần phục vụ).
 
+> **Danh sách khách giờ do app `admin/` quản lý**, lưu ở volume `/data/guests.json`.
+> `guests.csv` chỉ còn là danh sách nạp lần đầu, khi `/data/guests.json` chưa tồn tại.
+> `tools/guests.py build` không còn được dùng lúc deploy — thiệp riêng do app quanly
+> render tại runtime. Vẫn giữ `assign` / `links` để dùng offline khi cần.
+
 ## Sinh lại logo + icon
 
 ```bash
