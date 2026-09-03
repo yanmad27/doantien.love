@@ -15,11 +15,18 @@
   --line: rgba(215, 117, 112, .55);
   /* trái tim dùng cho mark ngày cưới — mask nên co giãn theo ô, không cần kích thước cứng */
   --heart-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 88'%3E%3Cpath d='M50 88C18 64 2 46 2 28 2 12 14 2 27 2c9 0 18 5 23 13 5-8 14-13 23-13 13 0 25 10 25 26 0 18-16 36-48 60z'/%3E%3C/svg%3E");
+  /* bản nét rỗng của cùng trái tim đó, dùng cho hoạ tiết ngăn và dấu "và" trên bìa */
+  --heart-outline: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 108 96'%3E%3Cpath d='M50 88C18 64 2 46 2 28 2 12 14 2 27 2c9 0 18 5 23 13 5-8 14-13 23-13 13 0 25 10 25 26 0 18-16 36-48 60z' fill='none' stroke='%23000' stroke-width='7' stroke-linejoin='round'/%3E%3C/svg%3E");
   --ease-out: cubic-bezier(.2, .8, .2, 1);
   --ease-soft: cubic-bezier(.33, 0, .2, 1);
   --serif: "Cormorant Garamond", Georgia, serif;
-  --script: "Dancing Script", cursive;
+  /* Great Vibes chỉ có MỘT weight 400 — mọi chỗ dùng --script phải bỏ
+     font-weight 500/600, không thì trình duyệt bôi đậm giả và bệt hết nét thanh. */
+  --script: "Great Vibes", "Dancing Script", cursive;
   --sans: "Be Vietnam Pro", sans-serif;
+  /* Lớp chữ hoa nhỏ: menu, "TRÂN TRỌNG KÍNH MỜI", nút. Montserrat có chân chữ
+     hình học, tracking rộng ra vẫn đọc tốt và không đụng nhịp với serif/script. */
+  --ui: "Montserrat", var(--sans);
 }
 
 * { box-sizing: border-box; }
@@ -42,6 +49,17 @@ body {
      nên "30" trong đếm ngược nhìn như lỗi font. Bật lnum cho số cao đều nhau. */
   font-variant-numeric: lining-nums;
 }
+/* Chừa sẵn chỗ cho thanh cuộn kể cả khi đang khoá cuộn. Không có dòng này thì
+   lúc bấm "Mở thiệp" (bỏ .is-locked) thanh cuộn hiện ra, viewport hẹp đi đúng
+   bề rộng thanh cuộn và mọi thứ căn giữa — cả tấm thiệp lẫn tên cô dâu chú rể —
+   nhảy sang trái nửa bề rộng đó. Trên máy dùng thanh cuộn dạng overlay (macOS)
+   không thấy, nhưng Windows/Linux thì nhảy rõ. */
+html { scrollbar-gutter: stable; }
+/* Dải chừa cho thanh cuộn nằm NGOÀI .cover (phần tử fixed không phủ được vùng
+   thanh cuộn), nên lúc bìa còn đóng nó lộ ra một vạch màu nền trang. Tô đúng
+   màu bìa để không thấy vạch; mở thiệp xong thì .is-locked mất, dải này thành
+   thanh cuộn thật. */
+html.is-locked { background: #eadfd6; }
 html.is-locked, body.is-closed { overflow: hidden; height: 100%; }
 /* Anchor không bị nav fixed che */
 :target, #invitation, #details, #calendar, #rsvp { scroll-margin-top: 88px; }
@@ -143,18 +161,21 @@ body.opened .cover::before { opacity: 0; }
 .cover-flower { position: absolute; z-index: 1; pointer-events: none; transition: filter .4s ease .06s; }
 body.opened .cover-flower { filter: opacity(0); }
 .cover-flower--top { width: 86%; top: -5%; left: -34%; transform: rotate(14deg); animation: flower-bloom-left 1.25s .25s cubic-bezier(.2,.8,.2,1) both, flora-float 6s 1.5s ease-in-out infinite alternate; }
-.cover-flower--bottom { width: 65%; right: -27%; bottom: -10%; transform: rotate(-14deg); animation: flower-bloom-right 1.25s .38s cubic-bezier(.2,.8,.2,1) both, flora-float 7s 1.7s ease-in-out infinite alternate-reverse; }
-.monogram {
-  margin: 0;
-  color: #8d735d;
-  font-family: var(--serif);
-  font-size: 1.65rem;
-  font-weight: 500;
-  letter-spacing: -.08em;
+.cover-flower--bottom { width: 65%; right: -27%; bottom: -10%; transform: rotate(-14deg); animation: flower-bloom-right 1.25s .38s cubic-bezier(.2,.8,.2,1) both, flora-float-down 7s 1.7s ease-in-out infinite alternate; }
+/* Hoạ tiết tim ruy băng thay cho monogram chữ "KD ♡ ĐT" ở cả ba chỗ: bìa, nav,
+   phần kết. Ảnh thật 320x236 — mọi cỡ hiển thị đều nhỏ hơn để không nội suy. */
+.monogram-mark {
+  display: block;
+  height: auto;
+  /* ảnh nền watercolor, không cần bắt sự kiện */
+  pointer-events: none;
 }
-.monogram span { margin: 0 .28rem; color: var(--peach); font-size: .7em; }
+.monogram-mark--cover { width: clamp(96px, 26%, 132px); margin: 0 auto; }
+.monogram-mark--nav { width: 52px; }
+.monogram-mark--closing { width: clamp(120px, 34vw, 170px); margin: 0 auto; }
 .kicker, .section-label, .overline {
   margin: 1.3rem 0 .7rem;
+  font-family: var(--ui);
   color: var(--gold-ink);
   font-size: .72rem;
   /* 500 + tracking rộng đọc trang trọng hơn 600 + tracking hẹp ở cỡ chữ nhỏ */
@@ -164,23 +185,51 @@ body.opened .cover-flower { filter: opacity(0); }
 }
 .cover-title {
   margin: 0;
-  max-width: 310px;
+  /* Great Vibes rộng ngang hơn Dancing Script khá nhiều: giữ nguyên cỡ cũ là
+     "Khắc Doãn" rớt xuống hai dòng trên bìa.
+     max-width phải là 100% chứ KHÔNG phải một số px cứng: cỡ chữ tính theo rem/vw
+     nên nó co giãn theo cỡ chữ gốc của trình duyệt và theo zoom, còn số px cứng
+     thì đứng yên — chữ to lên một chút là đụng trần và rớt dòng dù trong thiệp
+     vẫn còn thừa gần 90px. Để 100% thì trần chính là bề rộng thiệp. */
+  max-width: 100%;
   color: var(--peach-ink);
   font-family: var(--script);
-  font-size: clamp(2.85rem, 10vw, 4.4rem);
-  font-weight: 500;
-  line-height: 1.06;
+  font-size: clamp(2.5rem, 8.4vw, 3.85rem);
+  font-weight: 400;
+  line-height: 1.16;
 }
 .cover-title small { display: block; font-family: var(--serif); font-size: .58em; line-height: 1.2; }
 /* backwards, không phải both — xem chú thích ở .cover-card */
 .cover-content > * { animation: cover-copy-in .7s cubic-bezier(.2,.8,.2,1) backwards; }
-.cover-content > *:nth-child(1) { animation-delay: .35s; }
-.cover-content > *:nth-child(2) { animation-delay: .46s; }
-.cover-content > *:nth-child(3) { animation-delay: .57s; }
-.cover-content > *:nth-child(4) { animation-delay: .68s; }
-.cover-content > *:nth-child(5) { animation-delay: .79s; }
+/* Mốc vào của từng dòng để trong biến: khối tên bên dưới cần đọc lại mốc của
+   chính nó để nối tiếp nhịp, mà --d thì kế thừa xuống con. */
+.cover-content > * { animation-delay: var(--d, 0s); }
+.cover-content > *:nth-child(1) { --d: .35s; }
+.cover-content > *:nth-child(2) { --d: .46s; }
+.cover-content > *:nth-child(3) { --d: .57s; }
+.cover-content > *:nth-child(4) { --d: .68s; }
+.cover-content > *:nth-child(5) { --d: .79s; }
 /* trang cá nhân hoá chèn thêm dòng tên khách → có 6 phần tử */
-.cover-content > *:nth-child(6) { animation-delay: .90s; }
+.cover-content > *:nth-child(6) { --d: .90s; }
+
+/* ---- Tên cô dâu chú rể hiện lần lượt ----
+   .cover-title là MỘT phần tử chứa cả hai tên, để nguyên thì hai dòng bật ra
+   cùng lúc trong khi mọi dòng khác vào lần lượt — nhìn như bị khựng một nhịp.
+   Nên container thôi không animate, ba phần con (tên chồng, trái tim, tên vợ)
+   tự vào theo nhịp .12s nối tiếp mốc của container. */
+.cover-content > .cover-title { animation: none; }
+.cover-title > * { animation: cover-copy-in .7s cubic-bezier(.2,.8,.2,1) backwards; }
+/* transform không ăn trên phần tử inline — không có dòng này thì hai tên chỉ mờ
+   dần chứ không trượt lên như các dòng khác */
+.cover-title > span { display: block; }
+.cover-title > *:nth-child(1) { animation-delay: var(--d); }
+.cover-title > *:nth-child(2) { animation-delay: calc(var(--d) + .12s); }
+.cover-title > *:nth-child(3) { animation-delay: calc(var(--d) + .24s); }
+/* Hai dòng cuối (ngày + nút) phải lùi đúng phần mà khối tên vừa kéo dài thêm,
+   nếu không ngày cưới hiện trước cả tên cô dâu. Đếm ngược từ cuối nên đúng cho
+   cả trang thường lẫn trang cá nhân hoá (khác nhau một phần tử). */
+.cover-content > *:nth-last-child(2),
+.cover-content > *:nth-last-child(1) { animation-delay: calc(var(--d) + .24s); }
 
 /* Tên người nhận (chỉ có trên link riêng của từng khách) */
 /* Serif thường thay vì uppercase: tên tiếng Việt có dấu khi viết hoa vừa rộng
@@ -259,6 +308,9 @@ body.opened .cover-card {
   opacity: 0;
 }
 /* Chữ phụ rời khỏi mặt giấy trước, để lúc giấy phóng to nó đã gần như tờ giấy trắng */
+/* Kể cả .cover-title > * : bấm mở lúc animation vào còn đang chạy thì animation
+   vẫn thắng transition, hai tên sẽ không chịu tắt theo bìa. */
+body.opened .cover-title > * { animation: none; }
 body.opened .cover-content > * {
   animation: none;
   opacity: 0;
@@ -287,15 +339,67 @@ body.opened .cover-content > .cover-title {
   inset: 0;
   pointer-events: none;
 }
-/* Có bản sao bay rồi thì chữ gốc trên bìa phải tắt nhanh, nếu không thành hai
-   chữ chồng nhau. Cần .opened.names-flying để thắng luật .cover-title ở trên. */
+/* Có bản sao bay rồi thì chữ gốc trên bìa phải tắt NGAY, không fade: bản sao
+   nằm đúng chồng lên nó, mà chữ gốc lại đang bị tấm thiệp phóng to kéo theo nên
+   fade dù ngắn cũng thành một bóng chữ to dần lệch khỏi bản sao.
+   Cần .opened.names-flying để thắng luật .cover-title ở trên. */
 body.opened.names-flying .cover-content > .cover-title {
-  transition: opacity .16s ease;
+  transition: none;
 }
 /* Hoa cố tình KHÔNG có luật riêng lúc mở: nó là con của .cover-card nên phóng to
    và tan theo tấm thiệp. Bản trước đặt opacity: 0 kèm transition, nhưng opacity
    lúc đó do animation flower-bloom (fill both) giữ — gỡ animation thì Chrome
    không sinh transition, hoa tắt phụt trong 1 khung hình. */
+
+/* ---- Nút bật/tắt nhạc (nằm trong nav) ----
+   Trước đây thả nổi cố định ở góc dưới phải: nền dưới nó là hoa nên icon chìm,
+   và 46px thì quá nhỏ để nhận ra. Trong nav thì nền đặc, luôn cùng một chỗ. */
+.music-toggle {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--peach-ink);
+  cursor: pointer;
+  transition: border-color .2s ease, background-color .2s ease;
+}
+.music-toggle[hidden] { display: none; }
+.music-toggle:hover { border-color: var(--peach-ink); background: var(--paper-warm); }
+.music-bars { display: flex; align-items: flex-end; gap: 3px; height: 20px; }
+.music-bars i {
+  width: 3px;
+  height: 100%;
+  background: currentColor;
+  border-radius: 2px;
+  transform-origin: 50% 100%;
+  animation: music-bar .9s ease-in-out infinite alternate;
+}
+.music-bars i:nth-child(2) { animation-delay: .18s; }
+.music-bars i:nth-child(3) { animation-delay: .36s; }
+.music-bars i:nth-child(4) { animation-delay: .09s; }
+/* Tắt nhạc: cột nhạc dừng và dẹt xuống thành một vạch, kèm gạch chéo */
+.music-toggle.is-muted { position: relative; }
+.music-toggle.is-muted .music-bars i {
+  animation: none;
+  transform: scaleY(.14);
+  opacity: .5;
+}
+.music-toggle.is-muted::after {
+  content: "";
+  position: absolute;
+  width: 26px;
+  height: 1px;
+  background: var(--peach-ink);
+  rotate: -45deg;
+}
+@keyframes music-bar {
+  from { transform: scaleY(.28); }
+  to { transform: scaleY(1); }
+}
 
 /* visibility:hidden để nội dung aria-hidden không nhận được tab khi cover còn mở */
 .site {
@@ -354,10 +458,20 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .nav:focus-within .nav-progress { translate: 0; }
 /* min-height 44px: vùng chạm tối thiểu theo iOS HIG — trước đó link nav chỉ cao 20px */
 /* gap thay cho khoảng trắng: flex container bỏ qua text node trắng giữa các item */
-.nav-brand { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; font-family: var(--serif); font-size: 1.25rem; text-decoration: none; }
-.nav-brand span { color: var(--peach); }
+/* Monogram nằm trong khung viền mảnh như mockup. padding-block nhỏ hơn 44px nhưng
+   min-height vẫn giữ 44px cho vùng chạm trên mobile. */
+/* Không khung viền: hoạ tiết đã có nét riêng, đóng khung vào thì thành hai lớp
+   viền chồng nhau với khung của nav. min-height giữ 44px cho vùng chạm mobile. */
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+  transition: opacity .25s ease;
+}
+.nav-brand:hover { opacity: .78; }
 .nav nav { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.6rem); }
-.nav nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: .75rem; font-weight: 500; letter-spacing: .1em; text-decoration: none; text-transform: uppercase; }
+.nav nav a { display: inline-flex; align-items: center; min-height: 44px; font-family: var(--ui); font-size: .75rem; font-weight: 500; letter-spacing: .1em; text-decoration: none; text-transform: uppercase; }
 .nav-rsvp { border: 1px solid var(--peach-ink); border-radius: 999px; padding: .5rem 1rem; color: var(--peach-ink); }
 
 .hero {
@@ -367,11 +481,18 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
   place-items: center;
   overflow: hidden;
   padding: 8rem 1.25rem 5rem;
-  background: var(--paper);
+  /* Vệt loang màu nước hồng nhạt ở góc dưới trái như mockup — gradient chứ không
+     phải ảnh, nên không tốn thêm request và không vỡ nét khi phóng to. */
+  background:
+    radial-gradient(120% 90% at 8% 100%, rgba(245, 211, 199, .55), transparent 55%),
+    radial-gradient(90% 70% at 100% 8%, rgba(245, 211, 199, .3), transparent 60%),
+    var(--paper);
 }
 .hero::before, .hero::after {
   content: "";
   position: absolute;
+  /* nằm trên mây, dưới hoa — xem bảng thứ tự lớp ở .hero-flower */
+  z-index: 1;
   pointer-events: none;
 }
 .hero::before { inset: 5.5rem 2rem 2rem; border: 1px solid var(--line); border-radius: 10px; }
@@ -382,21 +503,126 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
   margin: .25rem 0;
   color: var(--peach-ink);
   font-family: var(--script);
-  font-size: clamp(3.4rem, 8vw, 7rem);
-  font-weight: 500;
-  line-height: .92;
+  /* Great Vibes có x-height thấp hơn Dancing Script nhưng đuôi chữ dài hơn:
+     nới cỡ ~8% và line-height để dấu nặng/đuôi g không bị cắt. */
+  font-size: clamp(3.7rem, 8.6vw, 7.5rem);
+  /* BẮT BUỘC ghi rõ 400: đây là thẻ <h1>, mặc định của trình duyệt là bold 700.
+     Great Vibes không có bản đậm nên trình duyệt bôi đậm giả — nét bệt lại. Lúc
+     bìa còn mở thì thấy bản sao đang bay (weight 400, mảnh), animation xong mới
+     bàn giao cho <h1> thật nên chữ "tự nhiên đậm lên" ở đúng khung hình cuối. */
+  font-weight: 400;
+  line-height: 1.02;
 }
-.couple-name { display: block; }
+/* ---- Hoạ tiết ngăn: hai vạch mảnh nhạt dần + trái tim rỗng ở giữa ----
+   Hai vạch vẽ bằng background của chính phần tử, trái tim để ở ::after riêng:
+   mask ăn xuống cả pseudo-element, gộp chung thì hai vạch cũng bị cắt theo
+   hình trái tim. */
+.ornament {
+  position: relative;
+  display: block;
+  width: min(300px, 72%);
+  height: 14px;
+  margin: .85rem auto 1.5rem;
+  background:
+    linear-gradient(90deg, transparent, var(--line)) left center / calc(50% - 20px) 1px no-repeat,
+    linear-gradient(90deg, var(--line), transparent) right center / calc(50% - 20px) 1px no-repeat;
+}
+.ornament::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 15px;
+  aspect-ratio: 100 / 88;
+  /* -46% chứ không phải -50%: trái tim thắt nhọn ở đáy nên phần "nặng" nằm lệch
+     lên trên, căn theo tâm hình học sẽ trông thấp hơn hai vạch hai bên. */
+  translate: -50% -46%;
+  background: var(--peach-ink);
+  -webkit-mask: var(--heart-outline) center / contain no-repeat;
+  mask: var(--heart-outline) center / contain no-repeat;
+}
+
+/* Dấu "và" trên bìa: trái tim thay cho chữ "&" */
+.heart-mark {
+  display: block;
+  /* .cover-title small đang đặt font-size: .58em — ghim lại 1em để kích thước
+     trái tim tính theo cỡ chữ của tên, không phụ thuộc luật cũ dành cho "&" */
+  font-size: 1em;
+  /* cỡ ngang tầm chữ "&" nó thay thế — .26em thì nhỏ tới mức nhìn như thiếu ký tự */
+  width: .42em;
+  aspect-ratio: 100 / 88;
+  margin: .2em auto .24em;
+  background: var(--peach-ink);
+  -webkit-mask: var(--heart-outline) center / contain no-repeat;
+  mask: var(--heart-outline) center / contain no-repeat;
+}
+
+/* Bóng đổ rất nhẹ dưới tên như mockup: đủ để chữ script nổi khỏi nền ivory,
+   không đủ để thành hiệu ứng nổi khối. */
+.couple-name { display: block; text-shadow: 0 3px 10px rgba(155, 79, 74, .18); }
 .couple-family { display: block; margin-bottom: .45rem; color: var(--ink); font-family: var(--serif); font-size: .24em; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; }
 .couple-name + .couple-family { margin-top: .1rem; }
 .couple-heart { display: block; margin: -.25rem 0; color: var(--peach); font-family: var(--serif); font-size: 2rem; line-height: 1.6; }
 .hero .honor { margin-top: 2.25rem; }
-.text-link { display: inline-flex; align-items: center; min-height: 44px; gap: .75rem; color: var(--peach-ink); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
+.text-link { display: inline-flex; align-items: center; min-height: 44px; gap: .75rem; color: var(--peach-ink); font-family: var(--ui); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
 .text-link span { font-size: 1.1rem; animation: arrow-bob 2.6s ease-in-out infinite; }
+/* Hai nhánh lá nhỏ hai bên CTA như mockup. Dùng lại đúng file hoa đang có nên
+   không thêm request ảnh nào; ::before lật ngang để hai bên đối xứng. */
+.text-link::before, .text-link::after {
+  content: "";
+  /* Ảnh riêng cho hoạ tiết này (nhánh lá 168x208 cắt rời) chứ không ép nhỏ
+     floral-branch.webp — file đó là một CÀNH DÀI, thu về cỡ này thì chỉ còn
+     vài vệt li ti không ra hình gì. */
+  width: 44px;
+  height: 54px;
+  background: url("./assets/sprig.webp") center / contain no-repeat;
+  opacity: .75;
+}
+.text-link::before { scale: -1 1; }
 .text-link:hover span { animation: none; translate: 0 4px; }
-.hero-flower { position: absolute; z-index: 1; pointer-events: none; }
-.hero-flower--left { width: min(560px, 48vw); left: -10%; top: 5%; rotate: 6deg; will-change: translate, rotate; animation: flora-breathe 7s ease-in-out infinite alternate; }
-.hero-flower--right { width: min(390px, 34vw); right: -8%; bottom: -11%; rotate: -15deg; will-change: translate, rotate; animation: flora-breathe 8s 1s ease-in-out infinite alternate-reverse; }
+/* Ba mảnh trang trí rời. Bề rộng hiển thị KHÔNG được vượt kích thước thật của
+   file (532 / 468 / 788px) — vượt là ảnh bị nội suy và nhòe, đúng lỗi của bản
+   dùng một tấm nền phủ cover trước đây. Ở màn rất rộng thì thà để hoa nhỏ hơn
+   một chút còn hơn để nét bị nhoè. */
+/* Thứ tự lớp trong hero, từ dưới lên:
+     0  .hero-wave        mây nằm DƯỚI khung viền
+     1  .hero::before/after  hai đường viền
+     2  .hero-flower      hoa ĐÈ lên khung viền
+     3  .hero-frame       chữ, luôn trên cùng
+   Phải ghi z-index rõ ràng cho cả ba: để auto thì ::after (sinh ra sau nội dung)
+   tự nằm trên ảnh, còn ::before lại nằm dưới — hai đường viền ăn hai kiểu. */
+.hero-flower, .hero-wave { position: absolute; pointer-events: none; }
+.hero-wave { z-index: 0; }
+.hero-flower { z-index: 2; }
+.hero-flower--left {
+  width: min(500px, 34vw);
+  left: -4%;
+  top: 4%;
+  will-change: translate;
+  animation: flora-breathe 7s ease-in-out infinite alternate;
+}
+.hero-flower--right {
+  width: min(440px, 30vw);
+  right: -5%;
+  bottom: -6%;
+  will-change: translate;
+  animation: flora-breathe-in 8s 1s ease-in-out infinite alternate;
+}
+/* Dải mây nước lả lướt ở góc dưới trái */
+.hero-wave {
+  width: min(760px, 52vw);
+  left: -6%;
+  bottom: -4%;
+  will-change: translate;
+  animation: flora-breathe 11s .6s ease-in-out infinite alternate;
+}
+/* Cỡ hoa cho màn hẹp nằm trong hai khối @media ở cuối file, cạnh các luật
+   responsive khác — đặt ở đây sẽ bị chúng đè. */
+@media (max-width: 540px) {
+  /* Dưới 540px mây chiếm gần hết bề ngang và đội lên phần chữ nên bỏ hẳn.
+     Từ 540px trở lên vẫn giữ, chỉ thu nhỏ trong khối @media bên dưới. */
+  .hero-wave { display: none; }
+}
 
 .section-shell { width: min(1120px, 100%); margin: 0 auto; }
 .countdown { padding: clamp(5rem, 10vw, 8rem) 1.25rem; background: #f4dfd5; }
@@ -411,7 +637,7 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
   /* chia đều số chữ mỗi dòng, tránh dòng cuối trơ một từ */
   text-wrap: balance;
 }
-.countdown h2 em, .calendar-copy h2 em, .rsvp-heading h2 em { color: var(--peach-ink); font-family: var(--script); font-weight: 500; }
+.countdown h2 em, .calendar-copy h2 em, .rsvp-heading h2 em { color: var(--peach-ink); font-family: var(--script); font-size: 1.12em; font-weight: 400; }
 .count-grid {
   max-width: 760px;
   display: grid;
@@ -457,7 +683,8 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .card-flower--top { width: 72%; top: -8%; right: -36%; transform: rotate(-8deg); opacity: .95; }
 .event-card.visible .card-flower--top { animation: flora-float 6s ease-in-out infinite alternate; }
 .event-lead { max-width: 320px; margin: .35rem 0 .7rem; color: var(--ink-soft); font-family: var(--serif); font-size: 1.12rem; }
-.script-title { margin: .6rem 0 .25rem; color: var(--peach-ink); font-family: var(--script); font-size: clamp(3rem, 6.5vw, 4.6rem); line-height: 1; }
+/* line-height 1.14 chứ không phải 1: "Long Phụng" có cả dấu nặng dưới lẫn đuôi g */
+.script-title { margin: .6rem 0 .25rem; color: var(--peach-ink); font-family: var(--script); font-size: clamp(3.3rem, 7vw, 5rem); font-weight: 400; line-height: 1.14; }
 .venue { margin: 0; font-family: var(--serif); font-size: 1.2rem; }
 .venue-region { color: var(--ink-soft); font-size: .92rem; }
 .date-row { display: flex; align-items: center; gap: 1.2rem; margin: 1.4rem 0 .6rem; padding-top: 1rem; border-top: 1px solid rgba(89, 71, 63, .18); }
@@ -551,7 +778,7 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .month-card { position: relative; z-index: 2; padding: clamp(1.8rem, 4vw, 3rem); background: rgba(255, 250, 243, .92); border: 1px solid var(--peach); border-radius: 14px; box-shadow: 0 18px 45px rgba(89, 71, 63, .08); }
 .month-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.7rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(89, 71, 63, .15); }
 /* clamp thay cho cỡ cố định: "Tháng Mười" dài hơn "October" nhiều, màn 320px sẽ đè lên "2026" */
-.month-heading span { color: var(--peach-ink); font-family: var(--script); font-size: clamp(1.9rem, 7vw, 2.7rem); }
+.month-heading span { color: var(--peach-ink); font-family: var(--script); font-size: clamp(2.1rem, 7.6vw, 3rem); font-weight: 400; line-height: 1.15; }
 .month-heading strong { font-family: var(--serif); font-size: 1.6rem; font-weight: 400; }
 .weekday, .dates { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; }
 .weekday { margin-bottom: .7rem; color: var(--ink-soft); font-size: .75rem; letter-spacing: .06em; }
@@ -617,7 +844,7 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .success { display: none; padding: 2.4rem 1rem; text-align: center; }
 .success.show { display: block; animation: success-in .65s cubic-bezier(.2,.8,.2,1) both; }
 .success-mark { color: var(--peach-ink); font-family: var(--serif); font-size: 3.5rem; }
-.success h3 { margin: 0; color: var(--peach-ink); font-family: var(--script); font-size: 3.2rem; font-weight: 500; }
+.success h3 { margin: 0; color: var(--peach-ink); font-family: var(--script); font-size: 3.5rem; font-weight: 400; line-height: 1.15; }
 .success p { max-width: 430px; margin: .5rem auto 0; color: var(--ink-soft); }
 
 .closing {
@@ -632,7 +859,7 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 }
 .closing > img { position: absolute; width: min(500px, 46vw); right: -8%; bottom: -18%; rotate: -12deg; pointer-events: none; will-change: translate; animation: flora-breathe 8s ease-in-out infinite alternate; }
 .closing > div { position: relative; z-index: 2; }
-.closing-title { margin: .8rem 0 0; color: var(--peach-ink); font-family: var(--script); font-size: clamp(4.4rem, 11vw, 8.5rem); font-weight: 500; line-height: 1; }
+.closing-title { margin: .8rem 0 0; color: var(--peach-ink); font-family: var(--script); font-size: clamp(4.6rem, 11.5vw, 9rem); font-weight: 400; line-height: 1.12; }
 .closing-date { margin: .5rem 0 0; color: var(--gold-ink); font-size: .78rem; letter-spacing: .18em; }
 footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1.2rem clamp(1.25rem, 4vw, 4rem); border-top: 1px solid rgba(215, 117, 112, .3); background: var(--paper); color: var(--ink-soft); font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; }
 
@@ -733,9 +960,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   from { translate: 0 0; }
   to { translate: 0 -10px; }
 }
+/* Bản đi xuống, dùng cho phần tử cần trôi NGƯỢC chiều với phần tử kia.
+   Trước đây làm bằng alternate-reverse, nhưng chiều đó khiến vòng lặp đầu tiên
+   chạy ngược — animation khởi động ngay tại keyframe CUỐI (translate 0 -10px)
+   nên hết delay là hình nhảy 10px một phát. Keyframe riêng thì luôn bắt đầu
+   đúng ở vị trí gốc. */
+@keyframes flora-float-down {
+  from { translate: 0 0; }
+  to { translate: 0 10px; }
+}
 @keyframes flora-breathe {
   from { scale: 1; }
   to { scale: 1.025; }
+}
+/* cùng lý do như flora-float-down: thở vào thay vì thở ra, không dùng reverse */
+@keyframes flora-breathe-in {
+  from { scale: 1; }
+  to { scale: .978; }
 }
 @keyframes date-heartbeat {
   0%, 70%, 100% { transform: scale(1); }
@@ -754,8 +995,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .hero { padding-top: 7rem; }
   .hero::before { inset: 4.9rem .8rem .8rem; }
   .hero::after { inset: 5.3rem 1.2rem 1.2rem; }
-  .hero-flower--left { width: 78vw; left: -34%; top: 4%; }
-  .hero-flower--right { width: 60vw; right: -28%; bottom: -8%; opacity: .78; }
+  /* Cỡ dành cho bộ hoa mới (bloom-corner / bloom-side): ảnh mới có nhiều
+     khoảng trống quanh cụm hơn bộ cũ, để nguyên 78vw là cánh hoa trùm lên chữ. */
+  .hero-flower--left { width: min(250px, 42vw); left: -20%; top: 0; }
+  .hero-flower--right { width: min(240px, 38vw); right: -13%; bottom: -3%; opacity: .85; }
+  .hero-wave { width: 64vw; left: -10%; bottom: -3%; }
   .details-grid, .calendar-grid, .rsvp-grid { grid-template-columns: 1fr; }
   .printed-card { width: min(470px, 100%); margin: 0 auto; }
   .details-copy { order: -1; }
@@ -774,8 +1018,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cover-flower--bottom { width: 77%; right: -38%; }
   .hero-copy { max-width: 305px; }
   .couple { font-size: clamp(3.25rem, 16vw, 5rem); }
-  .hero-flower--left { width: 100vw; left: -52%; top: 6%; }
-  .hero-flower--right { width: 79vw; right: -43%; bottom: -5%; }
+  .hero-flower--left { width: 46vw; left: -26%; top: 0; }
+  .hero-flower--right { width: 36vw; right: -24%; bottom: -2%; }
   .count-grid { grid-template-columns: repeat(2, 1fr); }
   .count-grid div:nth-child(2) { border-right: 0; }
   .count-grid div:nth-child(-n+2) { border-bottom: 1px solid rgba(89, 71, 63, .2); }
