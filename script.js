@@ -21,8 +21,10 @@ const wedding = {
   },
   rsvp: {
     deadline: '2026-09-24T23:59:59+07:00',
-    // App quanly nhận và lưu phản hồi. Đặt null để quay lại chế độ demo.
-    endpoint: 'https://quanly.doantien.love/api/rsvp',
+    // App quanly nhận và lưu phản hồi, nhưng đi qua chính domain thiệp
+    // (Traefik trỏ /api/rsvp sang đó) nên không phụ thuộc DNS của subdomain.
+    // Đặt null để quay lại chế độ demo.
+    endpoint: 'https://doantien.love/api/rsvp',
   },
 }
 
