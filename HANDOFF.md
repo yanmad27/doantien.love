@@ -34,7 +34,7 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 ### Buổi lễ
 
 - Ngày: **Chủ nhật, 04.10.2026**
-- Giờ: **11:30**
+- Giờ: **12:00** (đón khách từ **11:30**)
 - Âm lịch: **Ngày 24 tháng 08 năm Bính Ngọ**
 - Địa điểm đang dùng trong prototype: **Nhà hàng Long Phụng, Khánh Hòa**
 - Hạn RSVP đang dùng: **24.09.2026**
@@ -76,7 +76,7 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 - Nền blush peach.
 - Tiêu đề `Hẹn nhau vào một ngày tháng Mười`.
 - Bốn chỉ số: ngày, giờ, phút, giây.
-- Target time: `2026-10-04T11:30:00+07:00`.
+- Target time: `2026-10-04T12:00:00+07:00`.
 - Khi đã qua ngày cưới, tất cả giá trị dừng ở `0`.
 
 ### 4.4. Thông tin lễ cưới
@@ -85,9 +85,8 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 - Mobile: nội dung giới thiệu trước, card lễ cưới phía sau.
 - Card lễ cưới giữ tỷ lệ 12:17 và ngôn ngữ hình ảnh giống thiệp in.
 - Lịch trình:
-  - `11:00` — Đón khách & chụp ảnh
-  - `11:30` — Lễ thành hôn
-  - `12:00` — Khai tiệc
+  - `11:30` — Đón khách & chụp ảnh
+  - `12:00` — Lễ thành hôn & khai tiệc
 - CTA:
   - `Xem bản đồ`
   - `Lưu ngày cưới`
@@ -209,7 +208,7 @@ Khi `prefers-reduced-motion: reduce`:
 ### Save the date
 
 - Tạo file `.ics` trực tiếp trên browser.
-- Thời gian bắt đầu UTC: `20261004T043000Z`.
+- Thời gian bắt đầu UTC: `20261004T050000Z`.
 - Thời gian kết thúc UTC: `20261004T080000Z`.
 - Tên file: `dam-cuoi-khac-doan-dong-tien.ics`.
 
@@ -288,7 +287,7 @@ const wedding = {
     },
   },
   ceremony: {
-    startAt: '2026-10-04T11:30:00+07:00',
+    startAt: '2026-10-04T12:00:00+07:00',
     endAt: '2026-10-04T15:00:00+07:00',
     lunarDate: '24 tháng 08 năm Bính Ngọ',
     venueName: 'Nhà hàng Long Phụng',
