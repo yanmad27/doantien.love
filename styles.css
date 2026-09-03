@@ -141,15 +141,22 @@ a { color: inherit; }
 /* Serif thường thay vì uppercase: tên tiếng Việt có dấu khi viết hoa vừa rộng
    vừa khó đọc, tên dài sẽ đội bìa lên 3 dòng ở màn 320px. */
 .guest-cover {
-  max-width: 26ch;
-  margin: .3rem 0 .1rem;
+  max-width: 30ch;
+  margin: .35rem 0 .1rem;
   color: var(--ink-soft);
   font-family: var(--serif);
   font-size: clamp(.95rem, 3.4vw, 1.08rem);
-  line-height: 1.4;
+  line-height: 1.45;
+}
+/* Tên phải chiếm dòng riêng. Nằm chung dòng với "Thân mời" thì trình duyệt
+   ngắt được ở mọi khoảng trắng và hay cắt giữa từ ghép — "Gia / đình bạn".
+   text-wrap: balance chia đều các dòng khi tên dài. */
+.guest-cover b {
+  display: block;
+  color: var(--peach-ink);
+  font-weight: 500;
   text-wrap: balance;
 }
-.guest-cover b { color: var(--peach-ink); font-weight: 500; }
 .guest-hero {
   margin: -.4rem 0 1.6rem;
   color: var(--ink);
@@ -157,6 +164,7 @@ a { color: inherit; }
   font-size: clamp(1.35rem, 4.6vw, 1.9rem);
   font-weight: 500;
   letter-spacing: .01em;
+  text-wrap: balance;
 }
 .cover-date { margin: 1rem 0 1.5rem; font-size: .78rem; letter-spacing: .2em; }
 .open-button {
