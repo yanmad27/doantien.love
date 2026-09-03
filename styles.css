@@ -34,6 +34,13 @@ body {
   font-size: 16px;
   line-height: 1.7;
   overflow-x: hidden;
+  /* Nét serif/script mảnh trên nền ivory bị macOS bôi đậm nếu để mặc định */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-kerning: normal;
+  /* Cormorant Garamond mặc định dùng số old-style (3, 7, 9 thò xuống dưới, 1 lùn)
+     nên "30" trong đếm ngược nhìn như lỗi font. Bật lnum cho số cao đều nhau. */
+  font-variant-numeric: lining-nums;
 }
 html.is-locked, body.is-closed { overflow: hidden; height: 100%; }
 /* Anchor không bị nav fixed che */
@@ -63,18 +70,33 @@ a { color: inherit; }
   min-height: 100svh;
   padding: 1.5rem;
   background: #eadfd6;
-  perspective: 1200px;
-  transition: opacity .65s ease, visibility .65s ease;
+  overflow: hidden;
+  perspective: 1400px;
+  /* Nền chỉ tan ở nửa sau, sau khi tấm thiệp đã phóng to phủ kín màn hình —
+     tắt sớm hơn thì lộ trang web phía dưới lúc thiệp còn đang lớn dần.
+     Chỉ animate opacity/transform (compositor lo được), không dùng filter: blur()
+     toàn màn hình vì đó là thứ làm rớt khung hình trên máy yếu. */
+  /* Nền bìa chuyển sang đúng màu giấy trong lúc tấm thiệp lớn dần: mép giấy hoà
+     vào nền nên không còn thấy "một tấm thiệp to" nổi trên nền khác màu. */
+  transition:
+    background-color .38s ease .1s,
+    opacity .5s var(--ease-soft) .35s,
+    visibility 0s linear .9s;
 }
 .cover::before {
   content: "";
   position: absolute;
+  z-index: 1;
   inset: 1rem;
   border: 1px solid rgba(255, 255, 255, .8);
   pointer-events: none;
+  transition: opacity .35s ease;
 }
+/* Khung viền nằm trên .cover (không trượt theo cánh cửa) nên phải tắt trước khi mở */
+body.opened .cover::before { opacity: 0; }
 .cover-card {
   position: relative;
+  z-index: 2;
   width: min(440px, 86vw);
   aspect-ratio: 12 / 17;
   overflow: hidden;
@@ -83,10 +105,26 @@ a { color: inherit; }
   border-radius: 16px;
   box-shadow: 0 24px 70px rgba(89, 71, 63, .16);
   transform: translateY(-.8rem);
-  transition: transform .65s ease, opacity .45s ease;
-  animation: card-arrive .9s cubic-bezier(.2,.8,.2,1) both;
-  transform-origin: 50% 80%;
+  transform-origin: 50% 46%;
+  /* Tấm thiệp phóng to về phía người xem cho tới khi giấy phủ kín màn hình rồi
+     mới tan — nền --paper của nó trùng nền trang, nên cảm giác là bước hẳn vào
+     trong thiệp chứ không phải thiệp biến mất.
+     Chỉ transition transform + opacity: border-radius/box-shadow là property phải
+     vẽ lại từng khung hình trên một khối 1500px, mà ở scale 3.4 thì bốn góc đã
+     nằm ngoài viewport nên có làm mượt cũng không ai thấy. */
+  transition: transform 1.05s cubic-bezier(.62,.02,.34,1), opacity .5s ease .25s;
+  /* backwards chứ không phải both: both giữ keyframe cuối vĩnh viễn, mà animation
+     luôn thắng transition — để both thì mọi transition transform/opacity bên dưới
+     thành code chết và tấm thiệp đứng nguyên rồi mất đột ngột. */
+  animation: card-arrive .9s cubic-bezier(.2,.8,.2,1) backwards;
+  --grow: 3.2;
 }
+/* Mép giấy phải ra khỏi viewport trước khi tấm thiệp tan, nếu không người xem
+   thấy "một tấm thiệp to nổi trên trang web" thay vì bước vào trong nó. Thiệp
+   rộng tối đa 440px nên màn càng rộng càng phải phóng nhiều; calc() không chia
+   được vw cho px nên chốt theo breakpoint. */
+@media (min-width: 700px) { .cover-card { --grow: 4.6; } }
+@media (min-width: 1400px) { .cover-card { --grow: 7; } }
 .cover-content {
   position: relative;
   z-index: 2;
@@ -98,7 +136,12 @@ a { color: inherit; }
   padding: 4rem 2rem;
   text-align: center;
 }
-.cover-flower { position: absolute; z-index: 1; pointer-events: none; }
+/* Fade bằng filter chứ không phải opacity: opacity của hoa đang do animation
+   flower-bloom (fill both) giữ, mà animation luôn thắng transition — đặt
+   opacity: 0 lúc mở thì hoa tắt phụt trong một khung hình. filter không bị
+   animation nào đụng tới nên transition chạy bình thường. */
+.cover-flower { position: absolute; z-index: 1; pointer-events: none; transition: filter .4s ease .06s; }
+body.opened .cover-flower { filter: opacity(0); }
 .cover-flower--top { width: 86%; top: -5%; left: -34%; transform: rotate(14deg); animation: flower-bloom-left 1.25s .25s cubic-bezier(.2,.8,.2,1) both, flora-float 6s 1.5s ease-in-out infinite alternate; }
 .cover-flower--bottom { width: 65%; right: -27%; bottom: -10%; transform: rotate(-14deg); animation: flower-bloom-right 1.25s .38s cubic-bezier(.2,.8,.2,1) both, flora-float 7s 1.7s ease-in-out infinite alternate-reverse; }
 .monogram {
@@ -113,9 +156,10 @@ a { color: inherit; }
 .kicker, .section-label, .overline {
   margin: 1.3rem 0 .7rem;
   color: var(--gold-ink);
-  font-size: .75rem;
-  font-weight: 600;
-  letter-spacing: .18em;
+  font-size: .72rem;
+  /* 500 + tracking rộng đọc trang trọng hơn 600 + tracking hẹp ở cỡ chữ nhỏ */
+  font-weight: 500;
+  letter-spacing: .24em;
   text-transform: uppercase;
 }
 .cover-title {
@@ -128,7 +172,8 @@ a { color: inherit; }
   line-height: 1.06;
 }
 .cover-title small { display: block; font-family: var(--serif); font-size: .58em; line-height: 1.2; }
-.cover-content > * { animation: cover-copy-in .7s cubic-bezier(.2,.8,.2,1) both; }
+/* backwards, không phải both — xem chú thích ở .cover-card */
+.cover-content > * { animation: cover-copy-in .7s cubic-bezier(.2,.8,.2,1) backwards; }
 .cover-content > *:nth-child(1) { animation-delay: .35s; }
 .cover-content > *:nth-child(2) { animation-delay: .46s; }
 .cover-content > *:nth-child(3) { animation-delay: .57s; }
@@ -171,7 +216,8 @@ a { color: inherit; }
   min-height: 48px;
   border: 1px solid var(--peach-ink);
   border-radius: 999px;
-  padding: .72rem 1.55rem;
+  /* cùng cách bù như .button — letter-spacing ở đây rộng hơn nên lệch cũng lớn hơn */
+  padding: calc(.72rem + .06em) calc(1.55rem - .14em) calc(.72rem - .06em) 1.55rem;
   background: rgba(255, 250, 243, .86);
   color: var(--peach-ink);
   font-size: .78rem;
@@ -184,30 +230,87 @@ a { color: inherit; }
 .open-button:hover { background: var(--peach-ink); color: #fff; transform: translateY(-2px); }
 .cover-hint {
   position: absolute;
+  z-index: 2;
   bottom: 1.4rem;
   margin: 0;
   color: var(--ink-soft);
   font-size: .75rem;
   letter-spacing: .12em;
   text-transform: uppercase;
+  transition: opacity .28s ease;
 }
-body.opened .cover { opacity: 0; visibility: hidden; pointer-events: none; }
-body.opened .cover-card { transform: translateY(-2.2rem) rotateX(8deg) scale(.9); opacity: 0; }
-body.opened .cover-flower--top { translate: -18px -18px; opacity: 0; transition: translate .55s ease, opacity .45s ease; }
-body.opened .cover-flower--bottom { translate: 18px 18px; opacity: 0; transition: translate .55s ease, opacity .45s ease; }
+/* ---- Chuyển cảnh mở thiệp: bước vào trong tấm thiệp ----
+   0.00s  khung viền + dòng gợi ý tắt
+   0.00s  chữ phụ trên bìa (monogram, ngày, nút) nhấc lên rồi tan, so le từ dưới lên
+   0.05s  tấm thiệp phóng to về phía người xem
+   0.10s  nền bìa chuyển sang màu giấy; trang thiệp bắt đầu hiện phía sau
+   0.20s  TÊN cô dâu chú rể trên bìa mới bắt đầu tan — lúc này tên trong trang
+          thiệp đã hiện được một nửa, hai lớp chồng nhau nên không có khoảnh
+          khắc nào màn hình trắng chữ (đây chính là lỗi "chữ mất rồi hiện lại")
+   0.25s  giấy mờ dần, để lộ trang thiệp đã dựng sẵn bên dưới
+   0.90s  hạ màn .cover                                                        */
+body.opened .cover { background: var(--paper); opacity: 0; visibility: hidden; pointer-events: none; }
+/* animation: none bắt buộc — hint-float chạy vô hạn và có tô opacity, để nguyên thì nó đè transition */
+body.opened .cover-hint { animation: none; opacity: 0; }
+body.opened .cover-card {
+  /* scale đủ lớn để cạnh giấy ra khỏi viewport ở cả màn ngang lẫn dọc; translateZ
+     cho perspective bẻ nhẹ phối cảnh nên là "tiến vào" chứ không phải "to ra" */
+  transform: translateY(-.8rem) translateZ(90px) scale(var(--grow));
+  opacity: 0;
+}
+/* Chữ phụ rời khỏi mặt giấy trước, để lúc giấy phóng to nó đã gần như tờ giấy trắng */
+body.opened .cover-content > * {
+  animation: none;
+  opacity: 0;
+  translate: 0 -16px;
+  transition: opacity .3s ease, translate .5s var(--ease-soft);
+}
+body.opened .cover-content > *:nth-child(6) { transition-delay: 0s; }
+body.opened .cover-content > *:nth-child(5) { transition-delay: .03s; }
+body.opened .cover-content > *:nth-child(4) { transition-delay: .06s; }
+body.opened .cover-content > *:nth-child(3) { transition-delay: .09s; }
+body.opened .cover-content > *:nth-child(2) { transition-delay: .12s; }
+body.opened .cover-content > *:nth-child(1) { transition-delay: .15s; }
+/* Tên cô dâu chú rể là chữ duy nhất có mặt ở CẢ bìa lẫn trang thiệp, nên nó phải
+   là thứ tan sau cùng: giữ tới .2s rồi mờ trong .5s, đúng lúc tên trong trang
+   thiệp đang hiện lên. Cho tan sớm như mấy dòng kia thì có một khoảng màn hình
+   không còn chữ nào, người xem thấy chữ "mất rồi hiện lại". Phải viết dạng
+   > .cover-title để đủ specificity thắng transition-delay của khối nth-child. */
+body.opened .cover-content > .cover-title {
+  transition: opacity .5s ease .2s, translate .6s var(--ease-soft) .2s;
+}
+/* Lớp chở bản sao của tên đang bay từ bìa về trang. z-index trên cả .cover (50)
+   để tên không bị tấm giấy đang mờ dần che. */
+.name-flight {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  pointer-events: none;
+}
+/* Có bản sao bay rồi thì chữ gốc trên bìa phải tắt nhanh, nếu không thành hai
+   chữ chồng nhau. Cần .opened.names-flying để thắng luật .cover-title ở trên. */
+body.opened.names-flying .cover-content > .cover-title {
+  transition: opacity .16s ease;
+}
+/* Hoa cố tình KHÔNG có luật riêng lúc mở: nó là con của .cover-card nên phóng to
+   và tan theo tấm thiệp. Bản trước đặt opacity: 0 kèm transition, nhưng opacity
+   lúc đó do animation flower-bloom (fill both) giữ — gỡ animation thì Chrome
+   không sinh transition, hoa tắt phụt trong 1 khung hình. */
 
 /* visibility:hidden để nội dung aria-hidden không nhận được tab khi cover còn mở */
 .site {
   opacity: 0;
   visibility: hidden;
-  transform: scale(.995);
-  transition: opacity .8s ease .15s, transform 1s cubic-bezier(.2,.8,.2,1) .15s, visibility 0s linear .95s;
+  /* Chỉ fade, cố tình KHÔNG scale: tên bay từ bìa về đây được ngắm theo toạ độ
+     cuối, mà scale làm mọi thứ trong trang trôi suốt lúc chuyển cảnh nên lúc
+     bàn giao chữ thật sẽ nhảy một cái. Trễ .1s để trang hiện sẵn phía sau tấm
+     giấy đang mờ dần. */
+  transition: opacity .6s ease .1s, visibility 0s linear .8s;
 }
 body.opened .site {
   opacity: 1;
   visibility: visible;
-  transform: none;
-  transition: opacity .8s ease .15s, transform 1s cubic-bezier(.2,.8,.2,1) .15s, visibility 0s;
+  transition: opacity .6s ease .1s, visibility 0s;
 }
 .nav {
   position: fixed;
@@ -224,7 +327,8 @@ body.opened .site {
   backdrop-filter: blur(12px);
   transition: transform .45s var(--ease-out), box-shadow .35s ease;
 }
-body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
+/* trễ .45s: nav thả xuống sau khi trang thiệp đã hiện, không tranh nhịp với bìa */
+body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .nav.is-scrolled { box-shadow: 0 10px 30px -24px rgba(89, 71, 63, .65); }
 .nav.is-hidden { transform: translate3d(0, -100%, 0); }
 /* không giấu nav khi người dùng đang tab vào link bên trong */
@@ -241,7 +345,13 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
   transform: scaleX(var(--progress, 0));
   transform-origin: 0 50%;
   pointer-events: none;
+  /* `translate` áp trước `transform`, nên dùng riêng nó để bù vị trí mà không đụng scaleX */
+  transition: translate .45s var(--ease-out);
 }
+/* Nav trượt lên ẩn thì kéo thanh progress xuống đúng bằng phần đã trượt,
+   để nó đứng lại ở mép trên viewport thay vì biến mất theo nav. */
+.nav.is-hidden .nav-progress { translate: 0 1px; }
+.nav:focus-within .nav-progress { translate: 0; }
 /* min-height 44px: vùng chạm tối thiểu theo iOS HIG — trước đó link nav chỉ cao 20px */
 /* gap thay cho khoảng trắng: flex container bỏ qua text node trắng giữa các item */
 .nav-brand { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; font-family: var(--serif); font-size: 1.25rem; text-decoration: none; }
@@ -298,6 +408,8 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
   font-weight: 400;
   letter-spacing: -.035em;
   line-height: .94;
+  /* chia đều số chữ mỗi dòng, tránh dòng cuối trơ một từ */
+  text-wrap: balance;
 }
 .countdown h2 em, .calendar-copy h2 em, .rsvp-heading h2 em { color: var(--peach-ink); font-family: var(--script); font-weight: 500; }
 .count-grid {
@@ -311,7 +423,7 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .count-grid div { padding: 1.6rem .5rem; border-right: 1px solid rgba(89, 71, 63, .2); }
 .count-grid div:last-child { border-right: 0; }
 .count-grid strong.tick { animation: digit-tick .5s var(--ease-out); }
-.count-grid strong { display: block; color: var(--peach-ink); font-family: var(--serif); font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
+.count-grid strong { display: block; color: var(--peach-ink); font-family: var(--serif); font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 400; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
 .count-grid span { font-size: .75rem; letter-spacing: .13em; text-transform: uppercase; }
 
 .details { padding: clamp(5rem, 11vw, 9rem) 1.25rem; background: #efe7de; }
@@ -353,6 +465,8 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .date-row strong { font-family: var(--serif); font-size: 2.15rem; line-height: .8; }
 .date-row > div > span { margin-top: .4rem; font-size: .75rem; font-weight: 600; letter-spacing: .14em; }
 .date-row p { margin: 0; font-size: .78rem; line-height: 1.5; text-transform: uppercase; }
+.welcome-time { margin: 0 0 .35rem; color: var(--ink-soft); font-size: .78rem; }
+.welcome-time span { color: var(--peach-ink); font-weight: 600; font-variant-numeric: lining-nums tabular-nums; }
 .lunar-date { margin: 0; color: var(--ink-soft); font-size: .75rem; }
 .card-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1.3rem; }
 
@@ -401,7 +515,13 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
   justify-content: center;
   border: 1px solid var(--peach-ink);
   border-radius: 999px;
-  padding: .68rem 1.15rem;
+  /* Bù hai lệch quang học, nếu không chữ trông không nằm giữa nút:
+     - letter-spacing chèn cả sau chữ CUỐI, nên khối chữ rộng hơn nét mực .1em và
+       nét mực lệch trái .05em → cắt .1em ở padding phải là tâm nét về đúng giữa.
+     - chữ hoa tiếng Việt ở đây chỉ có dấu phía trên (BẢN, ĐỒ, NGÀY) mà không có
+       nét thò xuống, nên khối chữ nặng trên; dời xuống .08em cho cân mắt.
+     Tổng padding dọc không đổi nên chiều cao nút giữ nguyên. */
+  padding: calc(.68rem + .08em) calc(1.15rem - .1em) calc(.68rem - .08em) 1.15rem;
   background: var(--peach-ink);
   color: #fff;
   font-size: .75rem;
@@ -430,7 +550,8 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .calendar-flower { position: absolute; width: min(610px, 48vw); left: -14%; bottom: -18%; pointer-events: none; opacity: .64; }
 .month-card { position: relative; z-index: 2; padding: clamp(1.8rem, 4vw, 3rem); background: rgba(255, 250, 243, .92); border: 1px solid var(--peach); border-radius: 14px; box-shadow: 0 18px 45px rgba(89, 71, 63, .08); }
 .month-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.7rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(89, 71, 63, .15); }
-.month-heading span { color: var(--peach-ink); font-family: var(--script); font-size: 2.7rem; }
+/* clamp thay cho cỡ cố định: "Tháng Mười" dài hơn "October" nhiều, màn 320px sẽ đè lên "2026" */
+.month-heading span { color: var(--peach-ink); font-family: var(--script); font-size: clamp(1.9rem, 7vw, 2.7rem); }
 .month-heading strong { font-family: var(--serif); font-size: 1.6rem; font-weight: 400; }
 .weekday, .dates { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; }
 .weekday { margin-bottom: .7rem; color: var(--ink-soft); font-size: .75rem; letter-spacing: .06em; }
@@ -438,17 +559,21 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .dates span, .dates i { position: relative; min-height: 40px; display: grid; place-items: center; font-family: var(--serif); font-size: 1rem; font-style: normal; }
 .wedding-day { color: #fff; font-weight: 500; }
 /* Mark ngày cưới là trái tim, kích thước bám theo ô lịch nên không tràn ở màn nhỏ.
-   translate lệch -42% (thay vì -50%) để số 4 nằm đúng phần đầy của trái tim. */
+   translate lệch -42% (thay vì -50%) để số nằm đúng phần đầy của trái tim: trái tim
+   thắt nhọn ở đáy nên trọng tâm diện tích của path nằm ở 42.2% chiều cao tính từ
+   đỉnh, không phải 50%. Để -50% (hay -46%) là số bị tụt xuống phần chóp nhọn. */
 .wedding-day::before {
   content: "";
   position: absolute;
   z-index: -1;
   left: 50%;
-  top: 50%;
+  /* 43% chứ không phải 50%: chữ số trong ô lịch nằm cao hơn tâm ô (line-height
+     chừa khoảng trống phía dưới), nên tâm trái tim phải nhích lên theo. */
+  top: 43%;
   /* bám theo ô để không tràn ở màn nhỏ, nhưng có trần để không phình ở ô rộng */
   width: min(92%, 2.4em);
   aspect-ratio: 100 / 88;
-  translate: -50% -46%;
+  translate: -50% -42%;
   background: var(--peach-ink);
   -webkit-mask: var(--heart-mask) center / contain no-repeat;
   mask: var(--heart-mask) center / contain no-repeat;

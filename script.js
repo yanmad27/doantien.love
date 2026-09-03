@@ -6,8 +6,11 @@ const wedding = {
     bride: { fullName: 'Trần Lưu Đông Tiên', familyName: 'Trần Lưu', displayName: 'Đông Tiên' },
   },
   ceremony: {
-    startAt: '2026-10-04T11:30:00+07:00',
+    startAt: '2026-10-04T12:00:00+07:00',
     endAt: '2026-10-04T15:00:00+07:00',
+    // Khung giờ đón khách, hiển thị trên thẻ mời
+    welcomeStartAt: '2026-10-04T11:30:00+07:00',
+    welcomeEndAt: '2026-10-04T12:00:00+07:00',
     lunarDate: '24 tháng 08 năm Bính Ngọ',
     venueShortName: 'Long Phụng',
     venueName: 'Nhà hàng Long Phụng',
@@ -52,6 +55,8 @@ function partsInTZ(date, timeZone = TZ) {
 
 const c = partsInTZ(startAt)
 const d = partsInTZ(rsvpDeadline)
+const w1 = partsInTZ(new Date(wedding.ceremony.welcomeStartAt))
+const w2 = partsInTZ(new Date(wedding.ceremony.welcomeEndAt))
 
 /* Chuỗi hiển thị dẫn xuất từ config — mọi section dùng chung. */
 const view = {
@@ -66,6 +71,7 @@ const view = {
   'ceremony.year': c.year,
   'ceremony.time': `${c.hour}:${c.minute}`,
   'ceremony.weekdayName': WEEKDAYS[c.weekdayIndex],
+  'ceremony.welcomeWindow': `${w1.hour}:${w1.minute} – ${w2.hour}:${w2.minute}`,
   'ceremony.lunarDate': wedding.ceremony.lunarDate,
   'ceremony.venueShortName': wedding.ceremony.venueShortName,
   'ceremony.venueName': wedding.ceremony.venueName,
@@ -93,15 +99,106 @@ const openButton = document.getElementById('open-invitation')
 
 document.documentElement.classList.add('is-locked')
 
+/* Tên cô dâu chú rể là chữ duy nhất có mặt ở CẢ bìa lẫn trang thiệp. Để bìa tan
+   rồi trang mới hiện thì mắt thấy đúng hai chữ đó biến mất rồi quay lại; cho hai
+   lớp chồng nhau thì thành nhìn đôi. Nên thay vì tan, tên bay từ bìa về đúng vị
+   trí của nó trong trang rồi nhường chỗ cho chữ thật — chữ có mặt liên tục suốt
+   chuyển cảnh, không có khoảnh khắc nào mất.
+
+   Bản sao phải nằm ngoài .cover vì .cover-card đang phóng to: mọi thứ bên trong
+   nó, kể cả position: fixed, đều bị kéo theo transform của nó. */
+const NAME_FLIGHT_MS = 780
+
+function flyCoverNamesIntoPlace() {
+  if (reducedMotion.matches || typeof Element.prototype.animate !== 'function') return false
+  const sources = document.querySelectorAll('#cover-title span')
+  const targets = document.querySelectorAll('.hero-frame .couple-name')
+  if (!sources.length || sources.length !== targets.length) return false
+
+  // đo đích ở trạng thái cuối: nếu khối hero còn đang chờ reveal thì vị trí đo
+  // được là vị trí tạm, tên sẽ đáp trượt chỗ
+  const heroFrame = document.querySelector('.hero-frame')
+  if (heroFrame) heroFrame.classList.add('visible')
+
+  const layer = document.createElement('div')
+  layer.className = 'name-flight'
+  layer.setAttribute('aria-hidden', 'true')
+  document.body.appendChild(layer)
+
+  const restore = []
+  sources.forEach((source, i) => {
+    const target = targets[i]
+    // Range chứ không phải element rect: nguồn là span inline còn đích là block,
+    // hai loại hộp cao thấp khác nhau. Range cho đúng hộp chữ của cả hai nên căn
+    // mép trên + tỷ lệ bề rộng là baseline trùng nhau.
+    const from = rangeRect(source)
+    const to = rangeRect(target)
+    if (!from.width || !to.width) return
+
+    const cs = getComputedStyle(source)
+    const clone = document.createElement('span')
+    clone.textContent = source.textContent
+    Object.assign(clone.style, {
+      position: 'absolute',
+      left: from.left + 'px',
+      top: from.top + 'px',
+      transformOrigin: '0 0',
+      whiteSpace: 'pre',
+      fontFamily: cs.fontFamily,
+      fontSize: cs.fontSize,
+      fontStyle: cs.fontStyle,
+      fontWeight: cs.fontWeight,
+      lineHeight: cs.lineHeight,
+      letterSpacing: cs.letterSpacing,
+      color: cs.color,
+    })
+    layer.appendChild(clone)
+
+    // giấu chữ thật ở đích trong lúc bản sao đang bay, nếu không có hai chữ cùng lúc
+    target.style.visibility = 'hidden'
+    restore.push(() => { target.style.visibility = '' })
+
+    clone.animate([
+      { transform: 'none' },
+      { transform: `translate(${to.left - from.left}px, ${to.top - from.top}px) scale(${to.width / from.width})` },
+    ], { duration: NAME_FLIGHT_MS, easing: 'cubic-bezier(.62,.02,.34,1)', fill: 'both' })
+  })
+
+  if (!restore.length) {
+    layer.remove()
+    return false
+  }
+  // dọn bằng timeout chứ không chờ promise của animation: tab bị ẩn giữa chừng
+  // thì promise không resolve, tên ở trang sẽ kẹt visibility: hidden vĩnh viễn
+  window.setTimeout(() => {
+    restore.forEach((fn) => fn())
+    layer.remove()
+  }, NAME_FLIGHT_MS)
+  return true
+}
+
+function rangeRect(element) {
+  const range = document.createRange()
+  range.selectNodeContents(element)
+  return range.getBoundingClientRect()
+}
+
 function openInvitation() {
+  // Thứ tự bắt buộc: mở khoá cuộn TRƯỚC (thanh cuộn xuất hiện làm hẹp viewport,
+  // đo trước khi mở khoá thì tên đáp lệch đúng bằng bề rộng thanh cuộn), rồi đo
+  // và cất cánh, rồi mới gắn .opened — gắn .opened trước thì phép đo đọc phải
+  // trạng thái cuối của bìa (đã phóng to) chứ không phải vị trí đang thấy.
   document.documentElement.classList.remove('is-locked')
   document.body.classList.remove('is-closed')
+  if (flyCoverNamesIntoPlace()) document.body.classList.add('names-flying')
   document.body.classList.add('opened')
   site.setAttribute('aria-hidden', 'false')
+  // 950ms = lúc bìa đã tan hẳn (xem khối chuyển cảnh trong styles.css).
+  // Nhả focus sớm hơn thì màn hình giật về nav lúc bìa còn đang mở dở.
   window.setTimeout(() => {
     cover.setAttribute('aria-hidden', 'true')
     document.querySelector('.nav-brand').focus({ preventScroll: true })
-  }, 700)
+  }, reducedMotion.matches ? 0 : 950)
 }
 
 openButton.addEventListener('click', openInvitation)
@@ -139,7 +236,7 @@ function setDigits(el, value) {
 
 function updateCountdown() {
   const distance = Math.max(0, startAt.getTime() - Date.now())
-  setDigits(countdownFields.days, pad(Math.floor(distance / 86400000), 3))
+  setDigits(countdownFields.days, pad(Math.floor(distance / 86400000)))
   setDigits(countdownFields.hours, pad(Math.floor((distance % 86400000) / 3600000)))
   setDigits(countdownFields.minutes, pad(Math.floor((distance % 3600000) / 60000)))
   setDigits(countdownFields.seconds, pad(Math.floor((distance % 60000) / 1000)))
