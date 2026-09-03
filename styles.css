@@ -14,6 +14,8 @@
   --line: rgba(215, 117, 112, .55);
   /* trái tim dùng cho mark ngày cưới — mask nên co giãn theo ô, không cần kích thước cứng */
   --heart-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 88'%3E%3Cpath d='M50 88C18 64 2 46 2 28 2 12 14 2 27 2c9 0 18 5 23 13 5-8 14-13 23-13 13 0 25 10 25 26 0 18-16 36-48 60z'/%3E%3C/svg%3E");
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-soft: cubic-bezier(.33, 0, .2, 1);
   --serif: "Cormorant Garamond", Georgia, serif;
   --script: "Dancing Script", cursive;
   --sans: "Be Vietnam Pro", sans-serif;
@@ -210,10 +212,17 @@ body.opened .site {
   background: rgba(255, 250, 243, .92);
   border-bottom: 1px solid rgba(215, 117, 112, .23);
   backdrop-filter: blur(12px);
+  transition: transform .45s var(--ease-out), box-shadow .35s ease;
 }
+body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
+.nav.is-scrolled { box-shadow: 0 10px 30px -24px rgba(89, 71, 63, .65); }
+.nav.is-hidden { transform: translate3d(0, -100%, 0); }
+/* không giấu nav khi người dùng đang tab vào link bên trong */
+.nav:focus-within { transform: none; }
 /* absolute để không tham gia flex layout của .nav */
 .nav-progress {
   position: absolute;
+  will-change: transform;
   left: 0;
   bottom: -1px;
   width: 100%;
@@ -263,10 +272,11 @@ body.opened .site {
 .couple-heart { display: block; margin: -.25rem 0; color: var(--peach); font-family: var(--serif); font-size: 2rem; line-height: 1.6; }
 .hero .honor { margin-top: 2.25rem; }
 .text-link { display: inline-flex; align-items: center; min-height: 44px; gap: .75rem; color: var(--peach-ink); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
-.text-link span { font-size: 1.1rem; }
+.text-link span { font-size: 1.1rem; animation: arrow-bob 2.6s ease-in-out infinite; }
+.text-link:hover span { animation: none; translate: 0 4px; }
 .hero-flower { position: absolute; z-index: 1; pointer-events: none; }
-.hero-flower--left { width: min(560px, 48vw); left: -10%; top: 5%; transform: translate3d(0, var(--parallax-left, 0), 0) rotate(6deg); transition: transform .12s linear; animation: flora-breathe 7s ease-in-out infinite alternate; }
-.hero-flower--right { width: min(390px, 34vw); right: -8%; bottom: -11%; transform: translate3d(0, var(--parallax-right, 0), 0) rotate(-15deg); transition: transform .12s linear; animation: flora-breathe 8s 1s ease-in-out infinite alternate-reverse; }
+.hero-flower--left { width: min(560px, 48vw); left: -10%; top: 5%; rotate: 6deg; will-change: translate, rotate; animation: flora-breathe 7s ease-in-out infinite alternate; }
+.hero-flower--right { width: min(390px, 34vw); right: -8%; bottom: -11%; rotate: -15deg; will-change: translate, rotate; animation: flora-breathe 8s 1s ease-in-out infinite alternate-reverse; }
 
 .section-shell { width: min(1120px, 100%); margin: 0 auto; }
 .countdown { padding: clamp(5rem, 10vw, 8rem) 1.25rem; background: #f4dfd5; }
@@ -289,11 +299,8 @@ body.opened .site {
   border-bottom: 1px solid rgba(89, 71, 63, .26);
 }
 .count-grid div { padding: 1.6rem .5rem; border-right: 1px solid rgba(89, 71, 63, .2); }
-.countdown-shell.visible .count-grid div { animation: counter-rise .65s cubic-bezier(.2,.8,.2,1) both; }
-.countdown-shell.visible .count-grid div:nth-child(2) { animation-delay: .08s; }
-.countdown-shell.visible .count-grid div:nth-child(3) { animation-delay: .16s; }
-.countdown-shell.visible .count-grid div:nth-child(4) { animation-delay: .24s; }
 .count-grid div:last-child { border-right: 0; }
+.count-grid strong.tick { animation: digit-tick .5s var(--ease-out); }
 .count-grid strong { display: block; color: var(--peach-ink); font-family: var(--serif); font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
 .count-grid span { font-size: .75rem; letter-spacing: .13em; text-transform: uppercase; }
 
@@ -356,16 +363,14 @@ body.opened .site {
   cursor: pointer;
   transition: transform .2s ease, background-color .2s ease, color .2s ease, opacity .2s ease;
 }
-.button:hover { transform: translateY(-2px); }
+.button:hover { transform: translateY(-2px); box-shadow: 0 12px 22px -14px rgba(191, 80, 75, .8); }
+.button--outline:hover { background: var(--peach-ink); color: #fff; }
 .button[disabled], .button[aria-disabled="true"] { opacity: .55; pointer-events: none; }
 .button--outline { background: transparent; color: var(--peach-ink); }
 .button--solid { width: fit-content; margin-top: .5rem; }
 .details-copy > p:not(.section-label) { max-width: 570px; color: var(--ink-soft); font-weight: 300; }
 .schedule { margin-top: 2.5rem; border-top: 1px solid rgba(89, 71, 63, .22); }
-.schedule div { display: grid; grid-template-columns: 90px 1fr; gap: 1rem; padding: 1.1rem 0; border-bottom: 1px solid rgba(89, 71, 63, .22); }
-.details-copy.visible .schedule div { animation: schedule-in .6s cubic-bezier(.2,.8,.2,1) both; }
-.details-copy.visible .schedule div:nth-child(2) { animation-delay: .1s; }
-.details-copy.visible .schedule div:nth-child(3) { animation-delay: .2s; }
+.schedule div { position: relative; display: grid; grid-template-columns: 90px 1fr; gap: 1rem; padding: 1.1rem 0; border-bottom: 1px solid rgba(89, 71, 63, .22); }
 .schedule time { color: var(--peach-ink); font-family: var(--serif); font-size: 1.5rem; }
 .schedule span { color: var(--ink-soft); }
 
@@ -403,7 +408,9 @@ body.opened .site {
 @supports not ((-webkit-mask-image: url("")) or (mask-image: url(""))) {
   .wedding-day::before { width: 82%; aspect-ratio: 1; border-radius: 50%; translate: -50% -50%; }
 }
-.month-card.visible .wedding-day::before { animation: date-heartbeat 2.1s ease-in-out infinite; }
+.month-card.visible .wedding-day::before {
+  animation: heart-pop .65s var(--ease-out) .3s backwards, date-heartbeat 2.1s ease-in-out 1s infinite;
+}
 
 .rsvp { padding: clamp(5rem, 11vw, 9rem) 1.25rem; background: #f2ddd5; }
 .rsvp-grid { display: grid; grid-template-columns: .82fr 1.18fr; gap: clamp(3rem, 8vw, 7rem); align-items: start; }
@@ -449,16 +456,89 @@ body.opened .site {
   background: var(--paper);
   text-align: center;
 }
-.closing > img { position: absolute; width: min(500px, 46vw); right: -8%; bottom: -18%; transform: translate3d(0, var(--closing-shift, 0), 0) rotate(-12deg); pointer-events: none; transition: transform .12s linear; animation: flora-breathe 8s ease-in-out infinite alternate; }
+.closing > img { position: absolute; width: min(500px, 46vw); right: -8%; bottom: -18%; rotate: -12deg; pointer-events: none; will-change: translate; animation: flora-breathe 8s ease-in-out infinite alternate; }
 .closing > div { position: relative; z-index: 2; }
 .closing-title { margin: .8rem 0 0; color: var(--peach-ink); font-family: var(--script); font-size: clamp(4.4rem, 11vw, 8.5rem); font-weight: 500; line-height: 1; }
 .closing-date { margin: .5rem 0 0; color: var(--gold-ink); font-size: .78rem; letter-spacing: .18em; }
 footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1.2rem clamp(1.25rem, 4vw, 4rem); border-top: 1px solid rgba(215, 117, 112, .3); background: var(--paper); color: var(--ink-soft); font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; }
 
-[data-reveal] { opacity: 0; transform: translateY(22px); transition: opacity .75s ease, transform .75s ease; }
+/* Chỉ ẩn khi JS chạy được (html.js do inline script gắn). Không có JS thì
+   nội dung hiện bình thường thay vì trắng trang. */
+.js [data-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  transition: opacity .75s var(--ease-out), transform .75s var(--ease-out);
+}
 [data-reveal].visible { opacity: 1; transform: none; }
+
+/* Stagger dùng chung: JS gắn .stagger-on và --i cho từng con.
+   Đặt --step trên container để đổi nhịp. */
+.js [data-stagger].stagger-on > * {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+  transition: opacity .7s var(--ease-out), transform .7s var(--ease-out);
+  transition-delay: calc(var(--i, 0) * var(--step, 75ms));
+}
+[data-stagger].stagger-on.visible > *,
+.visible [data-stagger].stagger-on > * { opacity: 1; transform: none; }
+.dates { --step: 18ms; }
+.count-grid { --step: 90ms; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--peach-ink); outline-offset: 3px; }
 
+/* Vệt sáng quét qua bìa một lần khi tải trang */
+.cover-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, .5) 50%, transparent 58%);
+  translate: -130% 0;
+  animation: sheen 1.5s var(--ease-soft) 1.2s both;
+}
+.cover-hint { animation: hint-float 3s ease-in-out 1.6s infinite; }
+
+/* Gạch chân coral chạy dần dưới từng mốc lịch trình */
+.schedule div::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 100%;
+  height: 1px;
+  background: var(--peach-ink);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform .9s var(--ease-out);
+}
+.visible .schedule.stagger-on div::after {
+  transform: scaleX(1);
+  transition-delay: calc(var(--i, 0) * 75ms + .25s);
+}
+
+@keyframes nav-drop {
+  from { transform: translate3d(0, -100%, 0); }
+  to { transform: none; }
+}
+@keyframes sheen {
+  to { translate: 130% 0; }
+}
+@keyframes hint-float {
+  0%, 100% { opacity: .6; translate: 0 0; }
+  50% { opacity: 1; translate: 0 4px; }
+}
+@keyframes arrow-bob {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 4px; }
+}
+@keyframes digit-tick {
+  from { opacity: .3; transform: translate3d(0, -28%, 0); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes heart-pop {
+  from { opacity: 0; transform: scale(.35); }
+  to { opacity: 1; transform: scale(1); }
+}
 @keyframes card-arrive {
   from { opacity: 0; transform: translateY(1.8rem) rotateX(-5deg) scale(.96); }
   to { opacity: 1; transform: translateY(-.8rem) rotateX(0) scale(1); }
@@ -482,14 +562,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @keyframes flora-breathe {
   from { scale: 1; }
   to { scale: 1.025; }
-}
-@keyframes counter-rise {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes schedule-in {
-  from { opacity: 0; transform: translateX(14px); }
-  to { opacity: 1; transform: none; }
 }
 @keyframes date-heartbeat {
   0%, 70%, 100% { transform: scale(1); }
@@ -555,6 +627,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-  [data-reveal] { opacity: 1; transform: none; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; transition-delay: 0ms !important; }
+  .js [data-reveal],
+  .js [data-stagger].stagger-on > * { opacity: 1 !important; transform: none !important; }
+  .visible .schedule.stagger-on div::after { transform: scaleX(1) !important; }
+  .nav.is-hidden { transform: none !important; }
+  .cover-card::after { display: none; }
 }

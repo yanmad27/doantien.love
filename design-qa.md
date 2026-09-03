@@ -174,7 +174,47 @@ Trước đây nằm trong "ngoài phạm vi" (§13 HANDOFF), nay đã triển k
 
 > Lưu ý vận hành: sửa `guests.csv` xong phải deploy lại thì link mới có hiệu lực. Đừng sửa `code` của khách đã gửi link — link cũ sẽ hỏng.
 
-## 7. Chạy lại QA
+## 7. Vòng 3 — animation
+
+### 7.1. Thêm mới
+
+| Hiệu ứng | Mô tả |
+|---|---|
+| Stagger dùng chung | `[data-stagger]` + `--i` do JS gắn, delay `calc(var(--i) * var(--step))`. Áp cho hero, count-grid, event-body, schedule, lịch (step 18ms), calendar-copy, rsvp-heading, closing |
+| Nav | Trượt xuống khi mở thiệp, đổ bóng khi cuộn, tự ẩn khi cuộn xuống và hiện lại khi cuộn lên |
+| Thanh tiến độ đọc | Vạch coral 2px dưới nav, `scaleX(--progress)` |
+| Nhảy số countdown | Chữ số đổi thì trượt từ trên xuống 0.5s |
+| Mark ngày cưới | Trái tim pop lên rồi mới bắt đầu nhịp đập |
+| Gạch chân lịch trình | Đường coral chạy dần dưới từng mốc giờ, lệch pha theo `--i` |
+| Bìa thiệp | Vệt sáng quét ngang một lần lúc tải; dòng "Chạm để mở" trôi nhẹ |
+| Mũi tên "Xem thông tin" | Nhấp nhô liên tục, dừng khi hover |
+
+### 7.2. Đo hiệu năng — kết quả không như dự đoán
+
+Bản cũ đọc `document.documentElement.scrollHeight` **mỗi khung hình** trong lúc cuộn, ép trình duyệt layout đồng bộ. Đã bỏ (đo sẵn + `ResizeObserver`).
+
+Nhưng khi đo A/B thật thì **cả bản cũ lẫn bản mới đều 60fps đều, 0 khung rớt**:
+
+| | median | p95 | khung > 20ms |
+|---|---:|---:|---:|
+| Bản cũ (HEAD) | 16.70ms | 16.80ms | 0 / 246 |
+| Bản mới | 16.70ms | 16.70ms | 0 / 244 |
+
+Tôi cũng thử đổi parallax từ custom property sang property `translate`/`rotate` với giả thuyết custom property phá đường tắt compositor. **Sai** — số lần recalc style gần như không đổi (523 so với 529 trên 60 bước cuộn).
+
+Kết luận trung thực: **không đo được cải thiện hiệu năng trên máy này** (headless Chrome, Mac M-series — quá nhanh để lộ khác biệt). Việc bỏ forced layout vẫn đúng về nguyên tắc và sẽ có ích trên máy yếu, nhưng chưa có số liệu chứng minh. Cảm giác "mượt hơn" đến từ việc parallax nay nội suy dần (lerp) nên hoa trôi có quán tính — đây là thay đổi *thẩm mỹ*, không phải hiệu năng.
+
+> Cần đo lại trên điện thoại Android tầm trung thật mới kết luận được.
+
+### 7.3. An toàn
+
+- **Không JS**: trước đây `[data-reveal]` bị ẩn vô điều kiện → JS lỗi là trắng trang. Nay chỉ ẩn khi `html.js` (do inline script gắn). Đã kiểm chứng: gỡ class `.js` thì mọi nội dung `opacity: 1`.
+- **Reduced motion**: 0 animation lặp, vệt sáng ẩn, nav không tự giấu, parallax không áp, số countdown không nhảy, toàn bộ nội dung hiện ngay.
+- Không có `IntersectionObserver` thì hiện toàn bộ nội dung ngay.
+- Nav không tự ẩn khi người dùng đang tab vào link bên trong (`:focus-within`).
+- Sau thay đổi: responsive **0 issue** trên 8 bề rộng, axe **0 violation / 41 passes**.
+
+## 8. Chạy lại QA
 
 ```bash
 python3 -m http.server 4321      # phục vụ tĩnh từ thư mục dự án

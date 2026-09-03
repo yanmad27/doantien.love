@@ -23,6 +23,9 @@ const wedding = {
   },
 }
 
+// khai báo sớm vì countdown chạy ngay lúc load, trước phần xử lý scroll bên dưới
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+
 const TZ = 'Asia/Ho_Chi_Minh'
 const WEEKDAYS = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy']
 
@@ -117,12 +120,24 @@ const countdownFields = {
 
 let countdownTimer = 0
 
+// Lớp .tick tự gỡ khi animation kết thúc → lần đổi sau add lại là chạy tiếp,
+// không cần ép reflow để restart animation.
+Object.values(countdownFields).forEach((el) => {
+  el.addEventListener('animationend', () => el.classList.remove('tick'))
+})
+
+function setDigits(el, value) {
+  if (el.textContent === value) return
+  el.textContent = value
+  if (!reducedMotion.matches) el.classList.add('tick')
+}
+
 function updateCountdown() {
   const distance = Math.max(0, startAt.getTime() - Date.now())
-  countdownFields.days.textContent = pad(Math.floor(distance / 86400000), 3)
-  countdownFields.hours.textContent = pad(Math.floor((distance % 86400000) / 3600000))
-  countdownFields.minutes.textContent = pad(Math.floor((distance % 3600000) / 60000))
-  countdownFields.seconds.textContent = pad(Math.floor((distance % 60000) / 1000))
+  setDigits(countdownFields.days, pad(Math.floor(distance / 86400000), 3))
+  setDigits(countdownFields.hours, pad(Math.floor((distance % 86400000) / 3600000)))
+  setDigits(countdownFields.minutes, pad(Math.floor((distance % 3600000) / 60000)))
+  setDigits(countdownFields.seconds, pad(Math.floor((distance % 60000) / 1000)))
   if (distance === 0) window.clearInterval(countdownTimer)
 }
 
@@ -290,43 +305,126 @@ RULES.forEach((rule) => {
    Reveal khi cuộn + parallax hoa (HANDOFF §7)
    --------------------------------------------------------- */
 
-const revealObserver = new IntersectionObserver((entries, observer) => {
-  entries.forEach((entry) => {
-    if (entry.isIntersecting) {
-      entry.target.classList.add('visible')
-      observer.unobserve(entry.target)
+/* Stagger: chỉ bật khi có JS, nếu không thì CSS không ẩn con và nội dung hiện bình thường. */
+document.querySelectorAll('[data-stagger]').forEach((box) => {
+  Array.from(box.children).forEach((child, i) => child.style.setProperty('--i', i))
+  box.classList.add('stagger-on')
+})
+
+const revealTargets = document.querySelectorAll('[data-reveal]')
+if ('IntersectionObserver' in window) {
+  const revealObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible')
+        observer.unobserve(entry.target)
+      }
+    })
+  }, { threshold: 0.12 })
+  revealTargets.forEach((element) => revealObserver.observe(element))
+} else {
+  revealTargets.forEach((element) => element.classList.add('visible'))
+}
+
+/* ---------------------------------------------------------
+   Chuyển động theo scroll (HANDOFF §7)
+
+   Một vòng rAF duy nhất lo cả parallax, nav và thanh tiến độ. Giá trị được
+   nội suy dần về đích (lerp) nên hoa trôi có quán tính thay vì bám cứng scroll.
+
+   Chiều cao trang đo sẵn thay vì đọc scrollHeight mỗi khung hình — đọc
+   scrollHeight giữa lúc cuộn ép trình duyệt layout đồng bộ. Máy mạnh không
+   thấy khác biệt (đo được 60fps đều ở cả hai cách), nhưng máy yếu thì có.
+   --------------------------------------------------------- */
+
+const nav = document.querySelector('.nav')
+const progressBar = document.querySelector('.nav-progress')
+// Ghi thẳng vào property translate/rotate (thay vì transform + custom property)
+// cho đồng bộ với cách các keyframes khác trong file này dùng translate/scale.
+// Đã đo: không đổi gì về số lần recalc style so với cách cũ.
+const parallaxLayers = [
+  { el: document.querySelector('.hero-flower--left'), rate: 0.055, min: 0, max: 42, baseRot: 6, rotAmp: 1.5 },
+  { el: document.querySelector('.hero-flower--right'), rate: -0.035, min: -32, max: 0, baseRot: -15, rotAmp: -2 },
+]
+const closingFlower = document.querySelector('.closing > img')
+
+let maxScroll = 1
+let lastY = 0
+let rafId = 0
+const eased = parallaxLayers.map(() => 0)
+let easedClosing = 0
+
+function measurePage() {
+  maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+}
+
+function paint() {
+  rafId = 0
+  const y = window.scrollY
+  let moving = false
+
+  parallaxLayers.forEach((layer, i) => {
+    if (!layer.el) return
+    const target = Math.min(layer.max, Math.max(layer.min, y * layer.rate))
+    const delta = target - eased[i]
+    if (Math.abs(delta) > 0.05) {
+      eased[i] += delta * 0.12
+      moving = true
+    } else {
+      eased[i] = target
     }
+    layer.el.style.translate = `0 ${eased[i].toFixed(2)}px`
+    layer.el.style.rotate = `${(layer.baseRot + eased[i] / 42 * layer.rotAmp).toFixed(2)}deg`
   })
-}, { threshold: 0.12 })
 
-document.querySelectorAll('[data-reveal]').forEach((element) => revealObserver.observe(element))
+  if (closingFlower) {
+    const target = Math.max((maxScroll - y) * 0.018, 0)
+    const delta = target - easedClosing
+    if (Math.abs(delta) > 0.05) {
+      easedClosing += delta * 0.12
+      moving = true
+    } else {
+      easedClosing = target
+    }
+    closingFlower.style.translate = `0 ${easedClosing.toFixed(2)}px`
+  }
 
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-let ticking = false
-
-function updateFlowerMotion() {
-  const scrollPosition = window.scrollY
-  const root = document.documentElement.style
-  root.setProperty('--parallax-left', `${Math.min(scrollPosition * 0.055, 42)}px`)
-  root.setProperty('--parallax-right', `${Math.max(scrollPosition * -0.035, -32)}px`)
-  root.setProperty('--closing-shift', `${Math.max((document.documentElement.scrollHeight - window.innerHeight - scrollPosition) * 0.018, 0)}px`)
-  ticking = false
+  if (moving) rafId = window.requestAnimationFrame(paint)
 }
 
-function resetFlowerMotion() {
-  const root = document.documentElement.style
-  root.setProperty('--parallax-left', '0px')
-  root.setProperty('--parallax-right', '0px')
-  root.setProperty('--closing-shift', '0px')
+function onScroll() {
+  const y = window.scrollY
+
+  progressBar.style.setProperty('--progress', Math.min(1, y / maxScroll).toFixed(4))
+  nav.classList.toggle('is-scrolled', y > 8)
+  // giấu nav khi cuộn xuống, hiện lại ngay khi cuộn lên
+  if (!reducedMotion.matches) {
+    if (y > 240 && y > lastY + 4) nav.classList.add('is-hidden')
+    else if (y < lastY - 4 || y < 240) nav.classList.remove('is-hidden')
+  }
+  lastY = y
+
+  if (!reducedMotion.matches && !rafId) rafId = window.requestAnimationFrame(paint)
 }
 
-window.addEventListener('scroll', () => {
-  if (reducedMotion.matches || ticking) return
-  ticking = true
-  window.requestAnimationFrame(updateFlowerMotion)
-}, { passive: true })
+function clearParallax() {
+  parallaxLayers.forEach((layer) => {
+    if (!layer.el) return
+    layer.el.style.translate = ''
+    layer.el.style.rotate = ''
+  })
+  if (closingFlower) closingFlower.style.translate = ''
+  nav.classList.remove('is-hidden')
+}
+
+measurePage()
+onScroll()
+window.addEventListener('scroll', onScroll, { passive: true })
+window.addEventListener('resize', measurePage)
+// nội dung reveal làm trang dài ra → đo lại để thanh tiến độ không lệch
+if ('ResizeObserver' in window) new ResizeObserver(measurePage).observe(document.body)
 
 reducedMotion.addEventListener('change', () => {
-  if (reducedMotion.matches) resetFlowerMotion()
+  if (reducedMotion.matches) clearParallax()
 })
-if (reducedMotion.matches) resetFlowerMotion()
+if (reducedMotion.matches) clearParallax()
