@@ -211,7 +211,84 @@ function saveDate() {
   URL.revokeObjectURL(url)
 }
 
-document.querySelectorAll('.save-date').forEach((button) => button.addEventListener('click', saveDate))
+/** Link mở thẳng Google Calendar với sự kiện đã điền sẵn. */
+function googleCalendarUrl() {
+  const { venueName, venueAddress, venueRegion } = wedding.ceremony
+  const location = [venueName, venueAddress, venueRegion].filter(Boolean).join(', ')
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: `Lễ thành hôn ${wedding.couple.groom.displayName} & ${wedding.couple.bride.displayName}`,
+    dates: `${toIcsUtc(startAt)}/${toIcsUtc(endAt)}`,
+    details: `Trân trọng mời bạn đến chung vui cùng ${wedding.couple.groom.displayName} và ${wedding.couple.bride.displayName}.`,
+    location,
+  })
+  return `https://calendar.google.com/calendar/render?${params}`
+}
+
+/* Menu chọn loại lịch. Không tự đoán theo hệ điều hành: người dùng iPhone vẫn
+   có thể xài Google Calendar và ngược lại. */
+const saveButton = document.querySelector('.save-date')
+const saveMenu = document.getElementById('save-menu')
+document.getElementById('save-google').href = googleCalendarUrl()
+
+function positionSaveMenu() {
+  const rect = saveButton.getBoundingClientRect()
+  const gap = 8
+  // trên mobile nút chiếm hết chiều ngang — cho menu rộng bằng nút cho gọn mắt
+  saveMenu.style.minWidth = `${Math.max(232, rect.width)}px`
+  const left = Math.min(rect.left, window.innerWidth - saveMenu.offsetWidth - 12)
+  saveMenu.style.left = `${Math.max(12, left)}px`
+  const spaceBelow = window.innerHeight - rect.bottom
+  saveMenu.style.top = spaceBelow > saveMenu.offsetHeight + gap + 8
+    ? `${rect.bottom + gap}px`
+    : `${Math.max(12, rect.top - saveMenu.offsetHeight - gap)}px`
+}
+
+function closeSaveMenu(returnFocus) {
+  if (saveMenu.hidden) return
+  saveMenu.hidden = true
+  saveButton.setAttribute('aria-expanded', 'false')
+  document.removeEventListener('pointerdown', onPointerOutside, true)
+  document.removeEventListener('keydown', onSaveMenuKey)
+  window.removeEventListener('scroll', onAnchorMoved)
+  window.removeEventListener('resize', onAnchorMoved)
+  if (returnFocus) saveButton.focus()
+}
+
+function onPointerOutside(event) {
+  if (!saveMenu.contains(event.target) && event.target !== saveButton) closeSaveMenu(false)
+}
+function onSaveMenuKey(event) {
+  if (event.key === 'Escape') closeSaveMenu(true)
+}
+/* Bám theo nút chứ không đóng menu: trên điện thoại thanh địa chỉ ẩn/hiện bắn
+   scroll liên tục, đóng theo scroll thì menu tắt ngay khi vừa mở. */
+let anchorRaf = 0
+function onAnchorMoved() {
+  if (anchorRaf) return
+  anchorRaf = window.requestAnimationFrame(() => {
+    anchorRaf = 0
+    if (!saveMenu.hidden) positionSaveMenu()
+  })
+}
+
+saveButton.addEventListener('click', () => {
+  if (!saveMenu.hidden) return closeSaveMenu(true)
+  saveMenu.hidden = false
+  positionSaveMenu()
+  saveButton.setAttribute('aria-expanded', 'true')
+  saveMenu.querySelector('.save-menu-item').focus({ preventScroll: true })
+  document.addEventListener('pointerdown', onPointerOutside, true)
+  document.addEventListener('keydown', onSaveMenuKey)
+  window.addEventListener('scroll', onAnchorMoved, { passive: true })
+  window.addEventListener('resize', onAnchorMoved)
+})
+
+document.getElementById('save-google').addEventListener('click', () => closeSaveMenu(false))
+document.getElementById('save-ics').addEventListener('click', () => {
+  saveDate()
+  closeSaveMenu(true)
+})
 
 /* ---------------------------------------------------------
    RSVP (HANDOFF §4.6 + §8)

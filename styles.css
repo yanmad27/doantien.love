@@ -9,7 +9,8 @@
   --ink-soft: #6f5d55;
   --gold: #aa8356;
   /* biến thể đủ tương phản của peach-dark/gold cho chữ nhỏ (xem design-qa.md) */
-  --peach-ink: #bf504b;
+  /* #bf504b chỉ đạt 4.46:1 cho .nav-rsvp khi section blush trôi dưới nav trong suốt */
+  --peach-ink: #bb4c47;
   --gold-ink: #7d5b2c;
   --line: rgba(215, 117, 112, .55);
   /* trái tim dùng cho mark ngày cưới — mask nên co giãn theo ô, không cần kích thước cứng */
@@ -209,7 +210,8 @@ body.opened .site {
   align-items: center;
   justify-content: space-between;
   padding: 0 clamp(1.2rem, 4vw, 4rem);
-  background: rgba(255, 250, 243, .92);
+  /* .92 để lộ quá nhiều màu section phía dưới, kéo tụt tương phản của nút Xác nhận */
+  background: rgba(255, 250, 243, .97);
   border-bottom: 1px solid rgba(215, 117, 112, .23);
   backdrop-filter: blur(12px);
   transition: transform .45s var(--ease-out), box-shadow .35s ease;
@@ -345,6 +347,47 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .25s backwards; }
 .date-row p { margin: 0; font-size: .78rem; line-height: 1.5; text-transform: uppercase; }
 .lunar-date { margin: 0; color: var(--ink-soft); font-size: .75rem; }
 .card-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: 1.3rem; }
+
+/* Menu chọn loại lịch.
+   position: fixed vì .printed-card có overflow:hidden — menu absolute sẽ bị cắt.
+   Toạ độ do JS tính từ vị trí nút; cuộn trang thì đóng menu. */
+.save-date-wrap { position: relative; display: inline-flex; }
+.save-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 232px;
+  padding: .35rem;
+  display: grid;
+  gap: .15rem;
+  background: var(--paper);
+  border: 1px solid var(--peach);
+  border-radius: 12px;
+  box-shadow: 0 18px 42px -18px rgba(89, 71, 63, .45);
+  animation: menu-in .2s var(--ease-out);
+}
+.save-menu[hidden] { display: none; }
+.save-menu-item {
+  padding: .68rem .85rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: .92rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+/* Giữ chữ màu ink: coral trên nền đã tint chỉ đạt 3.99:1, dưới ngưỡng AA.
+   Vạch coral bên trái làm tín hiệu thay cho việc đổi màu chữ. */
+.save-menu-item:hover, .save-menu-item:focus-visible {
+  background: rgba(215, 117, 112, .13);
+  box-shadow: inset 3px 0 0 var(--peach-ink);
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
 .button {
   min-height: 46px;
   display: inline-flex;
@@ -608,6 +651,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .event-body { padding: 2rem 1.5rem; }
   .event-lead { max-width: 245px; }
   .card-actions { flex-direction: column; }
+  .save-date-wrap { width: 100%; }
   .button { width: 100%; }
   .month-card { padding: 1.4rem 1rem; }
   .dates span, .dates i { min-height: 36px; }

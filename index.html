@@ -111,7 +111,14 @@
               <p class="lunar-date">Nhằm ngày <span data-w="ceremony.lunarDate">24 tháng 08 năm Bính Ngọ</span></p>
               <div class="card-actions">
                 <a class="button" data-w-href="ceremony.mapsUrl" href="https://maps.app.goo.gl/YupybswuAHtPZ6ZY7" target="_blank" rel="noopener noreferrer">Xem bản đồ</a>
-                <button class="button button--outline save-date" type="button">Lưu ngày cưới</button>
+                <div class="save-date-wrap">
+                  <button class="button button--outline save-date" type="button"
+                          aria-haspopup="menu" aria-expanded="false" aria-controls="save-menu">Lưu ngày cưới</button>
+                  <div class="save-menu" id="save-menu" role="menu" hidden>
+                    <a class="save-menu-item" role="menuitem" id="save-google" href="#" target="_blank" rel="noopener noreferrer">Google Calendar</a>
+                    <button class="save-menu-item" role="menuitem" id="save-ics" type="button">Apple Calendar / Outlook</button>
+                  </div>
+                </div>
               </div>
             </div>
           </article>
