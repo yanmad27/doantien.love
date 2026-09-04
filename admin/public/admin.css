@@ -134,6 +134,11 @@ td .note { display: block; color: var(--ink-soft); font-size: .8rem; }
 .pill-no { background: #f6e0de; color: #96403c; }
 .pill-none { background: rgba(89, 71, 63, .08); color: var(--ink-soft); }
 .actions { display: flex; gap: .35rem; justify-content: flex-end; }
+/* Lời chúc dài hơn mọi ô khác nhiều — cho nó chiếm phần lớn bảng và giữ xuống
+   dòng khách tự gõ, chứ đọc một khối chữ dính liền thì soát không nổi. */
+td.wish-text { width: 55%; min-width: 260px; white-space: pre-wrap; overflow-wrap: anywhere; }
+tr.is-hidden td { opacity: .55; }
+tr.is-hidden .pill { margin-left: .4rem; }
 
 /* --- toast --- */
 .toast {

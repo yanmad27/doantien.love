@@ -30,6 +30,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Dancing+Script:wght@500;600&family=Great+Vibes&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Nét chữ cho sổ lời chúc. Cả hai font đều có subset tiếng Việt (đã kiểm),
+       thiếu dấu là hỏng cả ý tưởng "mỗi người một nét chữ". Tải KHÔNG chặn
+       render vì sổ nằm gần cuối trang, còn bìa thiệp là thứ phải hiện ngay:
+       media="print" khiến trình duyệt hạ ưu tiên, onload mới bật lên cho màn hình. -->
+  <link rel="stylesheet" media="print" onload="this.media='all'"
+        href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Shantell+Sans:wght@400;500&display=swap">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Shantell+Sans:wght@400;500&display=swap"></noscript>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="is-closed">
@@ -52,7 +59,10 @@
   </section>
 
   <div class="site" id="site" aria-hidden="true">
-    <header class="nav" aria-label="Điều hướng chính">
+    <!-- tabindex="-1": mở thiệp xong JS dời focus vào ĐÂY chứ không vào link trái
+         tim. Focus thẳng vào link thì trình duyệt vẽ vòng :focus-visible quanh
+         trái tim ở mọi lần mở thiệp, trông như trái tim bị đóng khung đỏ. -->
+    <header class="nav" tabindex="-1" aria-label="Điều hướng chính">
       <a class="nav-brand" href="#invitation" aria-label="Khắc Doãn và Đông Tiên — về đầu thiệp">
         <img class="monogram-mark monogram-mark--nav" src="./assets/heart-logo.webp" width="320" height="236" alt="">
       </a>
@@ -215,6 +225,10 @@
               <div class="success-mark" aria-hidden="true">♡</div>
               <h3>Cảm ơn bạn!</h3>
               <p>Chúng mình đã ghi nhận phản hồi và mong được gặp bạn trong ngày vui.</p>
+              <!-- Sổ lời chúc nằm gần cuối trang và không có mặt trên thanh điều
+                   hướng, nên đây là chỗ dẫn sang tự nhiên nhất: khách vừa xác nhận
+                   xong là lúc họ sẵn lòng viết nhất. JS ẩn dòng này nếu sổ tắt. -->
+              <p class="success-next" id="success-next" hidden><a href="#wishes">Ghi cho tụi mình vài dòng vào sổ lời chúc</a></p>
             </div>
           </div>
         </div>
@@ -245,6 +259,48 @@
               </figcaption>
             </figure>
           </div>
+        </div>
+      </section>
+
+      <!-- Sổ lời chúc — tường giấy nhớ, KHÔNG phải mục đánh giá sản phẩm.
+           Cố ý KHÔNG có: tổng số lời chúc, dấu thời gian, sắp xếp mới nhất trước,
+           phân trang / "xem thêm", avatar tròn. Đó đúng là bộ khuôn của mục review,
+           người đọc nhận ra khuôn trước cả khi kịp đọc nội dung. Mẩu giấy giữ đúng
+           thứ tự người ta viết, y như quyển sổ dày dần lên.
+           JS chỉ bỏ [hidden] khi có endpoint (xem #wishes trong script.js). -->
+      <section class="wishbook" id="wishes" hidden aria-labelledby="wishbook-title">
+        <div class="section-shell wishbook-shell">
+          <div class="wishbook-head" data-reveal data-stagger>
+            <p class="section-label">Sổ lời chúc</p>
+            <h2 id="wishbook-title">Viết cho tụi mình<br><em>vài dòng</em></h2>
+            <p class="wishbook-copy">Cưới xong tụi mình in hết ra, đóng lại thành một quyển để dành.</p>
+          </div>
+
+          <form class="wishbook-form" id="wish-form" novalidate data-reveal>
+            <!-- Hỏi một câu cụ thể thay vì "Nhập lời chúc": vừa để ô nhập không
+                 giống form đánh giá, vừa tránh việc ai cũng viết đúng một câu
+                 "chúc trăm năm hạnh phúc". Placeholder mở sẵn đầu câu cho dễ viết. -->
+            <label class="wish-field">Bạn biết tụi mình từ hồi nào?
+              <textarea name="text" rows="4" maxlength="500" required
+                        placeholder="Hồi đó…" aria-describedby="err-wish-text"></textarea>
+              <span class="field-error" id="err-wish-text"></span>
+            </label>
+            <label class="wish-field wish-field--sign">Ký tên
+              <input type="text" name="name" maxlength="60" autocomplete="name" required
+                     placeholder="Tên của bạn" aria-describedby="err-wish-name">
+              <span class="field-error" id="err-wish-name"></span>
+            </label>
+            <button class="button button--solid" type="submit">Ghim lên tường</button>
+            <p class="form-error" id="wish-error" role="alert"></p>
+          </form>
+
+          <div class="wish-thanks" id="wish-thanks" role="status" tabindex="-1" hidden>
+            <p class="wish-thanks-line">Ghim lên rồi, cảm ơn bạn.</p>
+            <button class="wish-again" id="wish-again" type="button">Viết thêm một mẩu nữa</button>
+          </div>
+
+          <div class="wish-wall" id="wish-wall"></div>
+          <p class="wish-empty" id="wish-empty" hidden>Tường còn trống. Bạn mở hàng nhé.</p>
         </div>
       </section>
 

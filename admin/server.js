@@ -8,6 +8,8 @@
  *   2. API quản trị         quanly.doantien.love/api/*      (cần đăng nhập)
  *   3. Thiệp riêng của khách  doantien.love/t/<mã>          (công khai, Traefik trỏ sang)
  *      + POST /api/rsvp                                     (công khai, từ trang thiệp)
+ *      + GET/POST /api/wishes                               (công khai, sổ lời chúc)
+ *   4. Trang in sổ lời chúc  quanly.doantien.love/so-loi-chuc (cần đăng nhập)
  *
  * Thiệp riêng render tại server nên preview Zalo/Messenger hiện đúng tên
  * người nhận — crawler không chạy JS.
@@ -45,7 +47,7 @@ const MAX_BODY = 64 * 1024
    Lưu trữ — một file JSON, ghi kiểu atomic (ghi tạm rồi rename)
    --------------------------------------------------------- */
 
-let db = { guests: [], rsvps: [] }
+let db = { guests: [], rsvps: [], wishes: [] }
 let writeChain = Promise.resolve()
 
 function parseSeedCsv() {
@@ -69,9 +71,10 @@ async function loadDb() {
     db = JSON.parse(await fsp.readFile(DB_PATH, 'utf8'))
     db.guests ||= []
     db.rsvps ||= []
+    db.wishes ||= []
   } catch {
     // lần chạy đầu: nạp sẵn danh sách từ guests.csv để link đã gửi không chết
-    db = { guests: parseSeedCsv(), rsvps: [] }
+    db = { guests: parseSeedCsv(), rsvps: [], wishes: [] }
     await saveDb()
     console.log(`Khởi tạo dữ liệu với ${db.guests.length} khách từ guests.csv`)
   }
@@ -201,8 +204,161 @@ function renderInvitation(guest) {
 }
 
 /* ---------------------------------------------------------
+   Sổ lời chúc
+
+   Mỗi mẩu chỉ lưu một `seed` ngẫu nhiên; nét chữ / màu giấy / độ nghiêng suy ra
+   từ đó. Suy ở SERVER chứ không ở trang thiệp, vì cùng một mẩu còn phải hiện y
+   hệt trên trang in PDF — hai nơi tự tính lấy thì sớm muộn cũng lệch nhau và
+   quyển in ra không còn giống cái khách đã thấy.
+   --------------------------------------------------------- */
+
+const WISH_FONTS = 4 // số nét chữ, phải khớp .wish--f0..f3 trong styles.css
+const WISH_PAPERS = 5 // số màu giấy, phải khớp .wish--p0..p4
+
+/** Nghiêng trong khoảng ±2.8° — đủ để thấy dán bằng tay, chưa tới mức khó đọc. */
+function wishStyle(seed) {
+  const n = Math.abs(Math.floor(seed) || 0)
+  return {
+    font: n % WISH_FONTS,
+    paper: Math.floor(n / WISH_FONTS) % WISH_PAPERS,
+    tilt: Number(((((Math.floor(n / (WISH_FONTS * WISH_PAPERS)) % 9) - 4) * 0.7)).toFixed(2)),
+  }
+}
+
+/* Gửi ra ngoài đúng những gì cần vẽ mẩu giấy. Cố ý KHÔNG có `at`: dấu thời gian
+   là thứ tố cáo mạnh nhất rằng đây là một cái feed. `guestCode` cũng không ra —
+   ai viết cho ai là việc của chủ thiệp. */
+const publicWish = (w) => ({ id: w.id, name: w.name, text: w.text, ...wishStyle(w.seed) })
+
+/* Chặn spam: tối đa 4 mẩu mỗi IP trong 10 phút. Đếm trong RAM giống phần chặn
+   dò mật khẩu — restart là reset, với một trang cưới thì chấp nhận được. */
+const WISH_WINDOW_MS = 10 * 60_000
+const WISH_MAX_PER_WINDOW = 4
+const wishRate = new Map()
+
+function wishRateExceeded(ip) {
+  const rec = wishRate.get(ip)
+  if (!rec || Date.now() > rec.until) return false
+  return rec.count >= WISH_MAX_PER_WINDOW
+}
+
+function noteWish(ip) {
+  const rec = wishRate.get(ip)
+  if (rec && Date.now() <= rec.until) rec.count += 1
+  else wishRate.set(ip, { count: 1, until: Date.now() + WISH_WINDOW_MS })
+}
+
+/* ---------------------------------------------------------
+   Trang in sổ lời chúc — mở bằng trình duyệt rồi Ctrl/Cmd+P → Lưu thành PDF.
+   Không dùng thư viện PDF nào: app này không có dependency ngoài, mà bộ máy in
+   của trình duyệt đã đủ để ra một file đẹp.
+   --------------------------------------------------------- */
+
+/* Nét chữ và màu giấy đi bằng CLASS chứ không nhét vào style="": tên font có dấu
+   nháy kép ("Patrick Hand"), nhét thẳng vào thuộc tính là nó cắt đứt thuộc tính
+   ngay tại đó và cả bản in mất sạch chữ viết tay.
+   Bốn nét chữ / năm màu giấy dưới đây phải khớp .wish--f* và .wish--p* trong
+   styles.css — lệch là quyển in ra không còn giống cái khách đã thấy. */
+const PRINT_HANDS = `
+  .f0 { --hand: "Patrick Hand", cursive; --hand-size: 1.06rem; --hand-lh: 1.62; --sign: "Great Vibes", cursive; --sign-size: 1.55rem; }
+  .f1 { --hand: "Dancing Script", cursive; --hand-size: 1.22rem; --hand-lh: 1.5; --sign: "Dancing Script", cursive; --sign-size: 1.3rem; }
+  .f2 { --hand: "Shantell Sans", cursive; --hand-size: 1rem; --hand-lh: 1.6; --sign: "Patrick Hand", cursive; --sign-size: 1.15rem; }
+  .f3 { --hand: "Great Vibes", cursive; --hand-size: 1.5rem; --hand-lh: 1.5; --sign: "Shantell Sans", cursive; --sign-size: 1rem; }
+  .p0 { --paper: #fffaf3; } .p1 { --paper: #fdf1e6; } .p2 { --paper: #fbf4ea; }
+  .p3 { --paper: #fdeee9; } .p4 { --paper: #f9f3e8; }`
+
+function renderWishBook() {
+  const visible = db.wishes.filter((w) => !w.hidden)
+  const notes = visible.map((w) => {
+    const s = wishStyle(w.seed)
+    return `<figure class="note f${s.font} p${s.paper}" style="--tilt:${s.tilt}deg">`
+      + `<blockquote>${escapeHtml(w.text)}</blockquote>`
+      + `<figcaption>${escapeHtml(w.name)}</figcaption></figure>`
+  }).join('\n')
+
+  return `<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sổ lời chúc — Khắc Doãn &amp; Đông Tiên</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Dancing+Script:wght@500;600&family=Great+Vibes&family=Patrick+Hand&family=Shantell+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2rem 1.5rem 4rem; background: #efe7de; color: #59473f;
+         font-family: "Cormorant Garamond", Georgia, serif; }
+  .sheet { max-width: 190mm; margin: 0 auto; }
+  .cover { text-align: center; padding: 3rem 0 2.5rem; }
+  .cover .label { margin: 0; font-size: .72rem; letter-spacing: .3em; text-transform: uppercase; color: #7d5b2c; }
+  .cover h1 { margin: .6rem 0 0; font-family: "Great Vibes", cursive; font-weight: 400;
+              font-size: 3.4rem; line-height: 1.1; color: #bb4c47; }
+  .cover .date { margin: .4rem 0 0; font-size: .8rem; letter-spacing: .18em; color: #7d5b2c; }
+  .cover .rule { width: 68px; height: 1px; margin: 1.4rem auto 0; background: rgba(215,117,112,.55); }
+
+  /* Lưới masonry bằng CSS columns: mỗi mẩu cao thấp khác nhau, không cần JS đo. */
+  .wall { column-count: 2; column-gap: 10mm; }
+  .note { break-inside: avoid; page-break-inside: avoid; margin: 0 0 8mm;
+          padding: 6mm 6mm 5mm; background: var(--paper); rotate: var(--tilt);
+          border: 1px solid rgba(89,71,63,.16); border-radius: 3px;
+          box-shadow: 0 2px 6px -3px rgba(89,71,63,.5); }
+${PRINT_HANDS}
+  .note blockquote { margin: 0; font-family: var(--hand); font-size: var(--hand-size); line-height: var(--hand-lh);
+                     white-space: pre-wrap; overflow-wrap: anywhere; }
+  .note figcaption { margin-top: 4mm; text-align: right; font-family: var(--sign);
+                     font-size: var(--sign-size); color: #bb4c47; }
+  .note figcaption::before { content: "— "; }
+  .empty { text-align: center; font-size: 1.1rem; color: #6f5d55; }
+
+  .toolbar { position: sticky; top: 0; display: flex; gap: .6rem; justify-content: center;
+             padding: .8rem; margin: -2rem -1.5rem 1rem; background: rgba(255,250,243,.94);
+             border-bottom: 1px solid rgba(215,117,112,.28); font-family: system-ui, sans-serif; }
+  .toolbar button, .toolbar a { min-height: 40px; padding: .5rem 1.1rem; border-radius: 999px;
+             border: 1px solid #bb4c47; background: #bb4c47; color: #fff; font: inherit;
+             font-size: .85rem; text-decoration: none; display: inline-flex; align-items: center; cursor: pointer; }
+  .toolbar a { background: transparent; color: #bb4c47; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .toolbar { display: none; }
+    .note { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button type="button" onclick="window.print()">In / Lưu thành PDF</button>
+  <a href="/">Về trang quản lý</a>
+</div>
+<div class="sheet">
+  <div class="cover">
+    <p class="label">Sổ lời chúc</p>
+    <h1>Khắc Doãn &amp; Đông Tiên</h1>
+    <p class="date">04 · 10 · 2026</p>
+    <div class="rule"></div>
+  </div>
+  ${visible.length ? `<div class="wall">\n${notes}\n</div>` : '<p class="empty">Chưa có lời chúc nào.</p>'}
+</div>
+</body>
+</html>`
+}
+
+/* ---------------------------------------------------------
    Tiện ích HTTP
    --------------------------------------------------------- */
+
+/* Trang thiệp nằm ở origin khác app này. Thực tế Traefik trỏ doantien.love/api/*
+   sang đây nên trình duyệt thấy là cùng origin, nhưng vẫn gửi kèm cho chắc —
+   và để gọi thẳng subdomain quanly khi chạy thử ở máy vẫn được. */
+const publicCors = (methods) => ({
+  'Access-Control-Allow-Origin': SITE_ORIGIN,
+  'Access-Control-Allow-Methods': methods,
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+})
 
 function clientIp(req) {
   const fwd = req.headers['x-forwarded-for']
@@ -303,12 +459,7 @@ const server = http.createServer(async (req, res) => {
 
     /* --- RSVP: công khai, gọi từ trang thiệp (khác origin) --- */
     if (p === '/api/rsvp') {
-      const cors = {
-        'Access-Control-Allow-Origin': SITE_ORIGIN,
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Max-Age': '86400',
-      }
+      const cors = publicCors('POST, OPTIONS')
       if (req.method === 'OPTIONS') return send(res, 204, '', cors)
       if (req.method !== 'POST') return json(res, 405, { error: 'method' }, cors)
       const body = await readBody(req)
@@ -332,6 +483,46 @@ const server = http.createServer(async (req, res) => {
       })
       await saveDb()
       return json(res, 200, { ok: true }, cors)
+    }
+
+    /* --- Sổ lời chúc: công khai, đọc và ghi từ trang thiệp --- */
+    if (p === '/api/wishes') {
+      const cors = publicCors('GET, POST, OPTIONS')
+      if (req.method === 'OPTIONS') return send(res, 204, '', cors)
+
+      if (req.method === 'GET') {
+        // Giữ nguyên thứ tự người ta viết, y như quyển sổ dày dần lên.
+        // KHÔNG đảo mới nhất lên đầu — đó là nhịp của feed, không phải của sổ.
+        return json(res, 200, { wishes: db.wishes.filter((w) => !w.hidden).map(publicWish) },
+          { ...cors, 'Cache-Control': 'no-store' })
+      }
+
+      if (req.method !== 'POST') return json(res, 405, { error: 'method' }, cors)
+
+      const ip = clientIp(req)
+      if (wishRateExceeded(ip)) {
+        return json(res, 429, { error: 'Bạn vừa gửi khá nhiều rồi, nghỉ chút rồi viết tiếp nhé.' }, cors)
+      }
+      const body = await readBody(req)
+      const name = String(body.name || '').trim().slice(0, 60)
+      const text = String(body.text || '').trim().slice(0, 500)
+      if (!name || !text) return json(res, 400, { error: 'Thiếu tên hoặc lời chúc' }, cors)
+
+      const wish = {
+        id: crypto.randomUUID(),
+        guestCode: String(body.guestCode || '').slice(0, 32),
+        name,
+        text,
+        // quyết định nét chữ / màu giấy / độ nghiêng, xem wishStyle()
+        seed: crypto.randomInt(0, 1 << 20),
+        hidden: false,
+        at: new Date().toISOString(),
+      }
+      db.wishes.push(wish)
+      noteWish(ip)
+      await saveDb()
+      // trả lại mẩu vừa ghim để trang thiệp vẽ đúng nét chữ đó, không phải tải lại
+      return json(res, 200, { ok: true, wish: publicWish(wish) }, cors)
     }
 
     /* --- đăng nhập --- */
@@ -358,7 +549,7 @@ const server = http.createServer(async (req, res) => {
       if (!authed) return json(res, 401, { error: 'Chưa đăng nhập' })
 
       if (p === '/api/data' && req.method === 'GET') {
-        return json(res, 200, { guests: db.guests, rsvps: db.rsvps, siteOrigin: SITE_ORIGIN })
+        return json(res, 200, { guests: db.guests, rsvps: db.rsvps, wishes: db.wishes, siteOrigin: SITE_ORIGIN })
       }
 
       if (p === '/api/guests' && req.method === 'POST') {
@@ -406,6 +597,26 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true })
       }
 
+      /* Ẩn thay vì xoá là lựa chọn mặc định: lời chúc hiện ngay khi khách gửi,
+         nên nếu ai đó phá thì cần gỡ khỏi tường NGAY, còn nội dung vẫn nằm đó
+         để chủ thiệp đọc lại rồi mới quyết xoá hẳn. */
+      const wishMatch = p.match(/^\/api\/wishes\/([0-9a-fA-F-]{36})$/)
+      if (wishMatch) {
+        const wish = db.wishes.find((w) => w.id === wishMatch[1])
+        if (!wish) return json(res, 404, { error: 'Không tìm thấy lời chúc' })
+        if (req.method === 'DELETE') {
+          db.wishes = db.wishes.filter((w) => w.id !== wishMatch[1])
+          await saveDb()
+          return json(res, 200, { ok: true })
+        }
+        if (req.method === 'PATCH') {
+          const body = await readBody(req)
+          wish.hidden = body.hidden === true
+          await saveDb()
+          return json(res, 200, wish)
+        }
+      }
+
       const editMatch = p.match(/^\/api\/guests\/([a-z0-9]{4,16})$/)
       if (editMatch) {
         const code = editMatch[1]
@@ -428,6 +639,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       return json(res, 404, { error: 'Không có route này' })
+    }
+
+    /* --- Trang in sổ lời chúc --- */
+    if (p === '/so-loi-chuc') {
+      if (!authed) return send(res, 302, '', { Location: '/' })
+      return send(res, 200, renderWishBook(), {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow',
+      })
     }
 
     /* --- UI quản trị --- */
