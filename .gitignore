@@ -3,3 +3,7 @@ node_modules
 *.zip
 dist/
 /t/
+# Bản prototype React của "Bé Phong Bì". Đã rút phần cần dùng sang
+# index.html/styles.css/script.js và assets/gift-*.webp — giữ lại để đối chiếu,
+# nhưng đừng cho `git add .` nuốt cả thư mục Vite lẫn file PNG 718 KB vào lịch sử.
+doantien-gift-animation-handoff/

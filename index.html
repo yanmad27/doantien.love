@@ -238,20 +238,133 @@
            Khách không quan tâm thì lướt qua, ai muốn mới mở — đỡ kỳ.
            JS ẩn cả section nếu thiếu file QR (xem #gift trong script.js). -->
       <section class="gift" id="gift" hidden>
-        <div class="section-shell gift-shell" data-reveal>
+        <!-- data-phase (idle → riding → arrived → received) là thứ CSS bám vào để
+             diễn chuyến đi của Bé Phong Bì. Nó nằm ở .gift-shell chứ không phải
+             #gift hay #gift-stage: cả hai nút đó đều bị JS bật/tắt [hidden], còn
+             cái này phải luôn có mặt và phủ được cả sân khấu lẫn dòng trạng thái. -->
+        <div class="section-shell gift-shell" id="gift-shell" data-phase="idle" data-reveal>
           <p class="section-label">Mừng cưới</p>
           <h2 class="gift-title">Ở xa không tới được?</h2>
           <p class="gift-copy">Có mặt là quý nhất rồi. Còn nếu bạn ở xa mà vẫn muốn góp một lời chúc,
             tụi mình để cái nút này ở đây.</p>
 
-          <button class="button gift-open" id="gift-open" type="button">Gửi lời chúc mừng từ xa</button>
+          <!-- Ẩn cả khối chứ không riêng cái nút: dòng giới thiệu Bé nằm ngay dưới
+               nút, để lại một mình nó sau khi bấm thì thành câu nói trống không. -->
+          <div class="gift-action" id="gift-action">
+            <div class="gift-idle-party" aria-hidden="true">
+              <span class="gift-idle-drummer"></span>
+              <span class="gift-idle-rider">
+                <img src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                     loading="lazy" decoding="async" alt="">
+              </span>
+              <span class="gift-idle-flag"></span>
+              <span class="gift-idle-notes"><i></i><i></i><i></i></span>
+            </div>
+            <button class="button gift-open" id="gift-open" type="button">Gọi Bé Phong Bì</button>
+            <p class="gift-microcopy">Bé chỉ định đi một mình thôi. Ít nhất Bé nghĩ vậy.</p>
+          </div>
 
-          <div class="gift-stage" id="gift-stage" hidden>
-            <p class="gift-status" id="gift-status" role="status" aria-live="polite"></p>
-            <div class="gift-bar" id="gift-bar" hidden aria-hidden="true"><i></i></div>
-            <figure class="gift-qr" id="gift-qr" hidden>
-              <img src="./assets/qr-mung-cuoi.png" width="370" height="370"
-                   alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img">
+          <!-- tabindex="-1": bấm xong #gift-action biến mất, focus rơi về <body> và
+               phím Tab kế tiếp quay lại đầu thiệp. JS dời focus vào đây, giống cách
+               .nav và #wish-thanks đang làm. -->
+          <div class="gift-stage" id="gift-stage" tabindex="-1" hidden>
+            <div class="gift-scene" aria-hidden="true">
+              <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                   loading="lazy" decoding="async" alt="">
+              <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
+                   cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
+                   thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
+                   duyệt chỉ tải gift-journey-scene.webp một lần. -->
+              <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                   loading="lazy" decoding="async" alt="">
+              <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
+                   aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
+                   Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
+              <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
+              <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
+              <!-- Dùng lại sprite màu nước rồi làm mềm cả lớp thay cho mấy khối
+                   bo tròn tự vẽ: khối phẳng ở xa nhìn như placeholder chưa xong,
+                   nhưng giữ nguyên nét mặt sắc ở cỡ này lại làm khung 390px rối. -->
+              <div class="gift-crowd-far">
+                <i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+
+              <div class="gift-road-magic">
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+              </div>
+              <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
+
+              <!-- Một sprite sheet được cắt lại ở nhiều ô và đổi tỉ lệ/lật/ngắt
+                   nhịp. Tách mỗi người thành một file sẽ làm 4G phải mở nhiều kết
+                   nối và rất dễ vượt ngân sách ảnh chỉ để tạo cảm giác đông. -->
+              <div class="gift-procession gift-procession--back">
+                <span class="gift-marcher gift-marcher--flag"></span>
+                <span class="gift-marcher gift-marcher--flower"></span>
+                <span class="gift-marcher gift-marcher--cheer"></span>
+              </div>
+              <div class="gift-rider-track">
+                <img class="gift-rider" src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                     loading="lazy" decoding="async" alt="">
+              </div>
+              <div class="gift-procession gift-procession--front">
+                <span class="gift-marcher gift-marcher--drum"></span>
+                <span class="gift-marcher gift-marcher--cheer"></span>
+                <span class="gift-marcher gift-marcher--flag"></span>
+              </div>
+              <div class="gift-foreground">
+                <i></i><i></i><i></i>
+              </div>
+              <!-- Pháo hoa bị nhốt trong chính khung tranh, không phủ .gift-stage:
+                   ở arrived mã QR nằm ở hàng dưới nên camera không bao giờ phải
+                   nhìn xuyên qua hạt; received thì QR đã được thay bằng cảm ơn. -->
+              <div class="gift-fireworks">
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              </div>
+              <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
+                   sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
+                   /t/<mã>/ hâm nóng nhầm một trang HTML thay vì sprite. -->
+              <img class="gift-procession-source" src="./assets/gift-procession-sprites.webp"
+                   width="1000" height="500" loading="lazy" decoding="async" alt="">
+              <!-- Hoa giấy nằm TRONG khung tranh chứ không phủ cả sân khấu: ảnh hoa
+                   giấy là khung viền cánh hoa quanh một khoảng giữa trống trơn, mà
+                   object-fit: cover trên một khối cao và hẹp thì cắt đúng cái khoảng
+                   trống đó — thành ra chỉ còn một mảng kem phẳng làm mờ luôn bức
+                   tranh. Đặt ở đây thì khung 3:2 khớp đúng tỉ lệ ảnh, cánh hoa hiện
+                   đủ, và hoa giấy bung ra ngay trên đầu Bé vừa tới nơi. -->
+              <div class="gift-celebration">
+                <img src="./assets/gift-confetti.webp" width="1400" height="933"
+                     loading="lazy" decoding="async" alt="">
+              </div>
+            </div>
+
+            <!-- Trên điện thoại biển thật chỉ rộng 30–45px nên dòng này thay cho
+                 chữ li ti trong tranh. Hai mẩu phụ bị ẩn thị giác nhưng giữ câu
+                 hoàn chỉnh cho trình đọc màn hình; mũi tên chỉ là trang trí. -->
+            <p class="gift-route">
+              <span class="gift-route-sr">Hành trình từ <span id="gift-route-origin-a11y">Nhà bạn</span> đến Đám cưới Doãn và Tiên.</span>
+              <span class="gift-route-visual" aria-hidden="true">
+                <span id="gift-route-origin">Nhà bạn</span>
+                <span class="gift-route-arrow">→</span>
+                <span>Đám cưới Doãn &amp; Tiên</span>
+              </span>
+            </p>
+
+            <figure class="gift-qr" id="gift-qr" tabindex="-1" hidden>
+              <div class="gift-envelope">
+                <img class="gift-envelope-art" src="./assets/gift-envelope-open.webp" width="711" height="720"
+                     loading="lazy" decoding="async" alt="" aria-hidden="true">
+                <!-- KHÔNG thêm loading="lazy" cho riêng ảnh QR này: script.js chỉ bỏ
+                     [hidden] của cả section khi ảnh bắn sự kiện `load`, mà ảnh lazy
+                     nằm trong khối display:none thì không bao giờ được tải — thêm vào
+                     là mất sạch phần mừng cưới trên bản chạy thật, không một lỗi nào
+                     trong console. -->
+                <img src="./assets/qr-mung-cuoi.png" width="370" height="370"
+                     alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img">
+              </div>
               <figcaption>
                 Quét mã là tới thẳng ví của tụi mình.<br>
                 <span class="gift-joke">Bao nhiêu cũng quý — tụi mình hứa chỉ nhìn tên để cảm ơn chứ không nhìn số.
@@ -260,13 +373,27 @@
             </figure>
 
             <!-- Hiện khi webhook SePay báo tiền của đúng khách này đã về (xem
-                 #gift trong script.js). Chỉ lời cảm ơn, không bao giờ kèm số tiền. -->
-            <div class="gift-thanks" id="gift-thanks" role="status" aria-live="polite" hidden>
+                 #gift trong script.js). Chỉ lời cảm ơn, không bao giờ kèm số tiền.
+                 KHÔNG mang role/aria-live: vùng đọc duy nhất là #gift-status bên
+                 dưới. Để ở đây nữa thì role=status kèm aria-atomic đọc luôn cả nhãn
+                 nút "Mừng thêm lần nữa" thành một phần của lời cảm ơn. -->
+            <div class="gift-thanks" id="gift-thanks" tabindex="-1" hidden>
               <p class="gift-thanks-mark" aria-hidden="true"></p>
               <p class="gift-thanks-line" id="gift-thanks-line">Tụi mình nhận được rồi!</p>
               <p class="gift-thanks-sub">Cảm ơn bạn thật nhiều. Hẹn gặp ở Long Phụng nhé.</p>
+              <!-- Lời cảm ơn không được là ngõ cụt: ai muốn mừng thêm lần nữa
+                   vẫn phải lấy lại được QR. -->
+              <button class="button button--outline gift-more" id="gift-more" type="button">Mừng thêm lần nữa</button>
             </div>
           </div>
+
+          <!-- Vừa là lời thoại nhìn thấy được của chuyến đi, vừa là vùng aria-live
+               DUY NHẤT của cả phần mừng cưới. Phải nằm NGOÀI #gift-stage: role=status
+               nằm trong một nút cha đang [hidden] thì lúc bắt đầu nó chưa có trong cây
+               trợ năng, VoiceOver/Safari bỏ luôn lần đọc đầu tiên. Cũng nhờ ở ngoài mà
+               chữ nằm trên nền giấy phẳng chứ không đè lên tranh màu nước — chữ màu cố
+               định trên tranh không bao giờ chứng minh được đủ tương phản. -->
+          <p class="gift-status" id="gift-status" role="status" aria-live="polite" aria-atomic="true"></p>
         </div>
       </section>
 

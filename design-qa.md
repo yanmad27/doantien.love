@@ -230,3 +230,144 @@ Kiểm tra nhanh:
 3. Bật Reduced Motion trong OS → mọi hoa ngừng chuyển động, nội dung hiện ngay.
 4. Thu cửa sổ về 320px → không có thanh cuộn ngang, 2 CTA trong card vẫn thấy đủ.
 5. Bấm `Lưu ngày cưới` → mở file `.ics`, xác nhận `DTSTART:20261004T043000Z`.
+
+## 9. Vòng 4 — đoàn rước của Bé Phong Bì
+
+- **Ngày QA:** 04.09.2026
+- **Trình duyệt:** Google Chrome 152, tab xác nhận `visibilityState = visible`
+- **Viewport:** 320×720, 390×844 và 1440×1000
+- **Ảnh chụp:** đã chụp giữa chặng `riding` và sau khi sang `arrived` ở cả ba cỡ
+
+### Kết quả
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Ba lớp xa / trung / gần cùng chạy | ✅ 21–22 animation hoạt động trong chặng `riding` |
+| Ảnh nền, Bé và sprite tải thật | ✅ `naturalWidth` lần lượt 1120 / 400 / 1000 |
+| Không tràn ngang | ✅ `scrollWidth - clientWidth = 0` ở cả ba viewport |
+| Bé đỗ lại ở cổng | ✅ chặng cuối là `arrived`, Bé và hai cụm đoàn rước còn trong tranh |
+| QR hiện sau 4,8 giây | ✅ `#gift-qr[hidden] = false`, ảnh QR rộng nguồn 360px |
+| Reduced motion | ✅ bỏ thẳng chặng diễn, vào `arrived` và hiện QR trong dưới 80ms |
+| Thiệp riêng `/t/<mã>/` | ✅ sprite đổi thành `/assets/...`, tải đủ 1000px |
+| Ngân sách ảnh | ✅ 166.750 byte (162,8 KiB), dưới 200 KB |
+| Thuộc tính động | ✅ keyframe chỉ đổi `transform`, `opacity`, `filter` |
+
+Console localhost chỉ có lỗi CORS dự kiến từ API production của sổ lời chúc và
+trạng thái mừng cưới; không có exception JavaScript hay lỗi tải asset hoạt cảnh.
+
+## 10. Vòng 5 — pháo hoa và cao trào nhận tiền
+
+- **Ngày QA:** 04.09.2026
+- **Trình duyệt:** Google Chrome 152, tab xác nhận `visibilityState = visible`
+- **Ảnh chụp:** đủ `idle` / `riding` / `arrived` / `received` ở 390×844 và 1440×1000
+
+### Hình ảnh và luồng
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Idle có chuyển động mời bấm | ✅ Bé thở, người đánh trống nhún, cờ phất và ba nốt nhạc lệch pha |
+| Riding có phản ứng phụ | ✅ sáu hạt tim/nhạc, bốn đám bụi, bốn nhịp nhân vật khác nhau |
+| Lớp xa không còn placeholder | ✅ dùng lại sprite màu nước, làm mềm/giảm bão hòa cả lớp |
+| Arrived có cao trào ngắn | ✅ Bé và đoàn bật mừng, ba pháo hoa nổ một lượt; QR vẫn hiện ở 4,8 giây |
+| Received bung hết cỡ rồi dừng | ✅ 24 tia pháo hoa chạy năm lượt, hoa giấy trôi, Bé/đoàn nhảy hữu hạn |
+| Pháo hoa có đè QR không | ✅ hai bounding box không giao nhau ở cả 390px và desktop |
+| Reduced motion | ✅ 0 hạt hiện, 0 animation trong `#gift`, QR hiện ngay |
+| 320px / thiệp riêng | ✅ không tràn ngang; hai asset mới phân giải thành `/assets/...` |
+| Thuộc tính trong keyframe | ✅ chỉ có `transform`, `opacity`, `filter` |
+| Ngân sách ảnh | ✅ không thêm raster; giữ 166.750 byte (162,8 KiB) |
+
+### DevTools Performance — chặng `received`
+
+Đo năm giây ở viewport 390×844 sau khi decode hết ảnh, bật CPU throttle 4×:
+
+- 302 callback `requestAnimationFrame`; median 16,7ms, p95 16,7ms, max 16,8ms.
+- 0 khoảng >20ms và 0 khoảng >34ms.
+- Trace compositor ghi 301 `DrawFrame` và 301 `Display::FrameDisplayed`.
+- Có 1 `Scheduler::BeginFrameDropped` ở giây 3,93, nhưng không tạo ra khoảng rAF
+  dài hay khung hụt nhìn thấy. Không ghi kết quả thành “0 dropped frame”.
+
+Đây là Chrome headless trên máy M3 có CPU throttle, chưa phải phép đo GPU trên
+điện thoại Android tầm trung thật. Lỗi console localhost vẫn chỉ là CORS dự kiến
+từ API production; không có exception hay lỗi tải asset của phần mừng cưới.
+
+## 11. Vòng 6 — phối cảnh người trên mặt đường
+
+- **Ngày QA:** 04.09.2026
+- **Ảnh nguồn dò đường:** `assets/gift-journey-scene.webp`
+- **Tâm đường theo % khung:** `(43,86) → (58,76) → (76,64) → (75,53) → (82,47)`
+- **Công thức chiều cao:** `h = 0,49 × (footY − 34)`
+
+Đo giữa chặng `riding` bằng Chrome 152, tab `visible`. Ba viewport 320 / 390 /
+1280 cho cùng kết quả trong sai số làm tròn 0,3 điểm phần trăm và đều không tràn
+ngang. Bảng dưới là số tại 1280px:
+
+| Lớp | Chân y (%) | Cao đo (%) | Cao theo công thức (%) |
+|---|---:|---:|---:|
+| Bé | 87,6 | 26,3 | 26,3 |
+| Trước 1 / 2 / 3 | 82,5 / 78,2 / 74,9 | 23,3 / 21,3 / 19,9 | 23,8 / 21,7 / 20,0 |
+| Sau 1 / 2 / 3 | 61,4 / 59,9 / 57,2 | 14,0 / 12,6 / 11,8 | 13,4 / 12,7 / 11,4 |
+| Xa, đầu → cuối | 54,5 → 49,2 | 10,1 → 7,7 | 10,0 → 7,4 |
+
+Sai số tối đa khoảng 4% đến từ bounding box của sprite đang xoay/nhún. Ảnh chụp
+ở cả ba cỡ xác nhận hàng trước bám đoạn đường rộng phía dưới–trái, hàng sau nằm
+trong khúc cua x≈69–82%, và đám xa thu gọn quanh tâm đường lên cổng; không còn
+nhân vật đứng trong khoảng giấy trắng. Các ảnh `.tmp-*` đã được xoá sau khi soi.
+
+## 12. Vòng 7 — chữ trên hai tấm biển
+
+- **Ngày QA:** 04.09.2026
+- **Ca chụp:** trang chung và `/t/w8x3vb/` (tên 22 ký tự) ở 320 / 390 / 1280px
+- **Trạng thái:** giữa chặng `riding`, tab Chrome 152 xác nhận `visible`
+
+### Cách xử lý cỡ chữ
+
+- Dưới 600px, hai chữ trong tranh bị ẩn vì biển thật chỉ rộng 30–45px. Dòng
+  `Tên khách → Đám cưới Doãn & Tiên` hiện dưới khung ở 16px.
+- Từ 600px, bảng cổng dùng hai dòng 12px trong vùng viền 72,5×48,3px.
+- `Nhà bạn` dùng 12px trong biển chỉ đường 46,9×19,7px. Tên khách dài dùng mảnh
+  giấy nối biển 133,9×31,6px; tên dài nhất nằm trọn một dòng và không overflow.
+- Tên lấy từ `data-guest-name` và chỉ gán qua `textContent`.
+
+### Tương phản và trợ năng
+
+| Vùng | Màu chữ | Tỉ số thấp nhất |
+|---|---|---:|
+| Bảng cổng, nền ảnh gốc | `--ink #59473f` | 6,23:1 |
+| Biển chỉ đường + giấy 78% | `--ink #59473f` | 6,25:1 |
+| Mảnh giấy tên dài 84% | `--ink #59473f` | 6,81:1 |
+
+Hai nhãn trong `.gift-scene[aria-hidden=true]` chỉ là bản trang trí. Dòng dưới
+khung có một câu dành riêng cho cây trợ năng: `Hành trình từ <tên> đến Đám cưới
+Doãn và Tiên.`; các chữ nhìn thấy và mũi tên nằm trong nhánh `aria-hidden` nên
+không bị đọc lại. Cả sáu ca có `horizontalOverflow = 0`; trang chung ra `Nhà
+bạn`, trang riêng ra nguyên văn `Gia đình cô Lê Thị Lan`.
+
+## 13. Vòng 8 — thay chip tên bằng biển màu nước thật
+
+Thiết kế mảnh giấy bo góc ở vòng 7 bị loại: nó rời cột biển và mang hình thức UI,
+đặc biệt mọi tên khách thật đều rơi vào nhánh đó. Bản mới cắt đúng vùng biển từ
+chính `gift-journey-scene.webp`, kéo rộng từ điểm gắn vào cột rồi đặt chữ lên
+trên. Ảnh nền và ảnh cắt dùng cùng URL nên không tăng byte tải; không còn
+`border`, `border-radius`, nền `rgba` hay nhánh theo độ dài tên.
+
+### QA
+
+- **Ca chụp:** `Nhà bạn` và cả ba khách 15 / 18 / 22 ký tự ở 600 và 1280px.
+- **Kích thước biển:** 133,9×31,6px ở cả hai viewport do sân khấu đã chạm trần
+  560px; mọi tên dùng font 12px, một dòng, không clip.
+- **Vị trí:** nhãn bắt đầu x=6,2%, y=54,8%; mặt biển kéo rộng vẫn chồng lên biển
+  gốc và giữ nguyên điểm nối với cột.
+- **Responsive:** tám ca đều `horizontalOverflow = 0`; dưới 600px tiếp tục dùng
+  dòng hành trình 16px đã duyệt ở vòng 7.
+
+Tương phản `--ink #59473f` được đo trên đúng dải pixel nằm sau bounding box glyph
+sau phép biến đổi ảnh, không lấy cả vùng nền sáng xung quanh:
+
+| Nội dung | Tỉ số thấp nhất |
+|---|---:|
+| `Nhà bạn` | 6,38:1 |
+| Tên 15 ký tự | 6,25:1 |
+| Tên 18 ký tự | 5,55:1 |
+| `Gia đình cô Lê Thị Lan` | 5,38:1 |
+
+Toàn bộ tám ảnh `.tmp-*` đã được xoá sau khi soi.
