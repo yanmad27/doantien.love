@@ -1176,6 +1176,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   animation: gift-blink 1.5s ease-in-out infinite;
 }
 .gift-status[hidden] { display: none; }
+.gift-status { max-width: 26rem; }
+
+/* Thanh tiến trình của màn diễn — cố tình kẹt ở 99% */
+.gift-bar {
+  width: min(260px, 70vw);
+  height: 4px;
+  margin-top: .9rem;
+  border-radius: 999px;
+  background: rgba(215, 117, 112, .22);
+  overflow: hidden;
+}
+.gift-bar[hidden] { display: none; }
+.gift-bar i {
+  display: block;
+  width: var(--pct, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--peach-ink);
+  transition: width .5s var(--ease-out);
+}
 
 .gift-qr { margin: 0; display: grid; justify-items: center; gap: .9rem; }
 .gift-qr[hidden] { display: none; }
