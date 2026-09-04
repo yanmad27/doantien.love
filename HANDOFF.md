@@ -34,7 +34,7 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 ### Buổi lễ
 
 - Ngày: **Chủ nhật, 04.10.2026**
-- Giờ: **12:00** (đón khách từ **11:30**)
+- Giờ: **12:00** (đón khách từ **11:15**)
 - Âm lịch: **Ngày 24 tháng 08 năm Bính Ngọ**
 - Địa điểm đang dùng trong prototype: **Nhà hàng Long Phụng, Khánh Hòa**
 - Hạn RSVP đang dùng: **24.09.2026**
@@ -85,7 +85,7 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
 - Mobile: nội dung giới thiệu trước, card lễ cưới phía sau.
 - Card lễ cưới giữ tỷ lệ 12:17 và ngôn ngữ hình ảnh giống thiệp in.
 - Lịch trình:
-  - `11:30` — Đón khách & chụp ảnh
+  - `11:15` — Đón khách & chụp ảnh
   - `12:00` — Lễ thành hôn & khai tiệc
 - CTA:
   - `Xem bản đồ`

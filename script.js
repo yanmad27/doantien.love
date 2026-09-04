@@ -9,7 +9,7 @@ const wedding = {
     startAt: '2026-10-04T12:00:00+07:00',
     endAt: '2026-10-04T15:00:00+07:00',
     // Khung giờ đón khách, hiển thị trên thẻ mời
-    welcomeStartAt: '2026-10-04T11:30:00+07:00',
+    welcomeStartAt: '2026-10-04T11:15:00+07:00',
     welcomeEndAt: '2026-10-04T12:00:00+07:00',
     lunarDate: '24 tháng 08 năm Bính Ngọ',
     venueShortName: 'Long Phụng',
