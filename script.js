@@ -99,6 +99,10 @@ const openButton = document.getElementById('open-invitation')
 
 document.documentElement.classList.add('is-locked')
 
+/* Tắt khôi phục vị trí cuộn của trình duyệt: thiệp luôn phải bắt đầu từ bìa.
+   Để mặc định thì F5 giữa trang xong bấm "Mở thiệp" là rơi thẳng vào giữa bài. */
+if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+
 /* Tên cô dâu chú rể là chữ duy nhất có mặt ở CẢ bìa lẫn trang thiệp. Để bìa tan
    rồi trang mới hiện thì mắt thấy đúng hai chữ đó biến mất rồi quay lại; cho hai
    lớp chồng nhau thì thành nhìn đôi. Nên thay vì tan, tên bay từ bìa về đúng vị
@@ -189,6 +193,129 @@ function flyCoverNamesIntoPlace() {
     layer.remove()
   }, NAME_FLIGHT_MS)
   return true
+}
+
+/* ---------------------------------------------------------
+   Hỏi vui "bạn có đến không"
+
+   Hiện sau khi mở thiệp một lúc ngẫu nhiên 5–10s. Bấm "không" thì modal nhảy
+   sang góc khác và nài thêm một câu, tới bước cuối thì nút "không" bỏ chạy luôn
+   — đây là trò đùa, nên bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
+   --------------------------------------------------------- */
+
+const NUDGE_DELAY_MIN = 5000
+const NUDGE_DELAY_MAX = 10000
+const NUDGE_SEEN_KEY = 'kd-dt-nudge-xong'
+
+/* Mỗi bước đứng ở một góc khác nhau cho có cảm giác "nó lại hiện chỗ khác". */
+const NUDGE_STEPS = [
+  {
+    place: 'center',
+    overline: 'Câu hỏi quan trọng',
+    title: 'Bạn đến chứ?',
+    copy: 'Tụi mình hỏi trước cho chắc, chứ tới ngày mà thiếu bạn thì kỳ lắm.',
+    yes: 'Có chứ, đợi mình!',
+    no: 'Chắc là không…',
+  },
+  {
+    place: 'bottom-left',
+    overline: 'Ơ khoan đã',
+    title: 'Cưới có một lần thôi mà',
+    copy: 'Tụi mình cưới đúng một lần duy nhất trong đời. Bạn không đến thì bàn tiệc dư một ghế, ảnh cưới thiếu một người, và tụi mình sẽ nhắc chuyện này tới già.',
+    yes: 'Thôi được rồi, mình đến!',
+    no: 'Vẫn không',
+  },
+  {
+    place: 'top-right',
+    overline: 'Thông báo',
+    title: 'Nút "không" vừa bỏ chạy',
+    copy: 'Nó nghỉ việc rồi, giờ chỉ còn đúng một nút thôi. Bấm đi, tụi mình chờ ở Long Phụng.',
+    yes: 'Ừ thì mình đến',
+    no: null,
+  },
+]
+
+const nudge = document.getElementById('nudge')
+let nudgeReady = false
+
+function renderNudgeStep(i) {
+  const step = NUDGE_STEPS[i]
+  nudge.dataset.place = step.place
+  nudge.dataset.step = String(i)
+  document.getElementById('nudge-overline').textContent = step.overline
+  document.getElementById('nudge-title').textContent = step.title
+  document.getElementById('nudge-copy').textContent = step.copy
+  const yes = document.getElementById('nudge-yes')
+  const no = document.getElementById('nudge-no')
+  yes.textContent = step.yes
+  no.textContent = step.no || ''
+  no.hidden = !step.no
+}
+
+function closeNudge() {
+  if (nudge.open) nudge.close()
+  try {
+    window.sessionStorage.setItem(NUDGE_SEEN_KEY, '1')
+  } catch (error) {
+    /* chế độ riêng tư chặn storage — cùng lắm là hỏi lại ở lần tải sau */
+  }
+}
+
+if (nudge && typeof nudge.showModal === 'function') {
+  let stepIndex = 0
+
+  document.getElementById('nudge-no').addEventListener('click', () => {
+    stepIndex += 1
+    if (stepIndex >= NUDGE_STEPS.length) return closeNudge()
+    renderNudgeStep(stepIndex)
+  })
+
+  document.getElementById('nudge-yes').addEventListener('click', () => {
+    closeNudge()
+    // Đưa thẳng tới ô xác nhận và điền sẵn "Có" — hỏi xong mà bắt khách tự đi
+    // tìm form thì mất luôn cái đà vừa gật đầu.
+    const attendance = document.querySelector('#rsvp-form [name="attendance"]')
+    if (attendance) attendance.value = 'yes'
+    const rsvp = document.getElementById('rsvp')
+    if (!rsvp) return
+    /* Phải hoãn sang khung hình sau: <dialog> lúc đóng trả focus về phần tử được
+       focus trước đó (ở đây là logo trên nav, đầu trang) và trình duyệt cuộn theo
+       focus. Cuộn ngay trong handler thì bị nó kéo ngược lên đầu ngay sau đó —
+       nhìn như nút "Có" không làm gì cả. */
+    window.setTimeout(() => {
+      if (attendance) attendance.focus({ preventScroll: true })
+      rsvp.scrollIntoView({ behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'start' })
+    }, 0)
+  })
+
+  // bấm ra ngoài khung cũng đóng được: <dialog> không tự làm việc này
+  nudge.addEventListener('click', (event) => {
+    if (event.target === nudge) closeNudge()
+  })
+  nudge.addEventListener('close', closeNudge)
+
+  nudgeReady = true
+}
+
+function scheduleNudge() {
+  if (!nudgeReady) return
+  let seen = false
+  try {
+    seen = window.sessionStorage.getItem(NUDGE_SEEN_KEY) === '1'
+  } catch (error) {
+    seen = false
+  }
+  if (seen) return
+  const delay = NUDGE_DELAY_MIN + Math.random() * (NUDGE_DELAY_MAX - NUDGE_DELAY_MIN)
+  window.setTimeout(() => {
+    // Khách đã gửi phản hồi trong lúc chờ thì thôi, hỏi nữa là vô duyên.
+    // Panel này ẩn/hiện bằng class .show (display: none trong CSS) chứ KHÔNG
+    // dùng thuộc tính hidden — kiểm .hidden thì lúc nào cũng false.
+    const success = document.getElementById('success')
+    if (success && success.classList.contains('show')) return
+    renderNudgeStep(0)
+    nudge.showModal()
+  }, delay)
 }
 
 /* ---------------------------------------------------------
@@ -315,12 +442,22 @@ function openInvitation() {
   // trạng thái cuối của bìa (đã phóng to) chứ không phải vị trí đang thấy.
   document.documentElement.classList.remove('is-locked')
   document.body.classList.remove('is-closed')
+  /* Về đầu trang NGAY khi vừa mở khoá cuộn. Tải lại trang giữa chừng thì trình
+     duyệt nhớ vị trí cuộn cũ, nhưng lúc bìa còn đóng thì overflow: hidden nên
+     không thấy; vừa bỏ khoá là nó nhảy phịch xuống chỗ cũ — mở thiệp ra đã thấy
+     ngay section 2, 3 thay vì phần đầu, và animation bay tên cũng đáp sai chỗ vì
+     đo trước lúc nhảy. Phải đặt trước flyCoverNamesIntoPlace() để phép đo đọc
+     đúng toạ độ cuối. */
+  window.scrollTo(0, 0)
   if (flyCoverNamesIntoPlace()) document.body.classList.add('names-flying')
   document.body.classList.add('opened')
   site.setAttribute('aria-hidden', 'false')
   // Phải gọi ngay trong handler của click: trình duyệt chỉ cho phát nhạc khi
   // lệnh play() nằm trong cùng cử chỉ của người dùng, đẩy vào setTimeout là bị chặn.
   prepareMusic()
+  // Đếm giờ hỏi vui bắt đầu từ lúc mở thiệp, không phải lúc tải trang: bung modal
+  // lên khi bìa còn đóng thì khách chưa đọc được gì đã bị hỏi.
+  scheduleNudge()
   // 950ms = lúc bìa đã tan hẳn (xem khối chuyển cảnh trong styles.css).
   // Nhả focus sớm hơn thì màn hình giật về nav lúc bìa còn đang mở dở.
   window.setTimeout(() => {
