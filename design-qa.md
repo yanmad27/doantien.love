@@ -312,3 +312,32 @@ Sai số tối đa khoảng 4% đến từ bounding box của sprite đang xoay/
 ở cả ba cỡ xác nhận hàng trước bám đoạn đường rộng phía dưới–trái, hàng sau nằm
 trong khúc cua x≈69–82%, và đám xa thu gọn quanh tâm đường lên cổng; không còn
 nhân vật đứng trong khoảng giấy trắng. Các ảnh `.tmp-*` đã được xoá sau khi soi.
+
+## 12. Vòng 7 — chữ trên hai tấm biển
+
+- **Ngày QA:** 04.09.2026
+- **Ca chụp:** trang chung và `/t/w8x3vb/` (tên 22 ký tự) ở 320 / 390 / 1280px
+- **Trạng thái:** giữa chặng `riding`, tab Chrome 152 xác nhận `visible`
+
+### Cách xử lý cỡ chữ
+
+- Dưới 600px, hai chữ trong tranh bị ẩn vì biển thật chỉ rộng 30–45px. Dòng
+  `Tên khách → Đám cưới Doãn & Tiên` hiện dưới khung ở 16px.
+- Từ 600px, bảng cổng dùng hai dòng 12px trong vùng viền 72,5×48,3px.
+- `Nhà bạn` dùng 12px trong biển chỉ đường 46,9×19,7px. Tên khách dài dùng mảnh
+  giấy nối biển 133,9×31,6px; tên dài nhất nằm trọn một dòng và không overflow.
+- Tên lấy từ `data-guest-name` và chỉ gán qua `textContent`.
+
+### Tương phản và trợ năng
+
+| Vùng | Màu chữ | Tỉ số thấp nhất |
+|---|---|---:|
+| Bảng cổng, nền ảnh gốc | `--ink #59473f` | 6,23:1 |
+| Biển chỉ đường + giấy 78% | `--ink #59473f` | 6,25:1 |
+| Mảnh giấy tên dài 84% | `--ink #59473f` | 6,81:1 |
+
+Hai nhãn trong `.gift-scene[aria-hidden=true]` chỉ là bản trang trí. Dòng dưới
+khung có một câu dành riêng cho cây trợ năng: `Hành trình từ <tên> đến Đám cưới
+Doãn và Tiên.`; các chữ nhìn thấy và mũi tên nằm trong nhánh `aria-hidden` nên
+không bị đọc lại. Cả sáu ca có `horizontalOverflow = 0`; trang chung ra `Nhà
+bạn`, trang riêng ra nguyên văn `Gia đình cô Lê Thị Lan`.
