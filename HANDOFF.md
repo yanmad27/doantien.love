@@ -273,8 +273,19 @@ Khi `prefers-reduced-motion: reduce`:
 - **Hỏi lại ngay khi tab sáng lại** (`visibilitychange`) — đây là phần quan trọng
   nhất: khách chuyển tiền ở app ngân hàng rồi mới quay lại, lúc tab bị ẩn điện
   thoại thường treo luôn `setInterval`.
-- Nhận được → giấu QR, hiện `#gift-thanks` kèm tên khách, tim đập nhẹ. Ghi
-  `sessionStorage` để tải lại trang không diễn lại từ đầu.
+- Nhận được → giấu QR, hiện `#gift-thanks` kèm tên khách, tim đập nhẹ.
+- **Trạng thái sống lâu hơn phiên duyệt web.** Hỏi máy chủ **một lần ngay khi
+  tải trang**, không chờ khách bấm mở QR — máy chủ mới là nguồn thật, nên đổi
+  máy, xoá dữ liệu duyệt web hay mở bằng trình duyệt khác vẫn nhớ đúng.
+  `localStorage` (không phải `sessionStorage`) chỉ là bộ nhớ đệm để khỏi chớp
+  một nhịp QR trong lúc chờ mạng, và để còn đúng khi khách mất mạng.
+- **Lời cảm ơn không phải ngõ cụt:** nút "Mừng thêm lần nữa" (`#gift-more`) lấy
+  lại QR, bỏ qua màn diễn 5.3s vì khách đã xem một lần rồi.
+- Lưu **mốc thời gian** của khoản mới nhất chứ không lưu cờ có/không, vì sau khi
+  bấm "Mừng thêm" thì câu trả lời vẫn luôn là "đã nhận" (khoản cũ). Cứ thấy
+  `thanked` mà hiện lời cảm ơn là QR bị giật đi ngay lúc khách đang quét mã.
+  Chỉ khoản có `at` KHÁC mới được thay màn hình. Vì vậy `/api/gift-status` phải
+  trả khoản **mới nhất**, không phải khoản đầu tiên.
 - Luồng phía máy chủ: xem `admin/README.md` mục "Mừng cưới qua SePay".
 
 ### Google Maps

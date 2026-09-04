@@ -11,7 +11,7 @@ cùng Dokploy.
 | `doantien.love/t/<mã>` | công khai | Thiệp riêng, **render tại server** từ danh sách khách |
 | `doantien.love/api/rsvp` | công khai (POST) | Nhận phản hồi RSVP từ trang thiệp |
 | `doantien.love/api/sepay-webhook` | SePay (POST, có chữ ký) | Nhận báo tiền mừng cưới về |
-| `doantien.love/api/gift-status` | công khai (GET) | Thiệp hỏi "tiền của khách này tới chưa" |
+| `doantien.love/api/gift-status` | công khai (GET) | Thiệp hỏi "tiền của khách này tới chưa" — trả khoản **mới nhất** |
 
 Các URL trên do Traefik phân tới cùng một container. `doantien.love` còn lại
 vẫn do app thiệp (nginx) phục vụ.
@@ -93,6 +93,14 @@ chuyển khoản: `MC` + mã khách (ví dụ `MCab3k9z`). Ảnh QR lấy từ
 
 Bước 2 mà quên thì vẫn chạy: SePay để `code` rỗng, app tự dò `MC<mã>` trong nội
 dung chuyển khoản.
+
+### Mừng nhiều lần
+
+Một khách chuyển mấy lần thì có bấy nhiêu bản ghi — chống trùng chỉ chặn cùng
+một `id` giao dịch, không chặn giao dịch khác. `/api/gift-status` trả khoản **mới
+nhất** (không phải khoản đầu), nhờ vậy `at` đổi mỗi lần có tiền mới và thiệp phân
+biệt được "vẫn khoản cũ" với "vừa có khoản mới". Lấy khoản đầu thì sau nút "Mừng
+thêm lần nữa" trên thiệp, QR sẽ bị giật đi ngay lúc khách đang quét mã.
 
 ### Xoá một khoản đã nhận
 

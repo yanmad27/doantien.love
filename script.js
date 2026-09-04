@@ -434,18 +434,27 @@ if (gift && giftQrImg) {
   const guestCode = document.body.dataset.guestCode || ''
   const guestName = document.body.dataset.guestName || ''
   const thanks = document.getElementById('gift-thanks')
+  const giftQr = document.getElementById('gift-qr')
   const statusEndpoint = wedding.gift.statusEndpoint
   const THANKED_KEY = `kd-dt-gift-${guestCode}`
 
-  // sessionStorage bị chặn ở chế độ riêng tư trên vài máy — hỏng chỗ này không
-  // được làm chết cả thiệp, giống cách phần nhạc nền đang làm.
-  function alreadyThanked() {
-    try { return window.sessionStorage.getItem(THANKED_KEY) === '1' } catch { return false }
+  /* Nhớ mốc thời gian của khoản mừng cưới mới nhất đã hiện lời cảm ơn.
+     localStorage chứ không sessionStorage: khách đóng hẳn trình duyệt rồi mở
+     lại thiệp thì vẫn phải nhớ, chứ không bày lại QR như chưa nhận gì.
+     Máy chủ mới là nguồn thật — chỗ này chỉ để khỏi chớp một nhịp QR trong lúc
+     chờ mạng trả lời, và để còn đúng khi khách mất mạng.
+     Chế độ riêng tư ở vài máy chặn storage: hỏng chỗ này không được làm chết cả
+     thiệp, giống cách phần nhạc nền đang làm. */
+  function seenAt() {
+    try { return window.localStorage.getItem(THANKED_KEY) || '' } catch { return '' }
   }
-  function rememberThanked() {
-    try { window.sessionStorage.setItem(THANKED_KEY, '1') } catch { /* chặn thì thôi */ }
+  function rememberAt(at) {
+    try { window.localStorage.setItem(THANKED_KEY, at) } catch { /* chặn thì thôi */ }
   }
 
+  let lastKnownAt = seenAt() // khoản mới nhất ĐÃ hiện lời cảm ơn
+  let serverAt = ''          // khoản mới nhất máy chủ biết, cập nhật mỗi lần hỏi
+  let wantMore = false       // khách vừa bấm "Mừng thêm lần nữa" ở lần xem này
   let pollTimer = 0
   let giveUpAt = 0
 
@@ -455,26 +464,37 @@ if (gift && giftQrImg) {
     document.removeEventListener('visibilitychange', onVisible)
   }
 
-  function showThanks() {
+  function showThanks(at) {
     stopPolling()
-    rememberThanked()
+    wantMore = false
+    lastKnownAt = at || lastKnownAt || '1'
+    rememberAt(lastKnownAt)
     if (!thanks) return
     const line = document.getElementById('gift-thanks-line')
     // Tên đã escape sẵn ở server; gán qua textContent nên không dựng HTML.
     if (line && guestName) line.textContent = `Tụi mình nhận được rồi, cảm ơn ${guestName}!`
-    const qr = document.getElementById('gift-qr')
-    if (qr) qr.hidden = true
+    if (giftQr) giftQr.hidden = true
     thanks.hidden = false
+  }
+
+  async function fetchStatus() {
+    try {
+      const res = await fetch(`${statusEndpoint}?code=${encodeURIComponent(guestCode)}`, { cache: 'no-store' })
+      if (!res.ok) return null
+      return await res.json()
+    } catch { return null } // mạng chập chờn thì để lần hỏi sau lo
   }
 
   async function checkGift() {
     if (Date.now() > giveUpAt) return stopPolling()
-    try {
-      const res = await fetch(`${statusEndpoint}?code=${encodeURIComponent(guestCode)}`, { cache: 'no-store' })
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.thanked) showThanks()
-    } catch { /* mạng chập chờn thì để lần hỏi sau lo */ }
+    const data = await fetchStatus()
+    if (!data?.thanked) return
+    serverAt = data.at || '1'
+    /* So mốc thời gian chứ không chỉ hỏi "đã nhận chưa": sau khi bấm "Mừng thêm
+       lần nữa" thì câu trả lời vẫn luôn là "đã nhận" (khoản cũ). Cứ thấy true mà
+       hiện lời cảm ơn là QR bị giật đi ngay lúc khách đang quét mã để chuyển
+       tiếp. Chỉ khoản MỚI mới được thay màn hình. */
+    if (serverAt !== lastKnownAt) showThanks(serverAt)
   }
 
   function onVisible() {
@@ -494,11 +514,19 @@ if (gift && giftQrImg) {
     checkGift()
   }
 
+  /* Hỏi một lần ngay khi tải trang, không chờ khách bấm mở QR. Thiếu bước này
+     thì "đã chuyển hay chưa" chỉ nằm trong storage của máy khách: đổi máy, xoá
+     dữ liệu duyệt web, hay mở bằng trình duyệt khác là thiệp quên sạch và bày
+     lại QR như chưa nhận gì. Máy chủ nhớ giùm nên reload kiểu gì cũng đúng. */
+  if (guestCode && statusEndpoint) {
+    fetchStatus().then((data) => { if (data?.thanked) serverAt = data.at || '1' })
+  }
+
   document.getElementById('gift-open').addEventListener('click', (event) => {
     const button = event.currentTarget
     const stage = document.getElementById('gift-stage')
     const status = document.getElementById('gift-status')
-    const qr = document.getElementById('gift-qr')
+    const qr = giftQr
     button.hidden = true
     stage.hidden = false
 
@@ -506,8 +534,10 @@ if (gift && giftQrImg) {
     const reveal = () => {
       status.hidden = true
       bar.hidden = true
-      // Đã mừng cưới ở lần mở trước rồi thì đưa thẳng lời cảm ơn, đừng bày lại QR
-      if (alreadyThanked()) return showThanks()
+      /* Đã mừng cưới rồi thì đưa thẳng lời cảm ơn, đừng bày lại QR. Ưu tiên câu
+         trả lời của máy chủ, rơi về storage khi mạng chưa kịp về. */
+      const known = serverAt || lastKnownAt
+      if (known && !wantMore) return showThanks(known)
       qr.hidden = false
       startPolling()
     }
@@ -527,6 +557,18 @@ if (gift && giftQrImg) {
     })
     window.setTimeout(reveal, at)
   })
+
+  /* Mừng thêm lần nữa: lấy lại QR mà KHÔNG diễn lại 5.3 giây — khách đã xem một
+     lần rồi, bắt xem lại chỉ tổ phiền. Lời cảm ơn quay lại khi có khoản mới. */
+  const moreButton = document.getElementById('gift-more')
+  if (moreButton) {
+    moreButton.addEventListener('click', () => {
+      wantMore = true
+      if (thanks) thanks.hidden = true
+      if (giftQr) giftQr.hidden = false
+      startPolling()
+    })
+  }
 }
 
 /* ---------------------------------------------------------

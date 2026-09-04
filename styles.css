@@ -1235,6 +1235,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   line-height: 1.35;
 }
 .gift-thanks-sub { margin: 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
+.gift-more { margin-top: .7rem; }
 
 @keyframes gift-heart {
   0%, 100% { transform: scale(1); }

@@ -497,7 +497,13 @@ const server = http.createServer(async (req, res) => {
 
       const code = String(url.searchParams.get('code') || '').toLowerCase().slice(0, 32)
       if (!code) return json(res, 400, { error: 'thiếu code' }, cors)
-      const gift = db.gifts.find((g) => g.guestCode === code)
+      /* Lấy khoản MỚI NHẤT, không phải khoản đầu tiên: khách mừng thêm lần nữa
+         thì `at` phải đổi, nhờ vậy thiệp mới phân biệt được "vẫn khoản cũ" với
+         "vừa có khoản mới" mà hiện lại lời cảm ơn. Lấy khoản đầu thì lần chuyển
+         thứ hai không đổi gì và thiệp đứng im.
+         Mảng gifts được push theo thứ tự nhận nên phần tử cuối là mới nhất. */
+      const mine = db.gifts.filter((g) => g.guestCode === code)
+      const gift = mine.length ? mine[mine.length - 1] : null
       return json(res, 200, { thanked: Boolean(gift), at: gift?.at || null },
         { ...cors, 'Cache-Control': 'no-store' })
     }
