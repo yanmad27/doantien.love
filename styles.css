@@ -591,7 +591,12 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
      3  .hero-frame       chữ, luôn trên cùng
    Phải ghi z-index rõ ràng cho cả ba: để auto thì ::after (sinh ra sau nội dung)
    tự nằm trên ảnh, còn ::before lại nằm dưới — hai đường viền ăn hai kiểu. */
-.hero-flower, .hero-wave { position: absolute; pointer-events: none; }
+/* height: auto BẮT BUỘC. Ba ảnh này có thuộc tính width/height trong thẻ <img>
+   (để trình duyệt chừa sẵn chỗ, không giật layout lúc ảnh tải xong). Thuộc tính
+   đó là presentational hint đặt CẢ hai chiều; CSS dưới đây chỉ đè width, nên nếu
+   không trả height về auto thì chiều cao kẹt ở số trong thẻ và ảnh bị bóp méo
+   20–24%. Chỉ khi một chiều là auto thì aspect-ratio từ thẻ mới có tác dụng. */
+.hero-flower, .hero-wave { position: absolute; height: auto; pointer-events: none; }
 .hero-wave { z-index: 0; }
 .hero-flower { z-index: 2; }
 .hero-flower--left {
