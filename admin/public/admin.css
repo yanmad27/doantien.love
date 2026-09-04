@@ -148,3 +148,27 @@ td .note { display: block; color: var(--ink-soft); font-size: .8rem; }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: .01ms !important; }
 }
+
+/* --- modal sửa khách --- */
+.modal {
+  width: min(560px, calc(100vw - 2rem));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 26px 60px -30px rgba(89, 71, 63, .8);
+}
+.modal::backdrop { background: rgba(89, 71, 63, .35); }
+.modal form { padding: 1.4rem; }
+.modal h2 { margin: 0; font-size: 1.15rem; }
+.modal-sub {
+  margin: .2rem 0 1.1rem;
+  color: var(--ink-soft);
+  font-size: .82rem;
+}
+/* cùng nhịp lưới với form "Thêm khách" ở trên, để hai nơi nhìn như một */
+.modal-grid { display: flex; gap: .75rem; align-items: end; flex-wrap: wrap; }
+.modal-grid .grow-1 { flex: 1 1 130px; }
+.modal-grid .grow-2 { flex: 2 1 180px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.3rem; }

@@ -187,6 +187,51 @@ $('#bulk-add').addEventListener('click', async () => {
 
 $('#search').addEventListener('input', (e) => { filter = e.target.value; render() })
 
+/* --- modal sửa khách --- */
+
+const editDialog = $('#edit-dialog')
+const editForm = $('#edit-form')
+let editingCode = null
+
+function openEditDialog(guest) {
+  editingCode = guest.code
+  $('#edit-who').textContent = `${fullName(guest)} · ${guest.code}`
+  editForm.title.value = guest.title || ''
+  editForm.name.value = guest.name || ''
+  editForm.seats.value = guest.seats || 1
+  editForm.note.value = guest.note || ''
+  editDialog.showModal()
+  // chọn sẵn nội dung ô tên: sửa tên là việc hay làm nhất
+  editForm.name.focus()
+  editForm.name.select()
+}
+
+editForm.addEventListener('submit', async (e) => {
+  // method="dialog" tự đóng modal, nhưng phải chặn để còn gọi API rồi mới đóng
+  e.preventDefault()
+  const name = editForm.name.value.trim()
+  if (!name) return editForm.name.focus()
+  const body = JSON.stringify({
+    title: editForm.title.value,
+    name,
+    seats: editForm.seats.value,
+    note: editForm.note.value,
+  })
+  const code = editingCode
+  try {
+    await api(`/api/guests/${code}`, { method: 'PATCH', body })
+    editDialog.close()
+    await refresh()
+    toast('Đã cập nhật')
+  } catch (err) { toast(err.message) }
+})
+
+editDialog.addEventListener('click', (e) => {
+  // bấm nền ngoài khung cũng đóng — <dialog> không tự làm việc này
+  if (e.target === editDialog) editDialog.close()
+  if (e.target.dataset.act === 'cancel') editDialog.close()
+})
+
 $('#guests').addEventListener('click', async (e) => {
   const button = e.target.closest('[data-act]')
   if (!button) return
@@ -207,17 +252,7 @@ $('#guests').addEventListener('click', async (e) => {
   }
 
   if (button.dataset.act === 'edit') {
-    const title = window.prompt('Xưng hô:', guest.title || '')
-    if (title === null) return
-    const name = window.prompt('Họ và tên:', guest.name)
-    if (name === null || !name.trim()) return
-    const seats = window.prompt('Số lượng người được mời:', guest.seats || 1)
-    if (seats === null) return
-    const note = window.prompt('Ghi chú:', guest.note || '')
-    if (note === null) return
-    await api(`/api/guests/${code}`, { method: 'PATCH', body: JSON.stringify({ title, name, seats, note }) })
-    await refresh()
-    toast('Đã cập nhật')
+    openEditDialog(guest)
     return
   }
 
