@@ -271,6 +271,12 @@
             <div class="gift-scene" aria-hidden="true">
               <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
                    loading="lazy" decoding="async" alt="">
+              <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
+                   cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
+                   thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
+                   duyệt chỉ tải gift-journey-scene.webp một lần. -->
+              <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                   loading="lazy" decoding="async" alt="">
               <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
                    aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
                    Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->

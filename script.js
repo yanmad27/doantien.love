@@ -447,12 +447,7 @@ if (gift && giftQrImg) {
   /* Tên khách đi qua textContent, tuyệt đối không ghép innerHTML: dữ liệu hiện
      đã escape ở server nhưng lớp trình bày không được dựa vào một hàng rào duy
      nhất rồi biến tên người nhận thành markup ở lần tái sử dụng sau. */
-  if (originSign) {
-    originSign.textContent = routeOrigin
-    /* Mặt biển gốc chỉ đủ cho "Nhà bạn" ở 12px. Tên dài phải nở thành mảnh giấy
-       nối biển; thu chữ tiếp sẽ tái tạo đúng lỗi 6–7px trên màn hình nhỏ. */
-    originSign.classList.toggle('gift-sign--extended', routeOrigin.length > 10)
-  }
+  if (originSign) originSign.textContent = routeOrigin
   if (routeOriginLabel) routeOriginLabel.textContent = routeOrigin
   if (routeOriginA11y) routeOriginA11y.textContent = routeOrigin
   const thanks = document.getElementById('gift-thanks')

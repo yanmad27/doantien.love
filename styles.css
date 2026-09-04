@@ -1326,7 +1326,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    bị khung .gift-scene crop cùng; đặt nhãn ngoài khung sẽ làm tranh và chữ trôi
    khỏi nhau khi thay tỉ lệ. Mobile dùng .gift-route bên dưới vì ô 30px không thể
    chứa chữ đạt 12px mà vẫn giữ nguyên tên khách. */
-.gift-sign { display: none; }
+.gift-sign,
+.gift-origin-board-art { display: none; }
 .gift-route {
   display: flex;
   flex-wrap: wrap;
@@ -1377,27 +1378,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     padding: 2px 3px;
   }
   .gift-sign--origin {
-    left: 6.1cqw;
-    top: 56.5cqh;
-    width: 8.4cqw;
-    height: 5.3cqh;
-    padding: 1px 2px;
-    border-radius: 2px;
-    background: rgba(255, 250, 243, .78);
-  }
-  /* Tên thật đều dài hơn mặt chữ 48px của biển. Mảnh giấy nối liền biển nở về
-     vùng trống bên phải, giữ đủ tên và cỡ 12px; ép chữ vào biển gốc sẽ rơi còn
-     6–7px hoặc phải cắt tên người nhận, cả hai đều không chấp nhận được. */
-  .gift-sign--origin.gift-sign--extended {
-    left: 3.5cqw;
-    top: 51.5cqh;
+    left: 6cqw;
+    top: 54.8cqh;
     width: 24cqw;
-    height: auto;
-    min-height: 8.5cqh;
-    padding: 3px 6px;
-    border: 1px solid rgba(170, 131, 86, .42);
-    border-radius: 5px;
-    background: rgba(255, 250, 243, .84);
+    height: 8.5cqh;
+    padding: 2px 7px;
+  }
+  .gift-origin-board-art {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    clip-path: polygon(4.5% 54.8%, 17.5% 54.8%, 17.5% 63.5%, 4.5% 63.5%);
+    transform: scale(2.2, 1.35);
+    transform-origin: 4.8% 59%;
   }
   /* Trên desktop chữ đã nằm trong tranh. Vẫn giữ đúng một bản trong cây trợ
      năng, nhưng giấu thị giác dòng lặp để không thành ba nhãn cạnh nhau. */
