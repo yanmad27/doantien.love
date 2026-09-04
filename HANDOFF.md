@@ -246,6 +246,16 @@ Khi `prefers-reduced-motion: reduce`:
   về phần tử trước đó và trình duyệt cuộn theo focus.
 - Nội dung từng bước nằm ở `NUDGE_STEPS` trong `script.js`.
 
+### Mừng cưới (QR)
+
+- QR **không bày sẵn**: nằm sau nút "Gửi lời chúc mừng từ xa" ở section `#gift`.
+  Ai muốn mới mở, khách khác lướt qua.
+- Bấm nút → chạy 3 dòng trạng thái cho vui (`GIFT_STEPS`, mỗi dòng 750ms) rồi QR
+  mới hiện. Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
+- Ảnh: `assets/qr-mung-cuoi.png`. **Thiếu file thì ẩn cả section** (JS chỉ bỏ
+  `hidden` khi trình duyệt xác nhận tải được ảnh) — thà không có còn hơn để khách
+  bấm xong nhận một ô ảnh vỡ.
+
 ### Google Maps
 
 - Mở tab mới.
@@ -357,7 +367,6 @@ Không hard-code nội dung vào nhiều section. Các section phải đọc t�
 - Đăng nhập.
 - Phát nhạc tự động khi vừa vào trang (nhạc chỉ chạy sau khi bấm "Mở thiệp").
 - Album ảnh cưới.
-- Mừng cưới qua QR/chuyển khoản.
 - Chia sẻ thiệp cá nhân hóa theo từng khách.
 
 Các tính năng trên chỉ triển khai khi có yêu cầu riêng.
