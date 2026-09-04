@@ -341,3 +341,33 @@ khung có một câu dành riêng cho cây trợ năng: `Hành trình từ <tên
 Doãn và Tiên.`; các chữ nhìn thấy và mũi tên nằm trong nhánh `aria-hidden` nên
 không bị đọc lại. Cả sáu ca có `horizontalOverflow = 0`; trang chung ra `Nhà
 bạn`, trang riêng ra nguyên văn `Gia đình cô Lê Thị Lan`.
+
+## 13. Vòng 8 — thay chip tên bằng biển màu nước thật
+
+Thiết kế mảnh giấy bo góc ở vòng 7 bị loại: nó rời cột biển và mang hình thức UI,
+đặc biệt mọi tên khách thật đều rơi vào nhánh đó. Bản mới cắt đúng vùng biển từ
+chính `gift-journey-scene.webp`, kéo rộng từ điểm gắn vào cột rồi đặt chữ lên
+trên. Ảnh nền và ảnh cắt dùng cùng URL nên không tăng byte tải; không còn
+`border`, `border-radius`, nền `rgba` hay nhánh theo độ dài tên.
+
+### QA
+
+- **Ca chụp:** `Nhà bạn` và cả ba khách 15 / 18 / 22 ký tự ở 600 và 1280px.
+- **Kích thước biển:** 133,9×31,6px ở cả hai viewport do sân khấu đã chạm trần
+  560px; mọi tên dùng font 12px, một dòng, không clip.
+- **Vị trí:** nhãn bắt đầu x=6,2%, y=54,8%; mặt biển kéo rộng vẫn chồng lên biển
+  gốc và giữ nguyên điểm nối với cột.
+- **Responsive:** tám ca đều `horizontalOverflow = 0`; dưới 600px tiếp tục dùng
+  dòng hành trình 16px đã duyệt ở vòng 7.
+
+Tương phản `--ink #59473f` được đo trên đúng dải pixel nằm sau bounding box glyph
+sau phép biến đổi ảnh, không lấy cả vùng nền sáng xung quanh:
+
+| Nội dung | Tỉ số thấp nhất |
+|---|---:|
+| `Nhà bạn` | 6,38:1 |
+| Tên 15 ký tự | 6,25:1 |
+| Tên 18 ký tự | 5,55:1 |
+| `Gia đình cô Lê Thị Lan` | 5,38:1 |
+
+Toàn bộ tám ảnh `.tmp-*` đã được xoá sau khi soi.
