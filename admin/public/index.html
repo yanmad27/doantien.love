@@ -104,6 +104,33 @@
   </main>
 </div>
 
+<!-- Sửa khách: một form duy nhất thay cho chuỗi 4 hộp prompt nối nhau.
+     Dùng <dialog> để có sẵn Esc, quản lý focus và ::backdrop. -->
+<dialog id="edit-dialog" class="modal" aria-labelledby="edit-title">
+  <form id="edit-form" method="dialog">
+    <h2 id="edit-title">Sửa khách mời</h2>
+    <p class="modal-sub" id="edit-who"></p>
+    <div class="modal-grid">
+      <label class="grow-1">Xưng hô
+        <input name="title" list="titles" placeholder="Anh / Chị / Gia đình anh...">
+      </label>
+      <label class="grow-2">Họ và tên
+        <input name="name" required>
+      </label>
+      <label>Số lượng
+        <input name="seats" type="number" min="1" max="20" inputmode="numeric">
+      </label>
+      <label class="grow-2">Ghi chú
+        <input name="note" placeholder="bên nhà trai, bạn cấp 3...">
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" type="button" data-act="cancel">Huỷ</button>
+      <button class="btn" type="submit" value="save">Lưu</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/admin.js" type="module"></script>
 </body>
