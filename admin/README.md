@@ -71,12 +71,12 @@ bản in sẽ lệch với bản trên thiệp.
 Một file JSON ở `/data/guests.json`, nằm trên Docker volume `quanly-data`.
 Ghi kiểu atomic (ghi file tạm rồi `rename`) nên không vỡ file khi đang ghi.
 
-Chứa ba mảng: `guests`, `rsvps`, `wishes`.
+Chứa bốn mảng: `guests`, `rsvps`, `gifts`, `wishes`.
 
 - Lần chạy đầu, nếu `/data/guests.json` chưa có, app nạp danh sách từ
   `guests.csv` trong repo. Sau đó **`guests.csv` không còn được đọc nữa** —
   nguồn dữ liệu thật là volume.
-- File cũ chưa có `wishes` vẫn nạp được: app tự thêm mảng rỗng khi đọc.
+- File cũ chưa có `gifts` / `wishes` vẫn nạp được: app tự thêm mảng rỗng khi đọc.
 - Đã kiểm chứng dữ liệu sống sót qua redeploy.
 - Xoá volume trong Dokploy = mất toàn bộ danh sách khách và RSVP. Nên bấm
   "Tải CSV" trong UI định kỳ để có bản sao.
@@ -126,6 +126,16 @@ chuyển khoản: `MC` + mã khách (ví dụ `MCab3k9z`). Ảnh QR lấy từ
 
 Bước 2 mà quên thì vẫn chạy: SePay để `code` rỗng, app tự dò `MC<mã>` trong nội
 dung chuyển khoản.
+
+### Xoá một khoản đã nhận
+
+Nút **Xoá** ở bảng "Mừng cưới" (sau đăng nhập). Dùng cho giao dịch test hoặc khi
+ghép nhầm người: xoá xong `/api/gift-status` trả lại "chưa nhận" nên thiệp của
+khách đó **hiện lại QR**. Không xoá thì khách mở thiệp ra đã thấy lời cảm ơn và
+không còn chỗ để mừng cưới.
+
+Chống trùng dựa vào `id`, nên nếu SePay gửi lại đúng giao dịch vừa xoá thì nó
+quay lại. Dọn giao dịch test **sau khi** đã tắt Test mode.
 
 ### Những chỗ dễ hỏng
 

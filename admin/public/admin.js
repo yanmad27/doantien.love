@@ -144,11 +144,12 @@ function render() {
     const who = guest
       ? `<span class="who">${esc(fullName(guest))}</span><code>${esc(g.guestCode)}</code>`
       : '<span class="pill pill-none">không rõ khách</span>'
-    return `<tr>
+    return `<tr data-id="${esc(g.id)}">
       <td>${new Date(g.at).toLocaleString('vi-VN')}</td>
       <td>${who}</td>
       <td class="seats">${money(g.amount)}</td>
       <td>${esc(g.content)}</td>
+      <td><div class="actions"><button class="btn-mini btn-del" data-act="del-gift">Xoá</button></div></td>
     </tr>`
   }).join('')
 }
@@ -341,6 +342,26 @@ $('#wishes').addEventListener('click', async (e) => {
       await refresh()
       toast('Đã xoá lời chúc')
     }
+  } catch (err) { toast(err.message) }
+})
+
+/* Xoá khoản mừng cưới. Nói rõ hệ quả trong hộp xác nhận: thiệp của khách đó
+   quay lại trạng thái chưa mừng và hiện lại QR — đây thường là lý do người ta
+   bấm xoá, nhưng nếu xoá nhầm thì cũng cần biết ngay. */
+$('#gifts').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-act="del-gift"]')
+  if (!button) return
+  const id = button.closest('tr').dataset.id
+  const gift = state.gifts.find((g) => String(g.id) === id)
+  if (!gift) return
+  const guest = gift.guestCode ? state.guests.find((x) => x.code === gift.guestCode) : null
+  const who = guest ? `của "${fullName(guest)}" ` : ''
+  const note = guest ? `\n\nThiệp của khách này sẽ hiện lại QR mừng cưới.` : ''
+  if (!window.confirm(`Xoá khoản ${who}${money(gift.amount)}?${note}`)) return
+  try {
+    await api(`/api/gifts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    await refresh()
+    toast('Đã xoá khoản mừng cưới')
   } catch (err) { toast(err.message) }
 })
 
