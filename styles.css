@@ -1094,7 +1094,27 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   /* Hoa giấy phủ kín sân khấu mừng cưới. Luật .01ms phía trên biến 820ms hiện dần
      thành một cú loé nguyên khung hình — với người nhạy sáng thì tệ hơn hẳn chính
      cái animation. Bỏ hẳn lớp này thay vì tăng tốc nó. */
-  .gift-celebration { display: none; }
+  .gift-celebration,
+  .gift-fireworks,
+  .gift-road-magic,
+  .gift-road-dust,
+  .gift-foreground,
+  .gift-idle-notes { display: none !important; }
+  /* Ghi đè hẳn thay vì chỉ ép còn .01ms: pháo hoa/chuyển động nhiều lớp mà lóe
+     hết trong một frame vẫn là chuyển động, và còn tệ hơn với người nhạy sáng. */
+  .gift-idle-rider,
+  .gift-idle-drummer,
+  .gift-idle-flag,
+  .gift-rider-track,
+  .gift-rider,
+  .gift-crowd-far,
+  .gift-crowd-far i,
+  .gift-procession,
+  .gift-marcher,
+  .gift-title,
+  .gift-qr,
+  .gift-thanks,
+  .gift-thanks-mark { animation: none !important; will-change: auto !important; }
 }
 
 /* ---- Hỏi vui "bạn có đến không" ----
@@ -1234,6 +1254,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   border-radius: 50%;
   background: var(--peach-ink);
   opacity: 0;
+  --note-scale: 1;
 }
 .gift-idle-notes i::after {
   content: "";
@@ -1246,8 +1267,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: inherit;
   transform: rotate(-8deg);
 }
-.gift-idle-notes i:nth-child(2) { left: 137px; top: 7px; background: var(--gold-ink); transform: scale(.78); }
-.gift-idle-notes i:nth-child(3) { left: 31px; top: 2px; background: var(--peach); transform: scale(.62); }
+.gift-idle-notes i:nth-child(2) { left: 137px; top: 7px; background: var(--gold-ink); --note-scale: .78; }
+.gift-idle-notes i:nth-child(3) { left: 31px; top: 2px; background: var(--peach); --note-scale: .62; }
+
+#gift-shell[data-phase="idle"] .gift-idle-rider { animation: gift-idle-breathe 1.7s ease-in-out infinite; }
+#gift-shell[data-phase="idle"] .gift-idle-drummer { animation: gift-idle-drum 520ms ease-in-out infinite alternate; }
+#gift-shell[data-phase="idle"] .gift-idle-flag { animation: gift-idle-flag 1.1s ease-in-out infinite alternate; }
+#gift-shell[data-phase="idle"] .gift-idle-notes i { animation: gift-idle-note 1.8s ease-out infinite; }
+#gift-shell[data-phase="idle"] .gift-idle-notes i:nth-child(2) { animation-delay: -1.15s; }
+#gift-shell[data-phase="idle"] .gift-idle-notes i:nth-child(3) { animation-delay: -.55s; }
 
 /* Tới nơi rồi thì đổi màu tiêu đề thay vì đổi chữ: đổi chữ ngay cạnh một vùng
    aria-live là thêm một nguồn đọc nữa, mà màu cũng đã đủ báo "xong chuyến". */
@@ -1445,12 +1473,25 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   left: 0;
   top: 0;
   display: block;
-  width: .9cqw;
-  aspect-ratio: 1;
-  border-radius: 50% 50% 42% 58%;
-  background: var(--spark);
+  width: .72cqw;
+  height: 2.8cqw;
+  border-radius: 70% 70% 45% 45%;
+  background: linear-gradient(to bottom, transparent, var(--spark));
   opacity: 0;
+  filter: blur(.12px);
   transform: rotate(var(--ray-angle)) translateY(0) scale(.35);
+}
+.gift-firework::after {
+  content: "";
+  position: absolute;
+  left: -1.1cqw;
+  top: -1.1cqw;
+  width: 2.2cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--spark) 72%, transparent);
+  opacity: 0;
+  filter: blur(.4px);
 }
 .gift-firework i:nth-child(1) { --ray-angle: 0deg; --ray-delay: 0ms; }
 .gift-firework i:nth-child(2) { --ray-angle: 45deg; --ray-delay: 18ms; }
@@ -1482,20 +1523,39 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 #gift-shell[data-phase="riding"] .gift-rider-track {
   opacity: 1;
+  will-change: transform;
   animation: gift-ride 4.8s linear both;
 }
 /* Nhịp thân Bé nằm trong cùng timeline 4,8 giây với đường chạy: nếu để nhún vô
    hạn như bản cũ thì cú thắng không thể nén thân đúng lúc, và Bé vẫn rung sau
    khi cả đoàn đã đứng nghiêm trước cổng. */
 #gift-shell[data-phase="riding"] .gift-rider { animation: gift-rider-body 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-crowd-far { animation: gift-crowd-pass 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-procession--back { animation: gift-procession-back 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-procession--front { animation: gift-procession-front 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-crowd-far { will-change: transform, opacity; animation: gift-crowd-pass 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-crowd-far i { animation: gift-far-march 420ms ease-in-out infinite alternate; }
+#gift-shell[data-phase="riding"] .gift-crowd-far i:nth-child(2n) { animation-delay: -210ms; }
+#gift-shell[data-phase="riding"] .gift-crowd-far i:nth-child(3n) { animation-delay: -90ms; }
+#gift-shell[data-phase="riding"] .gift-procession--back { will-change: transform; animation: gift-procession-back 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-procession--front { will-change: transform; animation: gift-procession-front 4.8s linear both; }
 #gift-shell[data-phase="riding"] .gift-marcher { animation: gift-march 260ms ease-in-out infinite alternate; }
+#gift-shell[data-phase="riding"] .gift-marcher--drum { animation-name: gift-drummer-step; animation-duration: 210ms; }
+#gift-shell[data-phase="riding"] .gift-marcher--flag { animation-name: gift-flag-step; animation-duration: 360ms; }
+#gift-shell[data-phase="riding"] .gift-marcher--cheer { animation-name: gift-cheer-step; animation-duration: 300ms; }
 #gift-shell[data-phase="riding"] .gift-procession--back .gift-marcher:nth-child(2),
 #gift-shell[data-phase="riding"] .gift-procession--front .gift-marcher:nth-child(2) { animation-delay: -130ms; }
 #gift-shell[data-phase="riding"] .gift-procession .gift-marcher:nth-child(3) { animation-delay: -70ms; }
 #gift-shell[data-phase="riding"] .gift-foreground { animation: gift-foreground-pass 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-road-magic i { animation: gift-road-pop .78s ease-out both; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(1) { animation-delay: .82s; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(2) { animation-delay: 1.28s; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(3) { animation-delay: 1.92s; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(4) { animation-delay: 2.45s; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(5) { animation-delay: 3.18s; }
+#gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(6) { animation-delay: 3.62s; }
+#gift-shell[data-phase="riding"] .gift-road-dust i { animation: gift-road-dust .72s ease-out both; }
+#gift-shell[data-phase="riding"] .gift-road-dust i:nth-child(1) { animation-delay: .72s; }
+#gift-shell[data-phase="riding"] .gift-road-dust i:nth-child(2) { animation-delay: 1.72s; }
+#gift-shell[data-phase="riding"] .gift-road-dust i:nth-child(3) { animation-delay: 2.75s; }
+#gift-shell[data-phase="riding"] .gift-road-dust i:nth-child(4) { animation-delay: 3.62s; }
 /* Đỗ Bé lại ở cổng cưới thay vì cho biến mất: thiếu hai dòng này thì opacity về 0
    và Bé bốc hơi đúng khoảnh khắc vừa tới nơi. */
 #gift-shell[data-phase="arrived"] .gift-rider-track,
@@ -1509,6 +1569,36 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 #gift-shell[data-phase="received"] .gift-procession--back { transform: translate(4cqw, 39cqh) scale(.45); filter: saturate(.78); }
 #gift-shell[data-phase="arrived"] .gift-procession--front,
 #gift-shell[data-phase="received"] .gift-procession--front { transform: translate(43cqw, 50cqh) scale(.42); }
+
+/* Cú mừng khi vừa tới chỉ chạy một lần và không kéo dài thời gian chờ: QR đã
+   hiện ở hàng dưới ngay lúc phase đổi, còn nhịp bật nằm trọn trong tranh. */
+#gift-shell[data-phase="arrived"] .gift-rider { animation: gift-arrival-hop .72s cubic-bezier(.2, .8, .25, 1.25) 2; }
+#gift-shell[data-phase="arrived"] .gift-marcher { animation: gift-arrival-cheer .42s ease-in-out 4 alternate; }
+#gift-shell[data-phase="arrived"] .gift-title { animation: gift-title-pop .58s var(--ease-out) both; }
+#gift-shell[data-phase="arrived"] .gift-fireworks,
+#gift-shell[data-phase="received"] .gift-fireworks { opacity: 1; }
+#gift-shell[data-phase="arrived"] .gift-firework { --burst-distance: -5.8cqw; }
+#gift-shell[data-phase="arrived"] .gift-firework i {
+  animation: gift-firework-burst .95s cubic-bezier(.12, .7, .2, 1) calc(var(--burst-delay) + var(--ray-delay)) 1 both;
+}
+#gift-shell[data-phase="arrived"] .gift-firework::after {
+  animation: gift-firework-core .95s ease-out var(--burst-delay) 1 both;
+}
+
+/* Received là lúc tiền đã về thật nên được phép ăn mừng lâu hơn. Giới hạn năm
+   lượt thay vì infinite để tab khách bỏ quên không tiếp tục đốt pin vô hạn. */
+#gift-shell[data-phase="received"] .gift-rider { animation: gift-victory-hop .64s ease-in-out 8 alternate; }
+#gift-shell[data-phase="received"] .gift-marcher { animation: gift-victory-cheer .38s ease-in-out 14 alternate; }
+#gift-shell[data-phase="received"] .gift-title { animation: gift-title-received .7s var(--ease-out) both; }
+#gift-shell[data-phase="received"] .gift-firework:nth-child(1) { --burst-distance: -10cqw; }
+#gift-shell[data-phase="received"] .gift-firework:nth-child(2) { --burst-distance: -12cqw; }
+#gift-shell[data-phase="received"] .gift-firework:nth-child(3) { --burst-distance: -9cqw; }
+#gift-shell[data-phase="received"] .gift-firework i {
+  animation: gift-firework-burst 1.55s cubic-bezier(.12, .7, .2, 1) calc(var(--burst-delay) + var(--ray-delay)) 5 both;
+}
+#gift-shell[data-phase="received"] .gift-firework::after {
+  animation: gift-firework-core 1.55s ease-out var(--burst-delay) 5 both;
+}
 
 /* width: 100% để bề rộng ô này khỏi phụ thuộc vào ĐỘ DÀI CÂU CAPTION. .gift-stage
    đặt justify-items: center nên không khai bề rộng thì ô co lại vừa nội dung, mà
@@ -1640,6 +1730,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .gift-celebration img { width: 100%; height: 100%; object-fit: cover; opacity: .88; }
 #gift-shell[data-phase="received"] .gift-celebration { opacity: 1; animation: gift-celebrate-in .82s ease both; }
+#gift-shell[data-phase="received"] .gift-celebration img { animation: gift-confetti-drift 2.2s ease-in-out 4 alternate; }
 
 /* Chỉ động transform, tuyệt đối không động left/top: trang này vừa chạy
    IntersectionObserver cho hiệu ứng reveal, vừa có hoa lá động vô hạn và một bộ
@@ -1649,6 +1740,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    nhảy một cái đúng lúc đổi chặng. Dừng ở 67cqw chứ không phải 84: track rộng
    26cqw, thu còn .34 quanh tâm nên mép phải rơi vào 84.4cqw — để 84 là Bé bị
    overflow: clip của sân khấu xén mất nửa cái xe. */
+@keyframes gift-idle-breathe {
+  0%, 100% { transform: translateY(0) scale(1) rotate(-1deg); }
+  48% { transform: translateY(-4px) scale(1.035, .97) rotate(1deg); }
+  58% { transform: translateY(-2px) scale(.98, 1.025) rotate(0); }
+}
+@keyframes gift-idle-drum {
+  from { transform: translateY(1px) rotate(-3deg) scaleY(.98); }
+  to { transform: translateY(-4px) rotate(3deg) scaleY(1.03); }
+}
+@keyframes gift-idle-flag {
+  from { transform: rotate(-5deg) skewX(-2deg); }
+  to { transform: rotate(6deg) skewX(3deg); }
+}
+@keyframes gift-idle-note {
+  0% { opacity: 0; transform: translate(0, 8px) scale(calc(var(--note-scale) * .55)) rotate(-8deg); }
+  22%, 62% { opacity: .78; }
+  100% { opacity: 0; transform: translate(8px, -18px) scale(var(--note-scale)) rotate(8deg); }
+}
 @keyframes gift-ride {
   0%   { transform: translate(-19cqw, 69cqh) scale(.84) rotate(-5deg); }
   7%   { transform: translate(-15cqw, 71cqh) scale(.79) rotate(-8deg); }
@@ -1660,6 +1769,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   92%  { transform: translate(70cqw, 34cqh) scale(.35) rotate(7deg); }
   96%  { transform: translate(65cqw, 36cqh) scale(.36) rotate(-5deg); }
   100% { transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg); }
+}
+@keyframes gift-far-march {
+  from { transform: translateY(.6cqh) rotate(-1.5deg); }
+  to { transform: translateY(-.7cqh) rotate(1.5deg); }
 }
 @keyframes gift-rider-body {
   0%, 7%   { transform: translateY(0) scale(1); }
@@ -1698,17 +1811,81 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   from { transform: translateY(.7cqh) rotate(-2deg) scaleY(.97); }
   to   { transform: translateY(-.8cqh) rotate(2deg) scaleY(1.02); }
 }
+@keyframes gift-drummer-step {
+  from { transform: translateY(.8cqh) rotate(-3deg) scale(1.02, .96); }
+  to { transform: translateY(-1cqh) rotate(3deg) scale(.98, 1.04); }
+}
+@keyframes gift-flag-step {
+  from { transform: translateY(.5cqh) rotate(-4deg) skewX(-1deg); }
+  to { transform: translateY(-1cqh) rotate(5deg) skewX(2deg); }
+}
+@keyframes gift-cheer-step {
+  from { transform: translateY(.7cqh) rotate(-2deg) scale(.98); }
+  to { transform: translateY(-1.3cqh) rotate(3deg) scale(1.04); }
+}
 @keyframes gift-foreground-pass {
   0%, 27%  { opacity: 0; transform: translate(-35cqw, 0) rotate(-5deg); }
   34%      { opacity: .7; }
   58%      { opacity: .58; transform: translate(75cqw, -1cqh) rotate(3deg); }
   68%, 100% { opacity: 0; transform: translate(128cqw, -2cqh) rotate(7deg); }
 }
+@keyframes gift-road-pop {
+  0% { opacity: 0; transform: translate(0, 1.5cqh) scale(.35) rotate(-12deg); }
+  24%, 68% { opacity: .82; }
+  100% { opacity: 0; transform: translate(1.5cqw, -5cqh) scale(1.15) rotate(10deg); }
+}
+@keyframes gift-road-dust {
+  0% { opacity: 0; transform: translate(0, 0) scale(.25); }
+  28% { opacity: .48; }
+  100% { opacity: 0; transform: translate(-4cqw, -2.5cqh) scale(1.8); }
+}
+@keyframes gift-arrival-hop {
+  0%, 100% { transform: translateY(0) scale(1) rotate(0); }
+  28% { transform: translateY(1.1cqh) scale(1.10, .88) rotate(-3deg); }
+  58% { transform: translateY(-4.2cqh) scale(.94, 1.08) rotate(4deg); }
+}
+@keyframes gift-arrival-cheer {
+  from { transform: translateY(.4cqh) rotate(-3deg) scale(.97); }
+  to { transform: translateY(-2.4cqh) rotate(4deg) scale(1.06); }
+}
+@keyframes gift-victory-hop {
+  from { transform: translateY(.5cqh) rotate(-2deg) scale(1.04, .96); }
+  to { transform: translateY(-4.5cqh) rotate(4deg) scale(.95, 1.07); }
+}
+@keyframes gift-victory-cheer {
+  from { transform: translateY(.5cqh) rotate(-5deg) scale(.96); }
+  to { transform: translateY(-3cqh) rotate(6deg) scale(1.08); }
+}
+@keyframes gift-firework-burst {
+  0% { opacity: 0; transform: rotate(var(--ray-angle)) translateY(0) scale(.25); }
+  18% { opacity: .95; }
+  72% { opacity: .76; transform: rotate(var(--ray-angle)) translateY(var(--burst-distance)) scale(1); }
+  100% { opacity: 0; transform: rotate(var(--ray-angle)) translateY(calc(var(--burst-distance) - 2cqw)) scale(.3); }
+}
+@keyframes gift-firework-core {
+  0%, 8% { opacity: 0; transform: scale(.2); }
+  22% { opacity: .72; transform: scale(1); }
+  58%, 100% { opacity: 0; transform: scale(1.9); }
+}
+@keyframes gift-title-pop {
+  0% { transform: scale(.96); }
+  55% { transform: scale(1.055) rotate(-.4deg); }
+  100% { transform: scale(1); }
+}
+@keyframes gift-title-received {
+  0% { opacity: .72; transform: translateY(7px) scale(.95); }
+  58% { opacity: 1; transform: translateY(-2px) scale(1.045); }
+  100% { opacity: 1; transform: none; }
+}
 @keyframes gift-envelope-in {
   from { opacity: 0; transform: translateY(28px) scale(.82) rotate(-3deg); }
   to { opacity: 1; transform: none; }
 }
 @keyframes gift-celebrate-in { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+@keyframes gift-confetti-drift {
+  from { transform: scale(1) rotate(-.4deg); }
+  to { transform: scale(1.025) rotate(.5deg); }
+}
 
 @keyframes gift-heart {
   0%, 100% { transform: scale(1); }
