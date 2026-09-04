@@ -65,6 +65,7 @@ function render() {
   const heads = going.reduce((sum, r) => sum + (Number(r.guests) || 1), 0)
   $('#stats').innerHTML = [
     ['Khách mời', state.guests.length],
+    ['Tổng chỗ mời', state.guests.reduce((sum, g) => sum + (Number(g.seats) || 1), 0)],
     ['Đã phản hồi', state.rsvps.length],
     ['Sẽ đến', going.length],
     ['Tổng số người', heads],
@@ -86,6 +87,7 @@ function render() {
         : '<span class="pill pill-no">không đến</span>'
     return `<tr data-code="${esc(g.code)}">
       <td><span class="who">${esc(fullName(g))}</span>${g.note ? `<span class="note">${esc(g.note)}</span>` : ''}</td>
+      <td class="seats">${esc(g.seats || 1)}</td>
       <td><div class="link-cell"><code>${esc(g.code)}</code>
         <button class="btn-mini" data-act="copy">Chép link</button>
         <a class="btn-mini" href="${esc(guestUrl(g))}" target="_blank" rel="noopener">Mở</a></div></td>
@@ -158,7 +160,12 @@ $('#add-form').addEventListener('submit', async (e) => {
   try {
     await api('/api/guests', {
       method: 'POST',
-      body: JSON.stringify({ title: form.title.value, name: form.name.value, note: form.note.value }),
+      body: JSON.stringify({
+        title: form.title.value,
+        name: form.name.value,
+        seats: form.seats.value,
+        note: form.note.value,
+      }),
     })
     form.reset()
     form.title.focus()
@@ -204,9 +211,11 @@ $('#guests').addEventListener('click', async (e) => {
     if (title === null) return
     const name = window.prompt('Họ và tên:', guest.name)
     if (name === null || !name.trim()) return
+    const seats = window.prompt('Số lượng người được mời:', guest.seats || 1)
+    if (seats === null) return
     const note = window.prompt('Ghi chú:', guest.note || '')
     if (note === null) return
-    await api(`/api/guests/${code}`, { method: 'PATCH', body: JSON.stringify({ title, name, note }) })
+    await api(`/api/guests/${code}`, { method: 'PATCH', body: JSON.stringify({ title, name, seats, note }) })
     await refresh()
     toast('Đã cập nhật')
     return
@@ -237,8 +246,8 @@ $('#rsvps').addEventListener('click', async (e) => {
 
 $('#export').addEventListener('click', () => {
   download('khach-moi.csv', csv([
-    ['code', 'title', 'name', 'note', 'link'],
-    ...state.guests.map((g) => [g.code, g.title, g.name, g.note, guestUrl(g)]),
+    ['code', 'title', 'name', 'seats', 'note', 'link'],
+    ...state.guests.map((g) => [g.code, g.title, g.name, g.seats || 1, g.note, guestUrl(g)]),
   ]))
 })
 

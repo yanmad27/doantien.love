@@ -54,6 +54,9 @@
         <label class="grow-2">Họ và tên
           <input name="name" placeholder="Nguyễn Văn Nam" required>
         </label>
+        <label>Số lượng
+          <input name="seats" type="number" min="1" max="20" value="1" inputmode="numeric">
+        </label>
         <label class="grow-2">Ghi chú
           <input name="note" placeholder="bên nhà trai, bạn cấp 3...">
         </label>
@@ -78,7 +81,7 @@
       </div>
       <div class="table-wrap">
         <table id="guests">
-          <thead><tr><th>Khách</th><th>Link riêng</th><th>Phản hồi</th><th></th></tr></thead>
+          <thead><tr><th>Khách</th><th>Số lượng</th><th>Link riêng</th><th>Phản hồi</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
