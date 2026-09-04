@@ -34,6 +34,12 @@ const wedding = {
     // Chỉ có/chưa, không kèm số tiền. Đặt null để tắt hẳn phần hỏi.
     statusEndpoint: 'https://doantien.love/api/gift-status',
   },
+  wishes: {
+    // App quanly lưu và trả về sổ lời chúc, cũng đi qua domain thiệp như RSVP.
+    // Đặt null để ẩn hẳn section — thà không có sổ còn hơn để khách viết vào
+    // một cái hộp không ai nhận.
+    endpoint: 'https://doantien.love/api/wishes',
+  },
 }
 
 // khai báo sớm vì countdown chạy ngay lúc load, trước phần xử lý scroll bên dưới
@@ -715,7 +721,11 @@ function openInvitation() {
   // Nhả focus sớm hơn thì màn hình giật về nav lúc bìa còn đang mở dở.
   window.setTimeout(() => {
     cover.setAttribute('aria-hidden', 'true')
-    document.querySelector('.nav-brand').focus({ preventScroll: true })
+    // Dời focus vào thanh nav, KHÔNG vào .nav-brand: focus thẳng vào link thì
+    // trình duyệt vẽ vòng :focus-visible quanh trái tim ở mọi lần mở thiệp.
+    // Thanh nav mang tabindex="-1" nên không bao giờ tab tới được, tắt vòng của
+    // nó không mất gì; link trái tim vẫn giữ vòng khi có người tab tới thật.
+    nav.focus({ preventScroll: true })
   }, reducedMotion.matches ? 0 : 950)
 }
 
@@ -1059,6 +1069,184 @@ RULES.forEach((rule) => {
     }
   })
 })
+
+/* ---------------------------------------------------------
+   Sổ lời chúc — tường giấy nhớ
+
+   Chủ ý thiết kế, đừng "cải tiến" ngược lại: KHÔNG hiện tổng số lời chúc, KHÔNG
+   hiện dấu thời gian, KHÔNG đảo mới nhất lên đầu, KHÔNG phân trang. Bộ khuôn đó
+   (avatar tròn + tên đậm + "5 phút trước" + nút xem thêm) là khuôn của mục đánh
+   giá sản phẩm; người đọc nhận ra nó trước cả khi kịp đọc nội dung. Sổ thật thì
+   mỗi người một nét chữ, không ai đánh số và không ai sắp xếp lại.
+
+   Nét chữ / màu giấy / độ nghiêng do server quyết (xem wishStyle trong
+   admin/server.js) để trang thiệp và bản in PDF hiện y hệt nhau.
+   --------------------------------------------------------- */
+
+const wishSection = document.getElementById('wishes')
+
+if (wishSection && wedding.wishes.endpoint) {
+  const wishForm = document.getElementById('wish-form')
+  const wishWall = document.getElementById('wish-wall')
+  const wishEmpty = document.getElementById('wish-empty')
+  const wishThanks = document.getElementById('wish-thanks')
+  const wishError = document.getElementById('wish-error')
+  const wishSubmit = wishForm.querySelector('[type="submit"]')
+  const wishSubmitLabel = wishSubmit.textContent
+
+  const WISH_FONTS = 4 // khớp .wish--f0..f3 trong styles.css
+  const WISH_PAPERS = 5 // khớp .wish--p0..p4
+
+  /* Bỏ [hidden] NGAY, trước khi observer reveal ở khối dưới bắt đầu quan sát:
+     phần tử đang hidden không có layout nên IntersectionObserver không bao giờ
+     bắn, và mọi [data-reveal] bên trong sẽ kẹt ở opacity 0 vĩnh viễn. */
+  wishSection.hidden = false
+  const successNext = document.getElementById('success-next')
+  if (successNext) successNext.hidden = false
+
+  const wishIndex = (value, max) => (Number.isInteger(value) && value >= 0 && value < max ? value : 0)
+
+  function wishNode(wish) {
+    const note = document.createElement('figure')
+    note.className = `wish wish--f${wishIndex(wish.font, WISH_FONTS)} wish--p${wishIndex(wish.paper, WISH_PAPERS)}`
+    if (wish.id) note.dataset.id = wish.id
+    const tilt = Number(wish.tilt)
+    note.style.setProperty('--tilt', `${Number.isFinite(tilt) ? tilt : 0}deg`)
+
+    const body = document.createElement('blockquote')
+    // textContent chứ không innerHTML: đây là chữ người lạ gửi lên
+    body.textContent = String(wish.text || '')
+    const sign = document.createElement('figcaption')
+    sign.textContent = String(wish.name || '')
+    note.append(body, sign)
+    return note
+  }
+
+  /* Chỉ báo tường trống khi đã đọc được dữ liệu. Gọi API hỏng mà vẫn thông báo
+     "chưa ai viết gì" là nói sai — có thể đang có cả trăm mẩu ở đó. */
+  let wishesLoaded = false
+  const syncWishEmpty = () => { wishEmpty.hidden = !wishesLoaded || wishWall.childElementCount > 0 }
+
+  function loadWishes() {
+    fetch(wedding.wishes.endpoint, { headers: { Accept: 'application/json' } })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Wishes failed: ${response.status}`)
+        return response.json()
+      })
+      .then((data) => {
+        const list = Array.isArray(data.wishes) ? data.wishes : []
+        /* Khách viết xong trước khi tải xong thì mẩu của họ đã nằm trên tường,
+           mà bản tải về cũng có thể đã chứa nó — bỏ qua id đã vẽ để không hiện
+           thành hai mẩu giống hệt nhau. */
+        const drawn = new Set([...wishWall.children].map((node) => node.dataset.id))
+        const frame = document.createDocumentFragment()
+        list.forEach((wish) => { if (!drawn.has(wish.id)) frame.append(wishNode(wish)) })
+        wishWall.prepend(frame) // chèn TRƯỚC mẩu khách vừa ghim, giữ đúng thứ tự sổ
+        wishesLoaded = true
+        syncWishEmpty()
+      })
+      .catch(() => {
+        // Im lặng: sổ đọc không được thì vẫn để nguyên ô viết, khách vẫn gửi được.
+      })
+  }
+
+  /* Tải lúc trình duyệt rảnh, không tranh chỗ với font và ảnh của bìa thiệp.
+     Cố tình KHÔNG dùng IntersectionObserver ("chờ cuộn tới sổ rồi mới tải"):
+     tab đang ở nền hoặc trang bị prerender thì IO không bắn lần nào, và khách
+     mở ra chỉ thấy ô viết với một cái tường trống mà không hiểu vì sao. Đổi lại
+     chỉ là một request vài KB cho người không cuộn xuống — quá rẻ so với việc
+     mất hẳn phần được dùng nhiều nhất. */
+  if ('requestIdleCallback' in window) window.requestIdleCallback(loadWishes, { timeout: 3000 })
+  else window.setTimeout(loadWishes, 1200)
+
+  // Thiệp riêng đã biết tên khách thì ký sẵn hộ, họ chỉ việc viết.
+  if (guest.name && !wishForm.elements.name.value) wishForm.elements.name.value = guest.name
+
+  const WISH_RULES = [
+    { name: 'text', errorId: 'err-wish-text', message: 'Viết giúp tụi mình vài chữ nhé.' },
+    { name: 'name', errorId: 'err-wish-name', message: 'Ký tên để tụi mình biết là ai.' },
+  ]
+
+  function validateWish() {
+    let firstInvalid = null
+    for (const rule of WISH_RULES) {
+      const field = wishForm.elements[rule.name]
+      const isEmpty = !field.value.trim()
+      document.getElementById(rule.errorId).textContent = isEmpty ? rule.message : ''
+      field.setAttribute('aria-invalid', isEmpty ? 'true' : 'false')
+      if (isEmpty && !firstInvalid) firstInvalid = field
+    }
+    if (firstInvalid) firstInvalid.focus()
+    return !firstInvalid
+  }
+
+  WISH_RULES.forEach((rule) => {
+    wishForm.elements[rule.name].addEventListener('input', () => {
+      if (!wishForm.elements[rule.name].value.trim()) return
+      document.getElementById(rule.errorId).textContent = ''
+      wishForm.elements[rule.name].setAttribute('aria-invalid', 'false')
+    })
+  })
+
+  wishForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    wishError.textContent = ''
+    if (!validateWish()) return
+
+    const payload = {
+      name: wishForm.elements.name.value.trim(),
+      text: wishForm.elements.text.value.trim(),
+    }
+    if (guest.code) payload.guestCode = guest.code
+
+    wishSubmit.disabled = true
+    wishSubmit.textContent = 'Đang ghim…'
+
+    fetch(wedding.wishes.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      // Đọc body cả khi lỗi: server có câu từ chối riêng (vd. gửi quá nhiều lần),
+      // hiện đúng câu đó thì khách biết phải làm gì, chứ báo chung chung thì không.
+      .then((response) => response.json().catch(() => ({})).then((data) => {
+        if (!response.ok) throw new Error(data.error || '')
+        return data
+      }))
+      .then((data) => {
+        const note = wishNode(data.wish || { ...payload, font: 0, paper: 0, tilt: 0 })
+        // viết mẩu thứ hai thì chỉ mẩu mới nhất được đánh dấu
+        wishWall.querySelector('.is-mine')?.classList.remove('is-mine')
+        note.classList.add('is-mine')
+        wishWall.append(note)
+        syncWishEmpty()
+
+        wishForm.hidden = true
+        wishThanks.hidden = false
+        // preventScroll: giữ được focus cho bàn phím mà không giật màn hình,
+        // để dành cú cuộn cho đúng mẩu giấy họ vừa ghim — đó mới là phần thưởng.
+        wishThanks.focus({ preventScroll: true })
+        note.scrollIntoView({
+          block: 'center',
+          behavior: reducedMotion.matches ? 'auto' : 'smooth',
+        })
+      })
+      .catch((err) => {
+        wishError.textContent = err.message || 'Chưa ghim lên được. Bạn thử lại giúp mình nhé.'
+      })
+      .finally(() => {
+        wishSubmit.disabled = false
+        wishSubmit.textContent = wishSubmitLabel
+      })
+  })
+
+  document.getElementById('wish-again').addEventListener('click', () => {
+    wishThanks.hidden = true
+    wishForm.hidden = false
+    wishForm.elements.text.value = '' // giữ nguyên tên đã ký, chỉ xoá nội dung
+    wishForm.elements.text.focus()
+  })
+}
 
 /* ---------------------------------------------------------
    Reveal khi cuộn + parallax hoa (HANDOFF §7)

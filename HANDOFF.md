@@ -288,6 +288,61 @@ Khi `prefers-reduced-motion: reduce`:
   trả khoản **mới nhất**, không phải khoản đầu tiên.
 - Luồng phía máy chủ: xem `admin/README.md` mục "Mừng cưới qua SePay".
 
+### Sổ lời chúc
+
+Section `#wishes`, nằm giữa "Mừng cưới" và phần đóng. Khách viết vài dòng, ký
+tên, mẩu giấy hiện lên tường ngay.
+
+**Vì sao trông như vậy — đọc trước khi sửa.** Bản đầu tiên trình bày kiểu feed
+(avatar tròn, tên đậm, dấu thời gian, card xếp dọc, "xem thêm", tổng số ở đầu
+mục) và đọc ra ngay thành **mục đánh giá sản phẩm** — người xem nhận ra bộ khuôn
+đó trước cả khi kịp đọc nội dung. Sổ lời chúc ngoài đời thì ngược lại: mỗi người
+một nét chữ, không ai đánh số, không ai sắp xếp lại. Nên ở đây **cố tình không có**:
+
+- tổng số lời chúc,
+- dấu thời gian (thứ tố cáo mạnh nhất),
+- sắp xếp mới nhất lên đầu,
+- phân trang / nút "xem thêm",
+- avatar.
+
+Thêm bất kỳ thứ nào ở trên vào là kéo ngược về phía giao diện review.
+
+Thay vào đó:
+
+- **Tường giấy nhớ** dạng masonry (CSS `column-count`): 3 cột desktop, 2 cột
+  ≤820px, 1 cột ≤540px. Dưới 540px mẩu giấy rộng 93% và so le trái/phải, nếu
+  không nó thành chồng thanh ngang chứ không ra tường.
+- **Bốn nét chữ** (`.wish--f0..f3`): Patrick Hand, Dancing Script, Shantell Sans,
+  Great Vibes. Cả bốn đều có subset tiếng Việt — đã kiểm bằng API Google Fonts.
+  Font thiếu dấu sẽ rơi về font dự phòng ngay giữa câu và hỏng cả ý tưởng.
+  Tải bằng `<link media="print" onload>` để không chặn render bìa thiệp.
+- **Năm màu giấy** (`.wish--p0..p4`) và độ nghiêng ±2.8°.
+- **Chữ ký ở góc dưới phải** mỗi mẩu, thay cho avatar.
+- **Câu hỏi cụ thể** — "Bạn biết tụi mình từ hồi nào?", placeholder mở sẵn đầu
+  câu bằng "Hồi đó…". Hỏi cụ thể vừa tránh việc ai cũng viết đúng một câu
+  "chúc trăm năm hạnh phúc", vừa khiến ô nhập không giống form đánh giá.
+
+**Nét chữ / màu giấy / độ nghiêng do SERVER quyết** (`wishStyle` trong
+`admin/server.js`), suy ra từ một `seed` ngẫu nhiên lưu kèm mỗi mẩu. Không để
+trang thiệp tự tính: cùng một mẩu còn phải hiện y hệt trên bản in PDF, hai nơi
+tự tính lấy thì sớm muộn cũng lệch và quyển in ra không còn giống cái khách đã
+thấy. Số nét chữ / màu giấy trong `styles.css` phải khớp `PRINT_HANDS` bên server.
+
+**Thứ tự** giữ nguyên lúc người ta viết, y như quyển sổ dày dần lên. Sau khi gửi,
+trang cuộn tới đúng mẩu vừa ghim và làm nó sáng lên một nhịp — đó là phần thưởng
+khiến khách chịu viết; không gắn nhãn "của bạn" vì cái nhãn đó lại kéo về phía
+giao diện sản phẩm.
+
+**Tải dữ liệu** bằng `requestIdleCallback` (dự phòng `setTimeout`), *không* dùng
+`IntersectionObserver`: tab ở nền hoặc trang bị prerender thì IO không bắn lần
+nào và khách chỉ thấy một cái tường trống mà không hiểu vì sao.
+
+**Kiểm duyệt:** lời chúc hiện ngay, không duyệt trước. Chủ thiệp ẩn hoặc xoá
+trong trang quản lý. Server chặn spam ở mức 4 mẩu mỗi IP trong 10 phút.
+
+**Xuất PDF:** `quanly.doantien.love/so-loi-chuc` (cần đăng nhập) → Ctrl/Cmd+P →
+Lưu thành PDF. Không dùng thư viện PDF nào; bộ máy in của trình duyệt là đủ.
+
 ### Google Maps
 
 - Mở tab mới.
@@ -387,6 +442,10 @@ Không hard-code nội dung vào nhiều section. Các section phải đọc t�
 - [ ] Nút lưu ngày cưới tải file `.ics` hợp lệ.
 - [ ] RSVP validate trường bắt buộc.
 - [ ] RSVP có loading, success và error state khi tích hợp API.
+- [ ] Sổ lời chúc: gửi được, mẩu mới hiện ngay và trang cuộn tới đúng mẩu đó.
+- [ ] Sổ lời chúc không có dấu thời gian, tổng số, phân trang hay avatar.
+- [ ] Bốn nét chữ đều hiện đủ dấu tiếng Việt.
+- [ ] Trang `/so-loi-chuc` in ra PDF giống hệt tường trên thiệp.
 - [ ] Animation cuộn chỉ chạy một lần và không gây giật layout.
 - [ ] Tắt animation khi bật reduced motion.
 - [ ] Không có horizontal scroll trên mobile.

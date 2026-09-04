@@ -892,6 +892,11 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1.2r
 .dates { --step: 18ms; }
 .count-grid { --step: 90ms; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--peach-ink); outline-offset: 3px; }
+/* Thanh nav chỉ nhận focus theo lệnh của JS sau khi mở thiệp (tabindex="-1",
+   không bao giờ tab tới được), nên vòng focus ở đây không phục vụ ai — nó chỉ
+   vẽ một khung đỏ quanh trái tim ở mọi lần mở thiệp. Các link BÊN TRONG nav vẫn
+   giữ vòng của chúng nhờ luật ở trên. */
+.nav:focus, .nav:focus-visible { outline: none; }
 
 /* Vệt sáng quét qua bìa một lần khi tải trang */
 .cover-card::after {
@@ -1248,6 +1253,193 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @keyframes gift-pop {
   from { opacity: 0; transform: scale(.86) rotate(-3deg); }
   to { opacity: 1; transform: none; }
+}
+
+/* ---- Sổ lời chúc ----
+   Mục tiêu hình ảnh là TƯỜNG GIẤY NHỚ, không phải danh sách đánh giá sản phẩm.
+   Vì vậy ở đây cố tình không có: avatar tròn, dấu thời gian, con số tổng, nút
+   "xem thêm". Thứ thay thế chúng: giấy nhiều màu lệch nhau, mẩu nào cũng nghiêng
+   một chút, và bốn nét chữ khác nhau cho có cảm giác nhiều người cùng viết. */
+.wishbook { padding: clamp(4.5rem, 10vw, 8rem) 1.25rem; background: #efe7de; }
+.wishbook[hidden] { display: none; }
+.wishbook-shell { max-width: 1000px; margin: 0 auto; }
+.wishbook-head { max-width: 34rem; margin: 0 auto; text-align: center; }
+.wishbook-head h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(2.6rem, 7vw, 4.6rem);
+  font-weight: 400;
+  letter-spacing: -.03em;
+  line-height: .98;
+  text-wrap: balance;
+}
+.wishbook-head h2 em { color: var(--peach-ink); font-family: var(--script); font-size: 1.12em; font-weight: 400; }
+.wishbook-copy { margin: 1rem 0 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1.05rem; line-height: 1.6; }
+
+.wishbook-form {
+  width: min(34rem, 100%);
+  margin: clamp(2rem, 5vw, 3rem) auto 0;
+  padding: clamp(1.5rem, 4vw, 2.4rem);
+  display: grid;
+  gap: 1.3rem;
+  background: var(--paper);
+  border: 1px solid var(--peach);
+  border-radius: 14px;
+}
+.wishbook-form[hidden] { display: none; }
+.wish-field { display: grid; gap: .45rem; color: var(--ink); font-size: .75rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
+.wish-field textarea, .wish-field input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(89, 71, 63, .28);
+  border-radius: 0;
+  padding: .7rem 0;
+  background: transparent;
+  color: var(--ink);
+  outline: 0;
+  letter-spacing: normal;
+  text-transform: none;
+}
+/* Ô nhập dùng luôn nét chữ viết tay: gõ vào đã thấy giống đang viết vào sổ chứ
+   không phải điền form. Cỡ ≥16px để iOS Safari không tự phóng to khi focus. */
+.wish-field textarea {
+  font-family: "Patrick Hand", var(--sans);
+  font-size: 1.15rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+.wish-field input { font-family: "Patrick Hand", var(--sans); font-size: 1.1rem; }
+.wish-field textarea:focus, .wish-field input:focus { border-color: var(--peach-ink); }
+.wish-field [aria-invalid="true"] { border-color: var(--peach-ink); border-bottom-width: 2px; }
+.wishbook-form .button--solid { justify-self: start; margin-top: 0; }
+
+.wish-thanks { width: min(34rem, 100%); margin: clamp(2rem, 5vw, 3rem) auto 0; text-align: center; }
+.wish-thanks[hidden] { display: none; }
+.wish-thanks-line { margin: 0; color: var(--peach-ink); font-family: var(--script); font-size: 2.6rem; line-height: 1.2; }
+.wish-again {
+  min-height: 44px;
+  margin-top: .3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-family: var(--ui);
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: .35em;
+  cursor: pointer;
+}
+.wish-again:hover { color: var(--peach-ink); }
+
+/* Masonry bằng CSS columns: mẩu giấy cao thấp khác nhau tự xếp khít, không cần
+   JS đo đạc. Đổi lại, thứ tự đọc chạy dọc từng cột — với những mẩu độc lập,
+   không có thứ tự nào cần giữ, nên đây lại là điểm cộng: nhìn ra tường giấy
+   chứ không ra danh sách. */
+.wish-wall { margin-top: clamp(3rem, 7vw, 5rem); column-count: 3; column-gap: 1.5rem; }
+.wish {
+  /* inline-block + width 100%: thiếu nó thì Safari cắt đôi mẩu giấy qua hai cột */
+  display: inline-block;
+  width: 100%;
+  break-inside: avoid;
+  position: relative;
+  margin: 0 0 1.5rem;
+  padding: 1.5rem 1.4rem 1.2rem;
+  background: var(--wish-paper, var(--paper));
+  border: 1px solid rgba(89, 71, 63, .12);
+  border-radius: 3px;
+  rotate: var(--tilt, 0deg);
+  box-shadow: 0 10px 22px -18px rgba(89, 71, 63, .9);
+}
+/* Mẩu băng dính dán mép trên. Vị trí lệch theo từng nét chữ để bốn mẩu cạnh
+   nhau không thẳng hàng như một bộ card sinh ra từ khuôn. */
+.wish::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: var(--tape-x, 50%);
+  width: 58px;
+  height: 17px;
+  translate: -50% 0;
+  rotate: var(--tape-tilt, -2deg);
+  background: rgba(215, 117, 112, .17);
+  border-left: 1px solid rgba(255, 255, 255, .5);
+  border-right: 1px solid rgba(255, 255, 255, .5);
+}
+.wish blockquote {
+  margin: 0;
+  font-family: var(--hand);
+  font-size: var(--hand-size);
+  line-height: var(--hand-lh);
+  /* xuống dòng khách tự gõ phải được giữ; chuỗi dài không dấu cách không được
+     phá vỡ bề rộng cột */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wish figcaption {
+  margin-top: .9rem;
+  color: var(--peach-ink);
+  font-family: var(--sign);
+  font-size: var(--sign-size);
+  line-height: 1.3;
+  text-align: right;
+}
+/* Chữ ký ở góc dưới phải, đúng như người ta ký trong sổ thật — thay cho avatar. */
+.wish figcaption::before { content: "— "; }
+
+/* Bốn nét chữ. Cả bốn font đều có subset tiếng Việt (đã kiểm bằng API Google
+   Fonts); font thiếu dấu sẽ rơi về font dự phòng ngay giữa câu và lộ ngay. */
+.wish--f0 { --hand: "Patrick Hand", var(--sans); --hand-size: 1.06rem; --hand-lh: 1.62; --sign: "Great Vibes", cursive; --sign-size: 1.55rem; --tape-x: 46%; --tape-tilt: -3deg; }
+.wish--f1 { --hand: "Dancing Script", cursive; --hand-size: 1.22rem; --hand-lh: 1.5; --sign: "Dancing Script", cursive; --sign-size: 1.3rem; --tape-x: 58%; --tape-tilt: 2.5deg; }
+.wish--f2 { --hand: "Shantell Sans", var(--sans); --hand-size: 1rem; --hand-lh: 1.6; --sign: "Patrick Hand", var(--sans); --sign-size: 1.15rem; --tape-x: 40%; --tape-tilt: 1.5deg; }
+.wish--f3 { --hand: "Great Vibes", cursive; --hand-size: 1.5rem; --hand-lh: 1.5; --sign: "Shantell Sans", var(--sans); --sign-size: 1rem; --tape-x: 62%; --tape-tilt: -1.5deg; }
+
+/* Năm màu giấy. Phải khớp PRINT_PAPERS trong admin/server.js, nếu không quyển
+   in ra sẽ không còn giống cái khách đã thấy trên thiệp. */
+.wish--p0 { --wish-paper: #fffaf3; }
+.wish--p1 { --wish-paper: #fdf1e6; }
+.wish--p2 { --wish-paper: #fbf4ea; }
+.wish--p3 { --wish-paper: #fdeee9; }
+.wish--p4 { --wish-paper: #f9f3e8; }
+
+/* Mẩu khách vừa ghim: sáng lên một nhịp rồi trở lại bình thường. Không gắn nhãn
+   "của bạn" — cái nhãn đó mới là thứ kéo về phía giao diện sản phẩm. */
+.wish.is-mine { animation: wish-pin .55s var(--ease-out) both, wish-mine 2.6s ease-out .55s both; }
+@keyframes wish-pin {
+  from { opacity: 0; transform: scale(.9) translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wish-mine {
+  0%, 45% { box-shadow: 0 0 0 3px rgba(215, 117, 112, .45); }
+  100% { box-shadow: 0 10px 22px -18px rgba(89, 71, 63, .9); }
+}
+
+.wish-empty { margin: clamp(3rem, 7vw, 5rem) 0 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1.05rem; text-align: center; }
+.wish-empty[hidden] { display: none; }
+
+.success-next { margin: 1.4rem 0 0; }
+.success-next[hidden] { display: none; }
+.success-next a { color: var(--peach-ink); font-family: var(--ui); font-size: .72rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; text-underline-offset: .35em; }
+
+/* Responsive của sổ nằm NGAY ĐÂY chứ không gộp vào hai khối @media chung ở giữa
+   file: khối sổ này đứng sau chúng, cùng độ ưu tiên thì luật đứng sau thắng —
+   để chung là số cột trong đó bị .wish-wall ở trên đè, mobile giữ nguyên 3 cột
+   và mỗi mẩu giấy hẹp tới mức mỗi chữ rơi một dòng. */
+@media (max-width: 820px) {
+  .wish-wall { column-count: 2; }
+}
+@media (max-width: 540px) {
+  /* Một cột: hai cột trên màn hẹp thì mỗi mẩu chỉ còn ~150px, chữ viết tay rớt
+     dòng liên tục và không đọc nổi. */
+  .wish-wall { column-count: 1; column-gap: 0; }
+  /* Một cột full-width xếp thẳng băng thì ra chồng thanh ngang chứ không ra
+     tường giấy. Thụt so le trái/phải để mắt thấy chúng được dán rời từng mẩu. */
+  .wish { width: 93%; margin-bottom: 1.25rem; }
+  .wish:nth-child(even) { margin-left: 7%; }
+  .wish-thanks-line { font-size: 2.1rem; }
+  .wishbook-form .button--solid { width: 100%; justify-self: stretch; }
 }
 
 /* Karaoke: hai ô này chiếm trọn hàng trong lưới 2 cột của form xác nhận */

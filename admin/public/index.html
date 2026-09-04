@@ -116,6 +116,26 @@
       </div>
       <p class="empty" id="gifts-empty" hidden>Chưa nhận được khoản nào.</p>
     </section>
+
+    <!-- Sổ lời chúc hiện ngay khi khách gửi, không duyệt trước — nên chỗ này là
+         nơi gỡ bài phá. "Ẩn" gỡ khỏi tường mà vẫn giữ nội dung để đọc lại;
+         "Xoá" mới là mất hẳn. -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Sổ lời chúc <span class="muted" id="wish-count"></span></h2>
+        <div class="row-tight">
+          <a class="btn" href="/so-loi-chuc" target="_blank" rel="noopener">In / Lưu PDF</a>
+          <button class="btn btn-ghost" id="export-wishes" type="button">Tải CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="wishes">
+          <thead><tr><th>Thời điểm</th><th>Tên</th><th>Lời chúc</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="wishes-empty" hidden>Chưa có lời chúc nào.</p>
+    </section>
   </main>
 </div>
 

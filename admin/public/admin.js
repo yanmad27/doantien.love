@@ -4,7 +4,7 @@ const loginView = $('#login')
 const appView = $('#app')
 const toastEl = $('#toast')
 
-let state = { guests: [], rsvps: [], gifts: [], siteOrigin: 'https://doantien.love' }
+let state = { guests: [], rsvps: [], wishes: [], gifts: [], siteOrigin: 'https://doantien.love' }
 let filter = ''
 
 /* --- tiện ích --- */
@@ -119,6 +119,21 @@ function render() {
     <td><div class="actions"><button class="btn-mini btn-del" data-act="del-rsvp">Xoá</button></div></td>
   </tr>`).join('')
 
+  /* Mới nhất lên đầu — ngược với tường trên trang thiệp, và cố ý: ở đây việc cần
+     làm là soát mẩu vừa xuất hiện, chứ không phải đọc sổ theo thứ tự. */
+  const wishes = [...state.wishes].reverse()
+  $('#wish-count').textContent = `(${wishes.length})`
+  $('#wishes-empty').hidden = wishes.length > 0
+  $('#wishes tbody').innerHTML = wishes.map((w) => `<tr data-id="${esc(w.id)}"${w.hidden ? ' class="is-hidden"' : ''}>
+    <td>${new Date(w.at).toLocaleString('vi-VN')}</td>
+    <td>${esc(w.name)}${w.hidden ? '<span class="pill pill-none">đã ẩn</span>' : ''}</td>
+    <td class="wish-text">${esc(w.text)}</td>
+    <td><div class="actions">
+      <button class="btn-mini" data-act="toggle-wish">${w.hidden ? 'Hiện lại' : 'Ẩn'}</button>
+      <button class="btn-mini btn-del" data-act="del-wish">Xoá</button>
+    </div></td>
+  </tr>`).join('')
+
   /* Mừng cưới — chỗ DUY NHẤT hiện số tiền. Trang thiệp chỉ biết "đã nhận hay
      chưa", đừng bao giờ đẩy số ra ngoài đây. */
   const gifts = [...state.gifts].reverse()
@@ -141,7 +156,9 @@ function render() {
 
 async function refresh() {
   state = await api('/api/data')
-  state.gifts ||= [] // máy chủ bản cũ chưa trả trường này
+  // máy chủ bản cũ chưa trả hai trường này
+  state.wishes ||= []
+  state.gifts ||= []
   render()
 }
 
@@ -305,6 +322,29 @@ $('#rsvps').addEventListener('click', async (e) => {
   } catch (err) { toast(err.message) }
 })
 
+$('#wishes').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-act]')
+  if (!button) return
+  const id = button.closest('tr').dataset.id
+  const wish = state.wishes.find((w) => w.id === id)
+  if (!wish) return
+
+  try {
+    if (button.dataset.act === 'toggle-wish') {
+      await api(`/api/wishes/${id}`, { method: 'PATCH', body: JSON.stringify({ hidden: !wish.hidden }) })
+      await refresh()
+      toast(wish.hidden ? 'Đã hiện lại trên thiệp' : 'Đã ẩn khỏi thiệp')
+      return
+    }
+    if (button.dataset.act === 'del-wish') {
+      if (!window.confirm(`Xoá hẳn lời chúc của "${wish.name}"?\n\n"${wish.text}"\n\nMuốn gỡ khỏi thiệp mà vẫn giữ nội dung thì bấm Ẩn.`)) return
+      await api(`/api/wishes/${id}`, { method: 'DELETE' })
+      await refresh()
+      toast('Đã xoá lời chúc')
+    }
+  } catch (err) { toast(err.message) }
+})
+
 /* Xoá khoản mừng cưới. Nói rõ hệ quả trong hộp xác nhận: thiệp của khách đó
    quay lại trạng thái chưa mừng và hiện lại QR — đây thường là lý do người ta
    bấm xoá, nhưng nếu xoá nhầm thì cũng cần biết ngay. */
@@ -346,6 +386,13 @@ $('#export-gift').addEventListener('click', () => {
       const guest = g.guestCode ? state.guests.find((x) => x.code === g.guestCode) : null
       return [g.at, g.guestCode, guest ? fullName(guest) : '', g.amount, g.content, g.id, g.ref]
     }),
+  ]))
+})
+
+$('#export-wishes').addEventListener('click', () => {
+  download('so-loi-chuc.csv', csv([
+    ['thoi_diem', 'ma_khach', 'ten', 'loi_chuc', 'da_an'],
+    ...state.wishes.map((w) => [w.at, w.guestCode, w.name, w.text, w.hidden ? 'x' : '']),
   ]))
 })
 
