@@ -384,12 +384,16 @@ function armNudge() {
    muốn mới mở. Bấm xong chạy vài dòng trạng thái cho vui rồi QR mới hiện.
    --------------------------------------------------------- */
 
+/* Màn diễn trước khi hiện QR. Trò đùa nằm ở chỗ thanh tiến trình kẹt ở 99% —
+   ai cũng từng chờ cái thanh đó. Tổng ~5.3s, đủ dài để đọc hết mà không chán. */
 const GIFT_STEPS = [
-  'Đang mở phong bì…',
-  'Đang phủi bụi mã QR…',
-  'Đang xúc động…',
+  { text: 'Đang mở phong bì…', pct: 12, ms: 850 },
+  { text: 'Đang phủi bụi mã QR…', pct: 41, ms: 850 },
+  { text: 'Đang kiểm tra xem bạn có thật lòng không…', pct: 88, ms: 1000 },
+  { text: 'Kết quả: thật lòng 100%. Đang xúc động…', pct: 99, ms: 1000 },
+  { text: 'Vẫn 99%… thanh nào chẳng thế', pct: 99, ms: 1000 },
+  { text: 'Thôi hiện luôn cho nhanh!', pct: 100, ms: 600 },
 ]
-const GIFT_STEP_MS = 750
 
 const gift = document.getElementById('gift')
 const giftQrImg = document.getElementById('gift-qr-img')
@@ -410,18 +414,27 @@ if (gift && giftQrImg) {
     button.hidden = true
     stage.hidden = false
 
+    const bar = document.getElementById('gift-bar')
     const reveal = () => {
       status.hidden = true
+      bar.hidden = true
       qr.hidden = false
     }
     // Người bật giảm chuyển động thì bỏ màn diễn, hiện QR luôn — họ chỉ muốn
     // lấy mã chứ không muốn xem hoạt cảnh.
     if (reducedMotion.matches) return reveal()
 
-    GIFT_STEPS.forEach((line, i) => {
-      window.setTimeout(() => { status.textContent = line }, i * GIFT_STEP_MS)
+    bar.hidden = false
+    // mỗi bước một thời lượng riêng nên phải cộng dồn, không nhân đều được
+    let at = 0
+    GIFT_STEPS.forEach((step) => {
+      window.setTimeout(() => {
+        status.textContent = step.text
+        bar.style.setProperty('--pct', step.pct + '%')
+      }, at)
+      at += step.ms
     })
-    window.setTimeout(reveal, GIFT_STEPS.length * GIFT_STEP_MS)
+    window.setTimeout(reveal, at)
   })
 }
 

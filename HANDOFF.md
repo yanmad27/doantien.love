@@ -252,8 +252,10 @@ Khi `prefers-reduced-motion: reduce`:
 
 - QR **không bày sẵn**: nằm sau nút "Gửi lời chúc mừng từ xa" ở section `#gift`.
   Ai muốn mới mở, khách khác lướt qua.
-- Bấm nút → chạy 3 dòng trạng thái cho vui (`GIFT_STEPS`, mỗi dòng 750ms) rồi QR
-  mới hiện. Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
+- Bấm nút → chạy 6 dòng trạng thái kèm thanh tiến trình **cố tình kẹt ở 99%**
+  (`GIFT_STEPS`, tổng ~5.3s) rồi QR mới hiện. Mỗi bước có thời lượng riêng nên
+  phải cộng dồn mốc thời gian, không nhân đều được.
+- Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
 - Ảnh: `assets/qr-mung-cuoi.png`. **Thiếu file thì ẩn cả section** (JS chỉ bỏ
   `hidden` khi trình duyệt xác nhận tải được ảnh) — thà không có còn hơn để khách
   bấm xong nhận một ô ảnh vỡ.
