@@ -289,3 +289,26 @@ trạng thái mừng cưới; không có exception JavaScript hay lỗi tải as
 Đây là Chrome headless trên máy M3 có CPU throttle, chưa phải phép đo GPU trên
 điện thoại Android tầm trung thật. Lỗi console localhost vẫn chỉ là CORS dự kiến
 từ API production; không có exception hay lỗi tải asset của phần mừng cưới.
+
+## 11. Vòng 6 — phối cảnh người trên mặt đường
+
+- **Ngày QA:** 04.09.2026
+- **Ảnh nguồn dò đường:** `assets/gift-journey-scene.webp`
+- **Tâm đường theo % khung:** `(43,86) → (58,76) → (76,64) → (75,53) → (82,47)`
+- **Công thức chiều cao:** `h = 0,49 × (footY − 34)`
+
+Đo giữa chặng `riding` bằng Chrome 152, tab `visible`. Ba viewport 320 / 390 /
+1280 cho cùng kết quả trong sai số làm tròn 0,3 điểm phần trăm và đều không tràn
+ngang. Bảng dưới là số tại 1280px:
+
+| Lớp | Chân y (%) | Cao đo (%) | Cao theo công thức (%) |
+|---|---:|---:|---:|
+| Bé | 87,6 | 26,3 | 26,3 |
+| Trước 1 / 2 / 3 | 82,5 / 78,2 / 74,9 | 23,3 / 21,3 / 19,9 | 23,8 / 21,7 / 20,0 |
+| Sau 1 / 2 / 3 | 61,4 / 59,9 / 57,2 | 14,0 / 12,6 / 11,8 | 13,4 / 12,7 / 11,4 |
+| Xa, đầu → cuối | 54,5 → 49,2 | 10,1 → 7,7 | 10,0 → 7,4 |
+
+Sai số tối đa khoảng 4% đến từ bounding box của sprite đang xoay/nhún. Ảnh chụp
+ở cả ba cỡ xác nhận hàng trước bám đoạn đường rộng phía dưới–trái, hàng sau nằm
+trong khúc cua x≈69–82%, và đám xa thu gọn quanh tâm đường lên cổng; không còn
+nhân vật đứng trong khoảng giấy trắng. Các ảnh `.tmp-*` đã được xoá sau khi soi.
