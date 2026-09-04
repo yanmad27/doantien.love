@@ -101,6 +101,21 @@
       </div>
       <p class="empty" id="rsvps-empty" hidden>Chưa có phản hồi nào.</p>
     </section>
+
+    <!-- Chỗ duy nhất hiện số tiền. Trang thiệp chỉ biết đã nhận hay chưa. -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Mừng cưới <span class="muted" id="gift-count"></span></h2>
+        <button class="btn btn-ghost" id="export-gift" type="button">Tải CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table id="gifts">
+          <thead><tr><th>Thời điểm</th><th>Khách</th><th>Số tiền</th><th>Nội dung</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="empty" id="gifts-empty" hidden>Chưa nhận được khoản nào.</p>
+    </section>
   </main>
 </div>
 

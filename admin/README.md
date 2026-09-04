@@ -10,8 +10,10 @@ cùng Dokploy.
 | `quanly.doantien.love/` | cần mật khẩu | UI quản lý khách + xem RSVP |
 | `doantien.love/t/<mã>` | công khai | Thiệp riêng, **render tại server** từ danh sách khách |
 | `doantien.love/api/rsvp` | công khai (POST) | Nhận phản hồi RSVP từ trang thiệp |
+| `doantien.love/api/sepay-webhook` | SePay (POST, có chữ ký) | Nhận báo tiền mừng cưới về |
+| `doantien.love/api/gift-status` | công khai (GET) | Thiệp hỏi "tiền của khách này tới chưa" |
 
-Ba URL trên do Traefik phân tới cùng một container. `doantien.love` còn lại
+Các URL trên do Traefik phân tới cùng một container. `doantien.love` còn lại
 vẫn do app thiệp (nginx) phục vụ.
 
 ## Vì sao render tại server
@@ -55,6 +57,10 @@ Ghi kiểu atomic (ghi file tạm rồi `rename`) nên không vỡ file khi đan
 | `SITE_ORIGIN` | `https://doantien.love` |
 | `DATA_DIR` | `/data` |
 | `PORT` | `3000` |
+| `SEPAY_WEBHOOK_SECRET` | Secret Key của webhook SePay. **Thiếu thì `/api/sepay-webhook` trả 503** thay vì nhận dữ liệu chưa xác thực |
+| `SEPAY_ACCOUNT` | mặc định `03009274502` |
+| `SEPAY_BANK` | mặc định `TPBank` |
+| `GIFT_CODE_PREFIX` | mặc định `MC`, phải khớp cấu hình trên my.sepay.vn |
 
 ### Đổi mật khẩu
 
@@ -65,6 +71,42 @@ node admin/hash-password.js 'mật khẩu mới'
 Dán kết quả vào Dokploy → app `quanly` → Environment → `ADMIN_PASSWORD_HASH`,
 rồi Deploy. Đổi `SESSION_SECRET` cùng lúc sẽ đá mọi phiên đang đăng nhập ra.
 
+## Mừng cưới qua SePay
+
+Khách quét QR trên thiệp riêng và chuyển khoản → SePay bắn webhook về đây → lần
+hỏi kế tiếp của thiệp thấy đã nhận → **đúng trang của người vừa chuyển** hiện lời
+cảm ơn. Số tiền chỉ hiện trong UI quản trị, không bao giờ ra ngoài trang thiệp.
+
+Biết được ai vừa chuyển là nhờ QR của mỗi khách mang sẵn mã riêng trong nội dung
+chuyển khoản: `MC` + mã khách (ví dụ `MCab3k9z`). Ảnh QR lấy từ
+`qr.sepay.vn/img` nên app không cần thư viện sinh QR.
+
+### Cần bấm gì trên my.sepay.vn
+
+1. Kết nối tài khoản TPBank `03009274502` (PHAN NGUYEN KHAC DOAN).
+2. **Cấu hình Công ty → Cấu hình chung → Cấu trúc mã thanh toán**: tiền tố `MC`,
+   hậu tố **6–6**, loại **Số và chữ**. (Mã khách dài đúng 6 ký tự.)
+3. **Tạo webhook**: URL `https://doantien.love/api/sepay-webhook`, xác thực
+   **HMAC-SHA256**. Secret Key chỉ hiện đầy đủ một lần — chép ngay vào
+   `SEPAY_WEBHOOK_SECRET` bên Dokploy.
+4. Làm ở **Test mode** trước, chạy đúng rồi mới sao cấu hình sang Live.
+
+Bước 2 mà quên thì vẫn chạy: SePay để `code` rỗng, app tự dò `MC<mã>` trong nội
+dung chuyển khoản.
+
+### Những chỗ dễ hỏng
+
+- **Đồng hồ máy chủ lệch quá 5 phút** → mọi webhook bị từ chối 401. Phải bật NTP.
+- SePay trả mã **viết hoa** (`MCAB3K9Z`), mã khách lưu **viết thường** — app đã
+  hạ chữ trước khi so, đừng bỏ bước đó đi.
+- Chữ ký ký trên **bytes thô**. Parse JSON rồi stringify lại là chữ ký hỏng ngay.
+- Webhook phải trả **đúng** `{"success": true}` với status 200; SePay coi mọi đáp
+  án khác là thất bại và gửi lại.
+- Giao dịch trùng được bỏ qua theo `id` — SePay giữ nguyên `id` qua mọi lần
+  retry và mọi lần bấm gửi lại tay.
+- `qr.sepay.vn` chết thì thiệp tự rơi về QR tĩnh trong repo: vẫn chuyển khoản
+  được, chỉ mất phần tự nhận ra ai gửi nên không có animation.
+
 ## Bảo mật đã làm
 
 - Mật khẩu băm scrypt, so sánh bằng `timingSafeEqual`.
@@ -73,7 +115,11 @@ rồi Deploy. Đổi `SESSION_SECRET` cùng lúc sẽ đá mọi phiên đang đ
 - Chặn path traversal khi phục vụ file tĩnh.
 - Giới hạn body 64 KB, giới hạn độ dài mọi trường nhập.
 - `noindex, nofollow` toàn bộ UI quản trị và thiệp riêng.
-- CORS của `/api/rsvp` chỉ mở cho `SITE_ORIGIN`.
+- CORS của `/api/rsvp` và `/api/gift-status` chỉ mở cho `SITE_ORIGIN`.
+- Webhook SePay xác thực HMAC-SHA256 trên bytes thô, so bằng `timingSafeEqual`,
+  và từ chối request lệch giờ quá 5 phút (chống replay).
+- `/api/gift-status` chỉ trả có/chưa, không kèm số tiền, và bị giới hạn 120
+  lượt hỏi mỗi IP trong 5 phút để không quét được cả bảng mã khách.
 
 **Chưa làm:** không có nhật ký đăng nhập, không có 2FA, rate limit mất khi
 restart. Với một trang cưới thì chấp nhận được, nhưng đừng dùng lại mật khẩu
