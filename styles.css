@@ -1018,6 +1018,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cover-flower--bottom { width: 77%; right: -38%; }
   .hero-copy { max-width: 305px; }
   .couple { font-size: clamp(3.25rem, 16vw, 5rem); }
+  /* clamp() lấy cận dưới khi màn hẹp, mà cận dưới cũ (4.6rem/3.5rem) vẫn quá to:
+     "Hẹn gặp bạn!" rớt hai dòng, "Mười" đứng trơ một mình. Hạ cận dưới xuống. */
+  .closing-title { font-size: clamp(3.1rem, 13.5vw, 5rem); }
+  .countdown h2 em, .calendar-copy h2 em, .rsvp-heading h2 em { font-size: 1.04em; }
+  .success h3 { font-size: 2.6rem; }
   .hero-flower--left { width: 46vw; left: -26%; top: 0; }
   .hero-flower--right { width: 36vw; right: -24%; bottom: -2%; }
   .count-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1032,6 +1037,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   #rsvp-form { grid-template-columns: 1fr; }
   #rsvp-form label { grid-column: 1 / -1; }
   footer { flex-direction: column; text-align: center; }
+}
+
+/* ---- Điện thoại xoay ngang ----
+   Cao chỉ ~390px mà .hero vẫn giữ min-height: 100svh + padding 8rem, nên khối
+   tên rơi hẳn khỏi màn hình: mở thiệp ra chỉ thấy hoa và một dòng chữ, phải cuộn
+   mới đọc được tên cô dâu chú rể. Ở chiều cao này bỏ min-height và ép mọi khoảng
+   trắng dọc nhỏ lại. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .hero { min-height: 0; padding: 4.9rem 1.25rem 2.4rem; }
+  .hero::before { inset: 4.4rem .8rem .8rem; }
+  .hero::after { inset: 4.8rem 1.2rem 1.2rem; }
+  .couple { font-size: clamp(2.1rem, 5.4vw, 3.1rem); }
+  .couple-family { margin-bottom: .2rem; }
+  .hero-copy, .honor { margin-bottom: .8rem; font-size: .98rem; }
+  .couple-heart { font-size: 1.5rem; margin: -.15rem 0; }
+  .ornament { margin: .5rem auto .9rem; }
+  .kicker, .section-label, .overline { margin: .7rem 0 .4rem; }
+  .countdown, .details, .calendar-section, .rsvp { padding-block: 3.2rem; }
+  .closing { min-height: 0; padding-block: 3.2rem; }
+  .closing-title { font-size: clamp(2.8rem, 8vw, 4.6rem); }
+  .monogram-mark--closing { width: clamp(96px, 18vw, 130px); }
+  /* modal cao hơn màn hình thì phải cuộn được, không thì mất luôn nút bấm */
+  .nudge { max-height: 84vh; overflow-y: auto; }
 }
 
 @media (max-width: 360px) {
@@ -1051,4 +1079,69 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .visible .schedule.stagger-on div::after { transform: scaleX(1) !important; }
   .nav.is-hidden { transform: none !important; }
   .cover-card::after { display: none; }
+}
+
+/* ---- Hỏi vui "bạn có đến không" ----
+   Mỗi bước đứng một góc khác nhau (data-place) cho có cảm giác nó vừa nhảy chỗ.
+   Dùng <dialog> nên Esc và focus do trình duyệt lo; ở đây chỉ lo phần nhìn. */
+.nudge {
+  width: min(420px, calc(100vw - 2.5rem));
+  padding: clamp(1.5rem, 4vw, 2.2rem);
+  border: 1px solid var(--peach);
+  border-radius: 16px;
+  background: var(--paper);
+  box-shadow: 0 26px 60px -28px rgba(89, 71, 63, .75);
+  color: var(--ink);
+  text-align: center;
+}
+.nudge::backdrop {
+  background: rgba(89, 71, 63, .34);
+  backdrop-filter: blur(2px);
+}
+/* Vị trí theo từng bước. margin (chứ không phải inset) mới đúng cách dời một
+   <dialog> mở bằng showModal: nó nằm trong top layer và tự căn giữa bằng
+   margin: auto. */
+.nudge[data-place="center"] { margin: auto; }
+.nudge[data-place="bottom-left"] { margin: auto auto max(1.25rem, 5vh) max(1.25rem, 4vw); }
+.nudge[data-place="top-right"] { margin: max(1.25rem, 5vh) max(1.25rem, 4vw) auto auto; }
+
+.nudge-overline {
+  margin: 0 0 .5rem;
+  color: var(--gold-ink);
+  font-family: var(--ui);
+  font-size: .68rem;
+  font-weight: 500;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+}
+.nudge-title {
+  margin: 0 0 .6rem;
+  color: var(--peach-ink);
+  font-family: var(--serif);
+  font-size: clamp(1.5rem, 5vw, 1.95rem);
+  font-weight: 500;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.nudge-copy {
+  margin: 0 0 1.4rem;
+  color: var(--ink-soft);
+  font-family: var(--serif);
+  font-size: 1.02rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+.nudge-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; }
+.nudge-actions .button { flex: 1 1 auto; justify-content: center; }
+.nudge-no[hidden] { display: none; }
+
+/* Bước cuối chỉ còn một nút — không cho nó kéo dài hết chiều ngang trông thô */
+.nudge[data-step="2"] .nudge-actions .button { flex: 0 1 auto; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .nudge[open] { animation: nudge-in .32s var(--ease-out); }
+}
+@keyframes nudge-in {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to { opacity: 1; transform: none; }
 }

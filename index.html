@@ -232,6 +232,19 @@
   <!-- Nhạc nền: chỉ chạy sau khi khách bấm "Mở thiệp" (trình duyệt chặn phát
        nhạc không do người dùng chủ động). preload="none" để không tốn data của
        khách nếu họ chưa mở thiệp. JS tự ẩn nút nếu thiếu file nhạc. -->
+  <!-- Hỏi vui "bạn có đến không". Dùng <dialog> để có sẵn Esc, quản lý focus và
+       ::backdrop — tự dựng lại mấy thứ đó bằng div là chỗ hay quên nhất.
+       Nội dung từng bước do JS đổ vào (xem NUDGE_STEPS trong script.js). -->
+  <dialog class="nudge" id="nudge" aria-labelledby="nudge-title">
+    <p class="nudge-overline" id="nudge-overline"></p>
+    <p class="nudge-title" id="nudge-title"></p>
+    <p class="nudge-copy" id="nudge-copy"></p>
+    <div class="nudge-actions">
+      <button class="button nudge-yes" id="nudge-yes" type="button"></button>
+      <button class="button button--outline nudge-no" id="nudge-no" type="button"></button>
+    </div>
+  </dialog>
+
   <audio id="wedding-music" src="./assets/nhac-cuoi.mp3" loop preload="none"></audio>
 
   <script type="module" src="./script.js"></script>

@@ -224,6 +224,19 @@ Khi `prefers-reduced-motion: reduce`:
   không có tham số cho reminder, khách sẽ dùng mức nhắc mặc định của họ. Muốn có
   đúng hai mốc trên thì phải chọn "Apple Calendar / Outlook" để tải `.ics`.
 
+### Hỏi vui "bạn có đến không"
+
+- Hiện sau khi mở thiệp **5–10 giây** (ngẫu nhiên), mỗi phiên **một lần**
+  (`sessionStorage: kd-dt-nudge-xong`).
+- Không hiện nếu khách đã gửi phản hồi (panel `#success` đang có class `.show`).
+- Bấm "không" → modal nhảy sang góc khác và nài thêm; tới bước 3 thì nút "không"
+  biến mất. Bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài — đây là trò đùa,
+  không phải cái bẫy.
+- Bấm "có" → đóng modal, chọn sẵn `attendance = yes`, focus ô đó rồi cuộn tới
+  `#rsvp`. Phải hoãn một nhịp (`setTimeout 0`) vì `<dialog>` khi đóng trả focus
+  về phần tử trước đó và trình duyệt cuộn theo focus.
+- Nội dung từng bước nằm ở `NUDGE_STEPS` trong `script.js`.
+
 ### Google Maps
 
 - Mở tab mới.
