@@ -250,12 +250,40 @@ Khi `prefers-reduced-motion: reduce`:
 
 ### Mừng cưới (QR)
 
-- QR **không bày sẵn**: nằm sau nút "Gửi lời chúc mừng từ xa" ở section `#gift`.
+- QR **không bày sẵn**: nằm sau nút "Gọi Bé Phong Bì" ở section `#gift`.
   Ai muốn mới mở, khách khác lướt qua.
-- Bấm nút → chạy 6 dòng trạng thái kèm thanh tiến trình **cố tình kẹt ở 99%**
-  (`GIFT_STEPS`, tổng ~5.3s) rồi QR mới hiện. Mỗi bước có thời lượng riêng nên
-  phải cộng dồn mốc thời gian, không nhân đều được.
-- Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
+- Bấm nút → Bé Phong Bì lên đường, bị một đoàn rước nhập hội, đi hết 4,8 giây
+  (`RIDE_MS` / `RIDE_STEPS` trong `script.js`, phải khớp `@keyframes gift-ride`)
+  rồi QR mới hiện.
+- **Máy quay tiến tới cổng, không phải Bé chạy ra xa.** Lớp `.gift-camera` bọc mọi
+  thứ vẽ trong tranh và phóng dần về tâm tấm bảng trên cổng cưới
+  (`transform-origin: 83% 28.5%`, đo trên chính `gift-journey-scene.webp`). Kết
+  chuyến là cận cảnh cổng — "Doãn & Tiên ở gần" chứ không còn là một cái cổng bé
+  tí ở cuối đường.
+  - Dolly dồn về **1/3 cuối** chuyến. Đẩy đều từ giây đầu thì Bé bị kéo văng khỏi
+    khung ngay giữa đường: đường đi nằm ở tiền cảnh dưới–trái còn tâm phóng ở
+    trên–phải, chỉ cần phóng 2,45 lần là Bé đã ra tới −29%.
+  - Ngang kéo **−27%**, không phải −33% (mức căn giữa hoàn hảo): tâm phóng sát mép
+    phải nên kéo đủ 33% sẽ **hở một vệt giấy dọc mép phải** ở mức dolly desktop.
+  - `--dolly` mobile **3.9**, desktop **2.7**. Ngược đời nhưng đúng: độ nở của ảnh
+    nền là (bề rộng khung × dolly) / 1120px, mà khung desktop rộng gấp rưỡi.
+  - Pháo hoa và hoa giấy nằm **ngoài** `.gift-camera` — chúng là hiệu ứng trên ống
+    kính. Để trong thì dolly kéo chúng đi và hai trong ba chùm pháo hoa văng khỏi
+    khung đúng lúc cao trào.
+  - Bé và đoàn rước **mờ hẳn** ở 18% cuối (`gift-actor-exit`). Theo phối cảnh họ
+    nằm lại phía sau ống kính; giữ lại chỉ được một mẩu sprite dính mép dưới.
+- **QR nằm TRONG tranh**, treo lên tấm bảng của cổng — không còn đặt dưới khung.
+  - Ảnh QR (`.gift-qr-code`) là con của `.gift-frame`, **không** nằm trong
+    `.gift-scene`: scene mang `aria-hidden` nên để vào trong là trình đọc màn hình
+    mất sạch phần mừng cưới. Nhìn thì trong tranh, cấu trúc thì ngoài.
+  - Hiện/ẩn theo `data-phase` bằng CSS, không cần JS gắn/gỡ.
+  - Cỡ mã **cố tình lớn hơn** mặt giấy vẽ trong tranh, đọc như tấm biển treo lên
+    cổng. Nhét vừa khít mép bảng thì phải phóng gấp đôi nữa và ảnh nền nát.
+    Quét được quan trọng hơn bố cục đẹp.
+  - Lời chú vẫn ở **dưới** khung, trên nền giấy phẳng — chữ đè lên tranh màu nước
+    không bao giờ chứng minh nổi đủ tương phản (bài học vòng 7, design-qa §12).
+- Bật `prefers-reduced-motion` thì bỏ màn diễn, vào thẳng cận cảnh cổng và hiện QR
+  luôn — dolly ở `arrived` là transform tĩnh nên không có tí chuyển động nào.
 - Ảnh QR:
   - Thiệp chung dùng `assets/qr-mung-cuoi.png` — QR tĩnh, không mang mã ai cả.
   - Thiệp riêng `/t/<mã>` được app quanly thay bằng ảnh từ `qr.sepay.vn/img`,

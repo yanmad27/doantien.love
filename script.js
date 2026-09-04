@@ -596,7 +596,7 @@ if (gift && giftQrImg) {
      trang thiệp. Tức là hâm nóng nhầm: tải trang HTML ba lần, còn tranh thì vẫn
      nguội. Thuộc tính .src của phần tử luôn là URL đã phân giải đầy đủ, nên đúng
      ở cả trang chung lẫn thiệp riêng (nơi bộ sinh đã đổi "./ thành "/). */
-  const GIFT_ART = ['.gift-scene-bg', '.gift-rider', '.gift-procession-source', '.gift-envelope-art']
+  const GIFT_ART = ['.gift-scene-bg', '.gift-rider', '.gift-procession-source']
   let giftArtWarmed = false
   function warmGiftArt() {
     if (giftArtWarmed || reducedMotion.matches) return
@@ -680,7 +680,7 @@ if (gift && giftQrImg) {
       if (giftQr) giftQr.hidden = false
       /* Dời focus TRƯỚC rồi mới báo. Làm ngược lại thì trình đọc màn hình đang đọc
          dở câu thông báo đã bị cú nhảy focus cắt ngang để đọc nội dung <figure>
-         (bắt đầu bằng câu đùa trong figcaption).
+         (bắt đầu bằng câu đùa trong lời chú).
          Nút vừa bấm nằm trong #gift-thanks và vừa bị ẩn cùng nó — không dời thì
          focus rơi về <body>. Dời sang đúng cái QR khách vừa xin. */
       if (giftQr) giftQr.focus({ preventScroll: true })

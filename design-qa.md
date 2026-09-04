@@ -371,3 +371,74 @@ sau phép biến đổi ảnh, không lấy cả vùng nền sáng xung quanh:
 | `Gia đình cô Lê Thị Lan` | 5,38:1 |
 
 Toàn bộ tám ảnh `.tmp-*` đã được xoá sau khi soi.
+
+## 14. Vòng 9 — lật phối cảnh, đưa mã QR vào trong tranh
+
+- **Ngày QA:** 05.09.2026
+- **Trình duyệt:** Google Chrome headless (CDP), tab `visible`
+- **Viewport:** 320 / 390 / 1280px, thêm một lượt `--force-prefers-reduced-motion`
+
+### Đổi gì
+
+Yêu cầu của chủ thiệp: *"thay vì chạy tới Doãn Tiên ở xa thì flip cho Doãn Tiên ở
+gần, xong thì mở cái QR trong hình luôn chứ không phải ngoài hình."*
+
+Thêm lớp `.gift-camera` bọc mọi thứ vẽ trong tranh và cho nó dolly về tâm tấm bảng
+trên cổng cưới. Bé vẫn đi hết con đường như cũ; cái đổi là **máy quay tiến tới**,
+nên kết chuyến là cận cảnh cổng thay vì một cái cổng bé tí ở cuối đường. Mã QR
+chuyển từ dưới khung lên treo trên chính tấm bảng đó.
+
+`container-type` vẫn nằm ở `.gift-scene` chứ không phải lớp mới, nên `cqw/cqh` giữ
+nguyên hệ quy chiếu và **không phải tính lại một toạ độ nào** của Bé hay đoàn rước.
+
+### Ba thứ hỏng khi dựng, đã sửa
+
+| Vấn đề | Đo được | Sửa |
+|---|---|---|
+| Dolly đều từ giây đầu kéo Bé văng khỏi khung giữa chuyến | ở nửa chuyến Bé ra tới **−29,3%** | dồn dolly về 1/3 cuối (`gift-dolly` 45/65/80/90/100%) |
+| Pháo hoa nằm trong máy quay nên bị kéo đi | chùm 1 và 2 ra **−203%** và **−82,6%** | đưa `.gift-fireworks` + `.gift-celebration` ra ngoài `.gift-camera` |
+| Kéo ngang đủ −33% làm hở mép phải tranh | mép phải chỉ tới **95,9%** ở dolly 2,7 | dùng **−27%** (ngưỡng phủ kín là 17×(1−dolly) = −28,9%) |
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` |
+| Mã QR nằm trọn trong khung tranh | ✅ | ✅ | ✅ |
+| Cỡ mã QR | 151px | 184px | 231px |
+| Khung tranh | 280×187 | 350×233 | 560×373 |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+| `received`: QR tắt, lời cảm ơn hiện, pháo hoa trong khung | ✅ | ✅ | ✅ |
+
+**Reduced motion:** vào thẳng `arrived`, `getAnimations()` trong `#gift` đếm được
+**0 animation đang chạy**, mã QR `opacity: 1` ngay, không tràn ngang, 0 lỗi JS.
+Dolly ở `arrived` là transform tĩnh nên người bật giảm chuyển động vẫn thấy đúng
+cận cảnh cổng mà không có một khung hình chuyển động nào.
+
+**Trợ năng:** mã QR **không** nằm trong nhánh `aria-hidden` (`.gift-scene` vẫn
+`aria-hidden="true"`), có `alt` và `aria-describedby` trỏ đúng lời chú, xuất hiện
+trong cây AX với `ignored=false`. `#gift` vẫn chỉ có **đúng một** vùng `aria-live`
+và nó nằm ngoài `#gift-stage`.
+
+**Hợp đồng chức năng:** 14 điểm grep được đều còn nguyên (`visibilitychange`, so
+mốc `at`, `commitThanks`, fallback QR, ẩn section khi ảnh hỏng, poll 5s/15 phút,
+`preventScroll`, guard reduced-motion và container query, mã QR không `loading="lazy"`).
+`script.js` chỉ đổi **2 dòng**: bỏ `.gift-envelope-art` khỏi `GIFT_ART` và sửa một
+chữ trong chú thích. Toàn bộ logic mừng cưới không bị đụng.
+
+**Ngân sách ảnh:** 138.985 byte (135,7 KiB), giảm từ 166.750 — đã xoá
+`gift-envelope-open.webp` vì mã QR không còn khung phong bì bọc ngoài nữa.
+
+### Chưa kiểm được
+
+- **Thiết bị thật:** chưa chạy trên iOS Safari và Android Chrome thật. Đặc biệt cần
+  thử **quét mã bằng camera thật ở 320px**, nơi mã chỉ còn 151px — tính ra khoảng
+  27mm trên màn hình thật, đủ nhưng sát ngưỡng.
+- **Thiệp riêng `/t/<mã>`:** chưa dựng app quanly ở máy nên chưa xác minh mã QR từ
+  `qr.sepay.vn` hiện đúng chỗ trên tấm bảng. Đường dẫn ảnh không đổi nên rủi ro thấp,
+  nhưng chưa phải là đã kiểm.
+- **Trình duyệt không hỗ trợ container query:** suy luận là rơi vào `arrived` với
+  camera phóng sẵn (dolly chỉ dùng `%` và số không đơn vị, không dùng `cq`), Bé bị
+  `@supports` giấu đi. Chưa dựng được môi trường để đo thật.
+- Chưa chạy Lighthouse, chưa chạy Firefox/Safari, chưa đo lại fps sau thay đổi.
