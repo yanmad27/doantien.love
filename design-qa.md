@@ -230,3 +230,27 @@ Kiểm tra nhanh:
 3. Bật Reduced Motion trong OS → mọi hoa ngừng chuyển động, nội dung hiện ngay.
 4. Thu cửa sổ về 320px → không có thanh cuộn ngang, 2 CTA trong card vẫn thấy đủ.
 5. Bấm `Lưu ngày cưới` → mở file `.ics`, xác nhận `DTSTART:20261004T043000Z`.
+
+## 9. Vòng 4 — đoàn rước của Bé Phong Bì
+
+- **Ngày QA:** 04.09.2026
+- **Trình duyệt:** Google Chrome 152, tab xác nhận `visibilityState = visible`
+- **Viewport:** 320×720, 390×844 và 1440×1000
+- **Ảnh chụp:** đã chụp giữa chặng `riding` và sau khi sang `arrived` ở cả ba cỡ
+
+### Kết quả
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Ba lớp xa / trung / gần cùng chạy | ✅ 21–22 animation hoạt động trong chặng `riding` |
+| Ảnh nền, Bé và sprite tải thật | ✅ `naturalWidth` lần lượt 1120 / 400 / 1000 |
+| Không tràn ngang | ✅ `scrollWidth - clientWidth = 0` ở cả ba viewport |
+| Bé đỗ lại ở cổng | ✅ chặng cuối là `arrived`, Bé và hai cụm đoàn rước còn trong tranh |
+| QR hiện sau 4,8 giây | ✅ `#gift-qr[hidden] = false`, ảnh QR rộng nguồn 360px |
+| Reduced motion | ✅ bỏ thẳng chặng diễn, vào `arrived` và hiện QR trong dưới 80ms |
+| Thiệp riêng `/t/<mã>/` | ✅ sprite đổi thành `/assets/...`, tải đủ 1000px |
+| Ngân sách ảnh | ✅ 166.750 byte (162,8 KiB), dưới 200 KB |
+| Thuộc tính động | ✅ keyframe chỉ đổi `transform`, `opacity`, `filter` |
+
+Console localhost chỉ có lỗi CORS dự kiến từ API production của sổ lời chúc và
+trạng thái mừng cưới; không có exception JavaScript hay lỗi tải asset hoạt cảnh.
