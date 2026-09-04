@@ -116,14 +116,14 @@ def render(template, g):
     doc = doc.replace('"./', '"/')
 
     sub_re(r"<title>.*?</title>",
-           f"<title>Kính mời {who} — Khắc Doãn & Đông Tiên 04.10.2026</title>", "thẻ title")
+           f"<title>Trân trọng kính mời {who} — Khắc Doãn & Đông Tiên 04.10.2026</title>", "thẻ title")
     sub_re(r'<link rel="canonical" href="[^"]*">',
            f'<link rel="canonical" href="{url}">\n  <meta name="robots" content="noindex, nofollow">',
            "canonical")
     sub_re(r'<meta property="og:url" content="[^"]*">',
            f'<meta property="og:url" content="{url}">', "og:url")
     sub_re(r'<meta property="og:title" content="[^"]*">',
-           f'<meta property="og:title" content="Kính mời {who}">', "og:title")
+           f'<meta property="og:title" content="Trân trọng kính mời {who}">', "og:title")
     sub_re(r'<meta property="og:description" content="[^"]*">',
            f'<meta property="og:description" content="Trân trọng mời {who} đến chung vui cùng gia đình '
            'chúng tôi, Chủ nhật 04.10.2026 tại Nhà hàng Long Phụng, Khánh Hòa.">', "og:description")

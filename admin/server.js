@@ -187,13 +187,13 @@ function renderInvitation(guest) {
   doc = doc.replaceAll('"./', '"/')
 
   must(/<title>.*?<\/title>/,
-    `<title>Kính mời ${who} — Khắc Doãn & Đông Tiên 04.10.2026</title>`, 'thẻ title')
+    `<title>Trân trọng kính mời ${who} — Khắc Doãn & Đông Tiên 04.10.2026</title>`, 'thẻ title')
   must(/<link rel="canonical" href="[^"]*">/,
     `<link rel="canonical" href="${url}">\n  <meta name="robots" content="noindex, nofollow">`, 'canonical')
   must(/<meta property="og:url" content="[^"]*">/,
     `<meta property="og:url" content="${url}">`, 'og:url')
   must(/<meta property="og:title" content="[^"]*">/,
-    `<meta property="og:title" content="Kính mời ${who}">`, 'og:title')
+    `<meta property="og:title" content="Trân trọng kính mời ${who}">`, 'og:title')
   must(/<meta property="og:description" content="[^"]*">/,
     `<meta property="og:description" content="Trân trọng mời ${who} đến chung vui cùng gia đình chúng tôi, `
     + `Chủ nhật 04.10.2026 tại Nhà hàng Long Phụng, Khánh Hòa.">`, 'og:description')
