@@ -1322,6 +1322,98 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .gift-scene-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
+/* Hai tấm biển theo đúng hệ tọa độ của ảnh, nên object-fit có crop thì chữ cũng
+   bị khung .gift-scene crop cùng; đặt nhãn ngoài khung sẽ làm tranh và chữ trôi
+   khỏi nhau khi thay tỉ lệ. Mobile dùng .gift-route bên dưới vì ô 30px không thể
+   chứa chữ đạt 12px mà vẫn giữ nguyên tên khách. */
+.gift-sign { display: none; }
+.gift-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem .5rem;
+  margin: -.55rem 0;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.gift-route-arrow { color: var(--peach-ink); font-family: var(--ui); }
+.gift-route-visual { display: contents; }
+.gift-route-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (min-width: 600px) {
+  .gift-sign {
+    position: absolute;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.02;
+    text-align: center;
+    text-wrap: balance;
+  }
+  .gift-sign--destination {
+    left: 77cqw;
+    top: 25cqh;
+    width: 13cqw;
+    height: 13cqh;
+    padding: 2px 3px;
+  }
+  .gift-sign--origin {
+    left: 6.1cqw;
+    top: 56.5cqh;
+    width: 8.4cqw;
+    height: 5.3cqh;
+    padding: 1px 2px;
+    border-radius: 2px;
+    background: rgba(255, 250, 243, .78);
+  }
+  /* Tên thật đều dài hơn mặt chữ 48px của biển. Mảnh giấy nối liền biển nở về
+     vùng trống bên phải, giữ đủ tên và cỡ 12px; ép chữ vào biển gốc sẽ rơi còn
+     6–7px hoặc phải cắt tên người nhận, cả hai đều không chấp nhận được. */
+  .gift-sign--origin.gift-sign--extended {
+    left: 3.5cqw;
+    top: 51.5cqh;
+    width: 24cqw;
+    height: auto;
+    min-height: 8.5cqh;
+    padding: 3px 6px;
+    border: 1px solid rgba(170, 131, 86, .42);
+    border-radius: 5px;
+    background: rgba(255, 250, 243, .84);
+  }
+  /* Trên desktop chữ đã nằm trong tranh. Vẫn giữ đúng một bản trong cây trợ
+     năng, nhưng giấu thị giác dòng lặp để không thành ba nhãn cạnh nhau. */
+  .gift-route {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .gift-procession-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
 /* Lớp xa vẫn dùng tranh màu nước thật, nhưng hạ tương phản và làm mềm cả cụm.

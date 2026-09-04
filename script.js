@@ -440,6 +440,21 @@ if (gift && giftQrImg) {
      ai vừa chuyển. */
   const guestCode = document.body.dataset.guestCode || ''
   const guestName = document.body.dataset.guestName || ''
+  const routeOrigin = guestName || 'Nhà bạn'
+  const originSign = document.getElementById('gift-origin-sign')
+  const routeOriginLabel = document.getElementById('gift-route-origin')
+  const routeOriginA11y = document.getElementById('gift-route-origin-a11y')
+  /* Tên khách đi qua textContent, tuyệt đối không ghép innerHTML: dữ liệu hiện
+     đã escape ở server nhưng lớp trình bày không được dựa vào một hàng rào duy
+     nhất rồi biến tên người nhận thành markup ở lần tái sử dụng sau. */
+  if (originSign) {
+    originSign.textContent = routeOrigin
+    /* Mặt biển gốc chỉ đủ cho "Nhà bạn" ở 12px. Tên dài phải nở thành mảnh giấy
+       nối biển; thu chữ tiếp sẽ tái tạo đúng lỗi 6–7px trên màn hình nhỏ. */
+    originSign.classList.toggle('gift-sign--extended', routeOrigin.length > 10)
+  }
+  if (routeOriginLabel) routeOriginLabel.textContent = routeOrigin
+  if (routeOriginA11y) routeOriginA11y.textContent = routeOrigin
   const thanks = document.getElementById('gift-thanks')
   const giftQr = document.getElementById('gift-qr')
   const statusEndpoint = wedding.gift.statusEndpoint

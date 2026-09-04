@@ -271,6 +271,11 @@
             <div class="gift-scene" aria-hidden="true">
               <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
                    loading="lazy" decoding="async" alt="">
+              <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
+                   aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
+                   Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
+              <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
+              <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
               <!-- Dùng lại sprite màu nước rồi làm mềm cả lớp thay cho mấy khối
                    bo tròn tự vẽ: khối phẳng ở xa nhìn như placeholder chưa xong,
                    nhưng giữ nguyên nét mặt sắc ở cỡ này lại làm khung 390px rối. -->
@@ -329,6 +334,18 @@
                      loading="lazy" decoding="async" alt="">
               </div>
             </div>
+
+            <!-- Trên điện thoại biển thật chỉ rộng 30–45px nên dòng này thay cho
+                 chữ li ti trong tranh. Hai mẩu phụ bị ẩn thị giác nhưng giữ câu
+                 hoàn chỉnh cho trình đọc màn hình; mũi tên chỉ là trang trí. -->
+            <p class="gift-route">
+              <span class="gift-route-sr">Hành trình từ <span id="gift-route-origin-a11y">Nhà bạn</span> đến Đám cưới Doãn và Tiên.</span>
+              <span class="gift-route-visual" aria-hidden="true">
+                <span id="gift-route-origin">Nhà bạn</span>
+                <span class="gift-route-arrow">→</span>
+                <span>Đám cưới Doãn &amp; Tiên</span>
+              </span>
+            </p>
 
             <figure class="gift-qr" id="gift-qr" tabindex="-1" hidden>
               <div class="gift-envelope">
