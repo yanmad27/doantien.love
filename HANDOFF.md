@@ -105,6 +105,8 @@ Không sử dụng lại concept xanh đậm “Midnight Garden” của bản c
   - Họ và tên — bắt buộc
   - Trạng thái tham dự — bắt buộc
   - Số người — 1 đến 4
+  - Karaoke — **chỉ hiện khi chọn "Có, mình sẽ đến"**; chọn "có hát" mới hiện ô
+    tên bài. Ẩn tới đâu xoá giá trị tới đó, không gửi kèm dữ liệu cũ.
   - Lời nhắn — không bắt buộc
 - Sau khi submit:
   - Ẩn form.

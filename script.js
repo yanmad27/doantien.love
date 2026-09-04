@@ -294,6 +294,8 @@ if (nudge && typeof nudge.showModal === 'function') {
     const rsvpForm = document.getElementById('rsvp-form')
     if (!attendance || !nameField || !rsvpForm) return
     attendance.value = 'no'
+    // phát change để phần karaoke tự ẩn và xoá giá trị — gán .value không tự bắn
+    attendance.dispatchEvent(new Event('change'))
     /* Hoãn 60ms chứ không phải 0: <dialog> đóng xong trình duyệt mới trả focus về
        phần tử trước đó, và cú trả focus đó xảy ra SAU một vòng lặp sự kiện — đặt
        focus ở nhịp 0 là bị nó ghi đè, con trỏ rơi về <body>. */
@@ -318,7 +320,11 @@ if (nudge && typeof nudge.showModal === 'function') {
     // Đưa thẳng tới ô xác nhận và điền sẵn "Có" — hỏi xong mà bắt khách tự đi
     // tìm form thì mất luôn cái đà vừa gật đầu.
     const attendance = document.querySelector('#rsvp-form [name="attendance"]')
-    if (attendance) attendance.value = 'yes'
+    if (attendance) {
+      attendance.value = 'yes'
+      // phát change để phần karaoke bật/tắt theo — gán .value bằng JS không tự bắn
+      attendance.dispatchEvent(new Event('change'))
+    }
     const rsvp = document.getElementById('rsvp')
     if (!rsvp) return
     /* Phải hoãn sang khung hình sau: <dialog> lúc đóng trả focus về phần tử được
@@ -825,11 +831,32 @@ if (guest.seats > 0) {
   select.value = String(guest.seats)
 }
 
+/* Karaoke chỉ hỏi khi khách báo sẽ đến, và ô "bài tủ" chỉ hiện khi họ nhận hát.
+   Ẩn tới đâu thì xoá giá trị tới đó — không thì khách đổi ý sang "không đến" mà
+   vẫn gửi kèm tên bài, chủ thiệp đọc xong không hiểu ai hát. */
+const karaBox = document.getElementById('kara')
+const karaSong = document.getElementById('kara-song')
+
+function syncKaraoke() {
+  const going = form.elements.attendance.value === 'yes'
+  karaBox.hidden = !going
+  if (!going) form.elements.karaoke.value = ''
+  const singing = going && form.elements.karaoke.value === 'yes'
+  karaSong.hidden = !singing
+  if (!singing) form.elements.song.value = ''
+}
+
+form.elements.attendance.addEventListener('change', syncKaraoke)
+form.elements.karaoke.addEventListener('change', syncKaraoke)
+syncKaraoke()
+
 function buildPayload() {
   const payload = {
     name: form.elements.name.value.trim(),
     attendance: form.elements.attendance.value,
     guests: Number(form.elements.guests.value),
+    karaoke: form.elements.karaoke.value,
+    song: form.elements.song.value.trim(),
     message: form.elements.message.value.trim(),
   }
   if (guest.code) payload.guestCode = guest.code

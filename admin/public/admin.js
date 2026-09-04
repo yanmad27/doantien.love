@@ -109,6 +109,9 @@ function render() {
       ? '<span class="pill pill-yes">có</span>'
       : '<span class="pill pill-no">không</span>'}</td>
     <td>${esc(r.guests)}</td>
+    <td>${r.karaoke === 'yes'
+      ? `<span class="pill pill-yes">hát</span>${r.song ? `<span class="note">${esc(r.song)}</span>` : ''}`
+      : r.karaoke === 'no' ? '<span class="pill pill-none">không hát</span>' : ''}</td>
     <td>${esc(r.message)}</td>
     <td><div class="actions"><button class="btn-mini btn-del" data-act="del-rsvp">Xoá</button></div></td>
   </tr>`).join('')
@@ -288,8 +291,8 @@ $('#export').addEventListener('click', () => {
 
 $('#export-rsvp').addEventListener('click', () => {
   download('phan-hoi-rsvp.csv', csv([
-    ['thoi_diem', 'ma_khach', 'ten', 'tham_du', 'so_nguoi', 'loi_nhan'],
-    ...state.rsvps.map((r) => [r.at, r.guestCode, r.name, r.attendance, r.guests, r.message]),
+    ['thoi_diem', 'ma_khach', 'ten', 'tham_du', 'so_nguoi', 'karaoke', 'bai_hat', 'loi_nhan'],
+    ...state.rsvps.map((r) => [r.at, r.guestCode, r.name, r.attendance, r.guests, r.karaoke, r.song, r.message]),
   ]))
 })
 
