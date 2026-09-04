@@ -1135,8 +1135,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .nudge-actions .button { flex: 1 1 auto; justify-content: center; }
 .nudge-no[hidden] { display: none; }
 
-/* Bước cuối chỉ còn một nút — không cho nó kéo dài hết chiều ngang trông thô */
-.nudge[data-step="2"] .nudge-actions .button { flex: 0 1 auto; }
 
 @media (prefers-reduced-motion: no-preference) {
   .nudge[open] { animation: nudge-in .32s var(--ease-out); }
