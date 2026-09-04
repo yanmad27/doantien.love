@@ -1195,3 +1195,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   from { opacity: 0; transform: scale(.86) rotate(-3deg); }
   to { opacity: 1; transform: none; }
 }
+
+/* Karaoke: hai ô này chiếm trọn hàng trong lưới 2 cột của form xác nhận */
+.kara { display: contents; }
+.kara[hidden] { display: none; }
+.kara > label { grid-column: 1 / -1; }
+.kara-song[hidden] { display: none; }

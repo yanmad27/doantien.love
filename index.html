@@ -193,6 +193,20 @@
                   <option value="1">1 người</option><option value="2">2 người</option><option value="3">3 người</option><option value="4">4 người</option>
                 </select>
               </label>
+              <!-- Chỉ hiện khi khách chọn "Có, mình sẽ đến" — hỏi karaoke một
+                   người đã báo không đến thì vô duyên. JS bật/tắt khối này. -->
+              <div class="kara" id="kara" hidden>
+                <label>Có lên hát một bài không?
+                  <select name="karaoke">
+                    <option value="">Chọn giúp mình</option>
+                    <option value="yes">Có chứ, chừa mic cho mình</option>
+                    <option value="no">Thôi, mình ngồi cổ vũ</option>
+                  </select>
+                </label>
+                <label class="kara-song" id="kara-song" hidden>Bài tủ của bạn
+                  <input type="text" name="song" placeholder="Để tụi mình dò nhạc trước..." maxlength="120">
+                </label>
+              </div>
               <label>Lời nhắn<textarea name="message" rows="4" placeholder="Gửi một lời chúc nhỏ..."></textarea></label>
               <button class="button button--solid" type="submit">Gửi xác nhận</button>
               <p class="form-error" id="rsvp-error" role="alert"></p>

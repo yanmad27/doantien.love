@@ -315,12 +315,18 @@ const server = http.createServer(async (req, res) => {
       const name = String(body.name || '').trim().slice(0, 120)
       const attendance = body.attendance === 'yes' || body.attendance === 'no' ? body.attendance : ''
       if (!name || !attendance) return json(res, 400, { error: 'thiếu name hoặc attendance' }, cors)
+      const kara = body.karaoke === 'yes' || body.karaoke === 'no' ? body.karaoke : ''
       db.rsvps.push({
         id: crypto.randomUUID(),
         guestCode: String(body.guestCode || '').slice(0, 32),
         name,
         attendance,
         guests: Math.min(Math.max(Number(body.guests) || 1, 1), 20),
+        // chỉ nhận 'yes'/'no', giá trị lạ thì coi như chưa trả lời
+        karaoke: kara,
+        // không nhận hát thì bỏ luôn tên bài: trang thiệp đã xoá ô đó khi ẩn,
+        // nhưng gọi thẳng API vẫn gửi kèm được, lưu vào chỉ tổ gây khó hiểu
+        song: kara === 'yes' ? String(body.song || '').trim().slice(0, 120) : '',
         message: String(body.message || '').trim().slice(0, 2000),
         at: new Date().toISOString(),
       })
