@@ -254,3 +254,38 @@ Kiểm tra nhanh:
 
 Console localhost chỉ có lỗi CORS dự kiến từ API production của sổ lời chúc và
 trạng thái mừng cưới; không có exception JavaScript hay lỗi tải asset hoạt cảnh.
+
+## 10. Vòng 5 — pháo hoa và cao trào nhận tiền
+
+- **Ngày QA:** 04.09.2026
+- **Trình duyệt:** Google Chrome 152, tab xác nhận `visibilityState = visible`
+- **Ảnh chụp:** đủ `idle` / `riding` / `arrived` / `received` ở 390×844 và 1440×1000
+
+### Hình ảnh và luồng
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Idle có chuyển động mời bấm | ✅ Bé thở, người đánh trống nhún, cờ phất và ba nốt nhạc lệch pha |
+| Riding có phản ứng phụ | ✅ sáu hạt tim/nhạc, bốn đám bụi, bốn nhịp nhân vật khác nhau |
+| Lớp xa không còn placeholder | ✅ dùng lại sprite màu nước, làm mềm/giảm bão hòa cả lớp |
+| Arrived có cao trào ngắn | ✅ Bé và đoàn bật mừng, ba pháo hoa nổ một lượt; QR vẫn hiện ở 4,8 giây |
+| Received bung hết cỡ rồi dừng | ✅ 24 tia pháo hoa chạy năm lượt, hoa giấy trôi, Bé/đoàn nhảy hữu hạn |
+| Pháo hoa có đè QR không | ✅ hai bounding box không giao nhau ở cả 390px và desktop |
+| Reduced motion | ✅ 0 hạt hiện, 0 animation trong `#gift`, QR hiện ngay |
+| 320px / thiệp riêng | ✅ không tràn ngang; hai asset mới phân giải thành `/assets/...` |
+| Thuộc tính trong keyframe | ✅ chỉ có `transform`, `opacity`, `filter` |
+| Ngân sách ảnh | ✅ không thêm raster; giữ 166.750 byte (162,8 KiB) |
+
+### DevTools Performance — chặng `received`
+
+Đo năm giây ở viewport 390×844 sau khi decode hết ảnh, bật CPU throttle 4×:
+
+- 302 callback `requestAnimationFrame`; median 16,7ms, p95 16,7ms, max 16,8ms.
+- 0 khoảng >20ms và 0 khoảng >34ms.
+- Trace compositor ghi 301 `DrawFrame` và 301 `Display::FrameDisplayed`.
+- Có 1 `Scheduler::BeginFrameDropped` ở giây 3,93, nhưng không tạo ra khoảng rAF
+  dài hay khung hụt nhìn thấy. Không ghi kết quả thành “0 dropped frame”.
+
+Đây là Chrome headless trên máy M3 có CPU throttle, chưa phải phép đo GPU trên
+điện thoại Android tầm trung thật. Lỗi console localhost vẫn chỉ là CORS dự kiến
+từ API production; không có exception hay lỗi tải asset của phần mừng cưới.
