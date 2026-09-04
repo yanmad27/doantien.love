@@ -575,6 +575,21 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true })
       }
 
+      /* Xoá một khoản mừng cưới — cho giao dịch test hoặc ghi nhầm người.
+         Xoá xong /api/gift-status trả lại "chưa nhận", nên thiệp của khách đó
+         hiện lại QR. Đó chính là điều cần khi lỡ đánh dấu nhầm: không xoá thì
+         khách mở thiệp ra đã thấy lời cảm ơn và không còn chỗ để mừng cưới.
+         Lưu ý: chống trùng dựa vào id, nên nếu SePay gửi lại đúng giao dịch vừa
+         xoá thì nó sẽ quay lại. Xoá giao dịch test sau khi đã tắt Test mode. */
+      const giftMatch = p.match(/^\/api\/gifts\/([\w-]{1,64})$/)
+      if (giftMatch && req.method === 'DELETE') {
+        const before = db.gifts.length
+        db.gifts = db.gifts.filter((g) => g.id !== giftMatch[1])
+        if (db.gifts.length === before) return json(res, 404, { error: 'Không tìm thấy giao dịch' })
+        await saveDb()
+        return json(res, 200, { ok: true })
+      }
+
       const editMatch = p.match(/^\/api\/guests\/([a-z0-9]{4,16})$/)
       if (editMatch) {
         const code = editMatch[1]

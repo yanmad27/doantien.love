@@ -94,6 +94,16 @@ chuyển khoản: `MC` + mã khách (ví dụ `MCab3k9z`). Ảnh QR lấy từ
 Bước 2 mà quên thì vẫn chạy: SePay để `code` rỗng, app tự dò `MC<mã>` trong nội
 dung chuyển khoản.
 
+### Xoá một khoản đã nhận
+
+Nút **Xoá** ở bảng "Mừng cưới" (sau đăng nhập). Dùng cho giao dịch test hoặc khi
+ghép nhầm người: xoá xong `/api/gift-status` trả lại "chưa nhận" nên thiệp của
+khách đó **hiện lại QR**. Không xoá thì khách mở thiệp ra đã thấy lời cảm ơn và
+không còn chỗ để mừng cưới.
+
+Chống trùng dựa vào `id`, nên nếu SePay gửi lại đúng giao dịch vừa xoá thì nó
+quay lại. Dọn giao dịch test **sau khi** đã tắt Test mode.
+
 ### Những chỗ dễ hỏng
 
 - **Đồng hồ máy chủ lệch quá 5 phút** → mọi webhook bị từ chối 401. Phải bật NTP.
