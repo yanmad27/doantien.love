@@ -226,8 +226,11 @@ Khi `prefers-reduced-motion: reduce`:
 
 ### Hỏi vui "bạn có đến không"
 
-- Hiện sau khi mở thiệp **15–20 giây** (ngẫu nhiên), mỗi phiên **một lần**
-  (`sessionStorage: kd-dt-nudge-xong`).
+- Hiện khi khách **cuộn tới form xác nhận** (mép trên form vào 80% dưới màn hình).
+- **Một lần cho mỗi lần tải trang**; tải lại thì hỏi lại. Cờ để trong bộ nhớ, cố ý
+  KHÔNG lưu `sessionStorage`.
+- Canh bằng phép đọc `getBoundingClientRect()` trong sự kiện scroll, gỡ listener
+  ngay khi đã hỏi — không dùng IntersectionObserver để còn kiểm chứng tự động được.
 - Không hiện nếu khách đã gửi phản hồi (panel `#success` đang có class `.show`).
 - Chỉ hỏi **hai lần**: bấm "không" ở bước 1 thì modal nhảy sang góc khác và nài
   thêm đúng một câu; bấm "không" lần hai là đóng hẳn, không nài tiếp.

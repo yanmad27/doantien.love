@@ -198,14 +198,16 @@ function flyCoverNamesIntoPlace() {
 /* ---------------------------------------------------------
    Hỏi vui "bạn có đến không"
 
-   Hiện sau khi mở thiệp một lúc ngẫu nhiên 15–20s. Bấm "không" thì modal nhảy
-   sang góc khác và nài thêm ĐÚNG một câu nữa; bấm "không" lần hai là thôi, không
-   nài tiếp. Đây là trò đùa nên bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
+   Hiện đúng lúc khách cuộn tới form xác nhận — hỏi ngay chỗ có thể trả lời,
+   không cắt ngang lúc họ đang đọc. Bấm "không" thì modal nhảy sang góc khác và
+   nài thêm ĐÚNG một câu nữa; bấm "không" lần hai là thôi. Đây là trò đùa nên
+   bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
    --------------------------------------------------------- */
 
-const NUDGE_DELAY_MIN = 15000
-const NUDGE_DELAY_MAX = 20000
-const NUDGE_SEEN_KEY = 'kd-dt-nudge-xong'
+/* Cờ nằm trong bộ nhớ chứ KHÔNG lưu sessionStorage: mỗi lần tải trang hỏi đúng
+   một lần, tải lại thì hỏi lại (yêu cầu của chủ thiệp). Lưu vào storage là reload
+   xong im luôn. */
+let nudgeShown = false
 
 /* Hai bước, mỗi bước một góc khác nhau cho có cảm giác "nó lại hiện chỗ khác".
    Bấm "không" ở bước cuối thì đóng hẳn — nài tới lần thứ ba là phiền. */
@@ -247,11 +249,6 @@ function renderNudgeStep(i) {
 
 function closeNudge() {
   if (nudge.open) nudge.close()
-  try {
-    window.sessionStorage.setItem(NUDGE_SEEN_KEY, '1')
-  } catch (error) {
-    /* chế độ riêng tư chặn storage — cùng lắm là hỏi lại ở lần tải sau */
-  }
 }
 
 if (nudge && typeof nudge.showModal === 'function') {
@@ -290,25 +287,35 @@ if (nudge && typeof nudge.showModal === 'function') {
   nudgeReady = true
 }
 
-function scheduleNudge() {
+/* Gắn sau khi mở thiệp: canh form xác nhận lọt vào màn hình thì hỏi. Chỉ bắt đầu
+   canh từ lúc mở thiệp, vì trước đó cả .site còn ẩn.
+
+   Tự đo vị trí thay vì dùng IntersectionObserver: chỉ cần một phép đọc rect mỗi
+   lần cuộn, gỡ listener ngay khi hỏi xong, và quan trọng hơn là kiểm chứng được
+   bằng kịch bản tự động (callback của IO chỉ chạy khi trình duyệt thật sự vẽ). */
+function armNudge() {
   if (!nudgeReady) return
-  let seen = false
-  try {
-    seen = window.sessionStorage.getItem(NUDGE_SEEN_KEY) === '1'
-  } catch (error) {
-    seen = false
-  }
-  if (seen) return
-  const delay = NUDGE_DELAY_MIN + Math.random() * (NUDGE_DELAY_MAX - NUDGE_DELAY_MIN)
-  window.setTimeout(() => {
-    // Khách đã gửi phản hồi trong lúc chờ thì thôi, hỏi nữa là vô duyên.
-    // Panel này ẩn/hiện bằng class .show (display: none trong CSS) chứ KHÔNG
-    // dùng thuộc tính hidden — kiểm .hidden thì lúc nào cũng false.
+  const form = document.getElementById('rsvp-form')
+  if (!form) return
+
+  const check = () => {
+    if (nudgeShown) return window.removeEventListener('scroll', check)
+    const rect = form.getBoundingClientRect()
+    // mép trên form đã vào 80% dưới của màn hình = khách cuộn tới nơi rồi
+    if (rect.top > window.innerHeight * 0.8 || rect.bottom < 0) return
+    window.removeEventListener('scroll', check)
+    /* Khách đã gửi phản hồi rồi thì thôi, hỏi nữa là vô duyên. Panel này ẩn/hiện
+       bằng class .show (display: none trong CSS) chứ KHÔNG dùng thuộc tính hidden
+       — kiểm .hidden thì lúc nào cũng false. */
     const success = document.getElementById('success')
     if (success && success.classList.contains('show')) return
+    nudgeShown = true
     renderNudgeStep(0)
     nudge.showModal()
-  }, delay)
+  }
+
+  window.addEventListener('scroll', check, { passive: true })
+  check() // phòng trường hợp form đã nằm sẵn trong màn hình
 }
 
 /* ---------------------------------------------------------
@@ -448,9 +455,9 @@ function openInvitation() {
   // Phải gọi ngay trong handler của click: trình duyệt chỉ cho phát nhạc khi
   // lệnh play() nằm trong cùng cử chỉ của người dùng, đẩy vào setTimeout là bị chặn.
   prepareMusic()
-  // Đếm giờ hỏi vui bắt đầu từ lúc mở thiệp, không phải lúc tải trang: bung modal
-  // lên khi bìa còn đóng thì khách chưa đọc được gì đã bị hỏi.
-  scheduleNudge()
+  // Canh form xác nhận từ lúc mở thiệp, không phải lúc tải trang: trước đó cả
+  // .site còn ẩn nên phép quan sát không có nghĩa.
+  armNudge()
   // 950ms = lúc bìa đã tan hẳn (xem khối chuyển cảnh trong styles.css).
   // Nhả focus sớm hơn thì màn hình giật về nav lúc bìa còn đang mở dở.
   window.setTimeout(() => {
