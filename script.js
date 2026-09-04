@@ -198,13 +198,13 @@ function flyCoverNamesIntoPlace() {
 /* ---------------------------------------------------------
    Hỏi vui "bạn có đến không"
 
-   Hiện sau khi mở thiệp một lúc ngẫu nhiên 5–10s. Bấm "không" thì modal nhảy
+   Hiện sau khi mở thiệp một lúc ngẫu nhiên 15–20s. Bấm "không" thì modal nhảy
    sang góc khác và nài thêm một câu, tới bước cuối thì nút "không" bỏ chạy luôn
    — đây là trò đùa, nên bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
    --------------------------------------------------------- */
 
-const NUDGE_DELAY_MIN = 5000
-const NUDGE_DELAY_MAX = 10000
+const NUDGE_DELAY_MIN = 15000
+const NUDGE_DELAY_MAX = 20000
 const NUDGE_SEEN_KEY = 'kd-dt-nudge-xong'
 
 /* Mỗi bước đứng ở một góc khác nhau cho có cảm giác "nó lại hiện chỗ khác". */

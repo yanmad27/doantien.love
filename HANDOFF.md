@@ -226,7 +226,7 @@ Khi `prefers-reduced-motion: reduce`:
 
 ### Hỏi vui "bạn có đến không"
 
-- Hiện sau khi mở thiệp **5–10 giây** (ngẫu nhiên), mỗi phiên **một lần**
+- Hiện sau khi mở thiệp **15–20 giây** (ngẫu nhiên), mỗi phiên **một lần**
   (`sessionStorage: kd-dt-nudge-xong`).
 - Không hiện nếu khách đã gửi phản hồi (panel `#success` đang có class `.show`).
 - Bấm "không" → modal nhảy sang góc khác và nài thêm; tới bước 3 thì nút "không"
