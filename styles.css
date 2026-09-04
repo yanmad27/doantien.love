@@ -1091,6 +1091,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .visible .schedule.stagger-on div::after { transform: scaleX(1) !important; }
   .nav.is-hidden { transform: none !important; }
   .cover-card::after { display: none; }
+  /* Hoa giấy phủ kín sân khấu mừng cưới. Luật .01ms phía trên biến 820ms hiện dần
+     thành một cú loé nguyên khung hình — với người nhạy sáng thì tệ hơn hẳn chính
+     cái animation. Bỏ hẳn lớp này thay vì tăng tốc nó. */
+  .gift-celebration { display: none; }
 }
 
 /* ---- Hỏi vui "bạn có đến không" ----
@@ -1169,42 +1173,216 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .gift-copy { margin: 0 auto 1.7rem; max-width: 30rem; color: var(--ink-soft); font-family: var(--serif); font-size: 1.05rem; line-height: 1.6; }
 .gift-open { width: fit-content; margin-inline: auto; }
+.gift-action { display: grid; justify-items: center; }
+.gift-microcopy { margin: .8rem 0 0; color: var(--ink-soft); font-family: var(--serif); font-size: .95rem; font-style: italic; }
 
-.gift-stage { display: grid; place-items: center; min-height: 132px; }
-.gift-status {
-  margin: 0;
-  color: var(--gold-ink);
-  font-family: var(--ui);
-  font-size: .8rem;
-  letter-spacing: .18em;
-  text-transform: uppercase;
-  animation: gift-blink 1.5s ease-in-out infinite;
-}
-.gift-status[hidden] { display: none; }
-.gift-status { max-width: 26rem; }
+/* Tới nơi rồi thì đổi màu tiêu đề thay vì đổi chữ: đổi chữ ngay cạnh một vùng
+   aria-live là thêm một nguồn đọc nữa, mà màu cũng đã đủ báo "xong chuyến". */
+#gift-shell[data-phase="arrived"] .gift-title,
+#gift-shell[data-phase="received"] .gift-title { color: var(--peach-ink); }
 
-/* Thanh tiến trình của màn diễn — cố tình kẹt ở 99% */
-.gift-bar {
-  width: min(260px, 70vw);
-  height: 4px;
-  margin-top: .9rem;
-  border-radius: 999px;
-  background: rgba(215, 117, 112, .22);
-  overflow: hidden;
+/* isolation: isolate gánh hai việc — vừa là nhóm nền riêng để mix-blend-mode của
+   hoa giấy nhân vào (thiếu nó là nhuộm cả trang), vừa nhốt z-index của sân khấu
+   lại để không bao giờ tranh chấp với .skip-link, .save-menu, .cover hay .nav. */
+.gift-stage {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  /* Track cố định minmax(0, 1fr): để `auto` thì cột suy ngược bề rộng từ chiều
+     cao của .gift-scene và kéo cả khối rộng hơn section. */
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 1.4rem;
 }
-.gift-bar[hidden] { display: none; }
-.gift-bar i {
+/* #gift-stage và #gift-qr chỉ nhận focus theo lệnh của JS (tabindex="-1", không
+   bao giờ tab tới được) nên vòng focus ở đây không phục vụ ai — cùng lý do đã
+   ghi ở .nav:focus phía trên. */
+.gift-stage:focus, .gift-stage:focus-visible,
+.gift-qr:focus, .gift-qr:focus-visible,
+.gift-thanks:focus, .gift-thanks:focus-visible { outline: none; }
+
+/* Sân khấu chuyến đi.
+   aspect-ratio 3/2 khớp đúng 1536x1024 của gift-journey-scene.webp, nên chiều cao
+   là hàm của chiều rộng và MỌI toạ độ của Bé dính vào đúng một điểm trên tranh ở
+   mọi bề rộng màn hình — nhờ vậy chỉ cần MỘT bộ keyframes, không media query nào.
+   container-type: size cần đúng cái chiều cao xác định đó, và nó là thứ khiến
+   cqw/cqh quy chiếu về sân khấu; dùng translate(%) thì % lại quy về chính con Bé. */
+.gift-scene {
+  position: relative;
+  /* isolate để mix-blend-mode của hoa giấy chỉ nhân trong khung tranh này thôi */
+  isolation: isolate;
+  container-type: size;
+  width: 100%;
+  max-width: 560px;
+  aspect-ratio: 3 / 2;
+  overflow: clip;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.gift-scene-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+.gift-procession-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* Đám đông xa mà dùng lại nguyên sprite có nét mặt sẽ biến lớp nền thành một
+   hàng sticker sắc cạnh. Các bóng thưa này cố ý chỉ còn đầu và áo, lại được làm
+   mềm bằng filter để mắt đọc chúng như một lớp màu nước ở xa. */
+.gift-crowd-far {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: end;
+  gap: 1.7cqw;
+  width: 31cqw;
+  height: 18cqh;
+  opacity: 0;
+  filter: blur(.35px) saturate(.72);
+  transform: translate(-36cqw, 43cqh) scale(.72);
+}
+.gift-crowd-far i {
+  position: relative;
   display: block;
-  width: var(--pct, 0%);
-  height: 100%;
-  border-radius: inherit;
-  background: var(--peach-ink);
-  transition: width .5s var(--ease-out);
+  width: 3.7cqw;
+  height: 8cqh;
+  border-radius: 55% 55% 30% 30%;
+  background: color-mix(in srgb, var(--peach) 66%, #a4a77a);
+}
+.gift-crowd-far i::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2.6cqh;
+  width: 3.2cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: inherit;
+  transform: translateX(-50%);
+}
+.gift-crowd-far i:nth-child(2n) { height: 10cqh; background: color-mix(in srgb, var(--gold) 55%, #969c73); }
+.gift-crowd-far i:nth-child(3n) { transform: scale(.82); transform-origin: bottom; }
+
+.gift-procession {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: end;
+  gap: .4cqw;
+  width: 32cqw;
+  height: 24cqh;
+  opacity: 0;
+  pointer-events: none;
+}
+.gift-procession--back { transform: translate(-43cqw, 53cqh) scale(.72); filter: saturate(.78); }
+.gift-procession--front { z-index: 3; transform: translate(-55cqw, 69cqh) scale(1.02); }
+.gift-marcher {
+  display: block;
+  flex: 0 0 10.3cqw;
+  aspect-ratio: 1 / 2;
+  background-image: url("./assets/gift-procession-sprites.webp");
+  background-repeat: no-repeat;
+  background-size: 400% 100%;
+  transform-origin: 50% 88%;
+}
+.gift-marcher--drum { background-position: 0 0; }
+.gift-marcher--flag { background-position: 33.333% 0; }
+.gift-marcher--flower { background-position: 66.666% 0; }
+.gift-marcher--cheer { background-position: 100% 0; }
+.gift-procession--back .gift-marcher:nth-child(2) { transform: scale(.88); }
+.gift-procession--front .gift-marcher:nth-child(2) { transform: scaleX(-1) scale(.92); }
+
+/* Tiền cảnh chỉ lướt qua đúng một nhịp. Giữ nó ở mép dưới và không thêm hoa
+   có cánh chi tiết để lớp gần tạo tốc độ, không che mất mặt Bé trên màn 320px. */
+.gift-foreground {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  bottom: 3cqh;
+  display: flex;
+  gap: 4cqw;
+  width: 28cqw;
+  opacity: 0;
+  transform: translate(-35cqw, 0) rotate(-5deg);
+  pointer-events: none;
+}
+.gift-foreground i {
+  display: block;
+  width: 7cqw;
+  height: 3.2cqh;
+  border-radius: 100% 0 100% 0;
+  background: rgba(137, 145, 91, .42);
+  box-shadow: 6cqw -2cqh 0 rgba(218, 119, 105, .28);
 }
 
-.gift-qr { margin: 0; display: grid; justify-items: center; gap: .9rem; }
-.gift-qr[hidden] { display: none; }
-.gift-qr img {
+.gift-rider-track {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  width: 26cqw;
+  opacity: 0;
+  transform: translate(-19cqw, 69cqh) scale(.84) rotate(-3deg);
+}
+.gift-rider { display: block; width: 100%; height: auto; }
+
+/* Trình duyệt không hiểu đơn vị container (Safari dưới 16, Chrome dưới 105) sẽ vứt
+   nguyên khai báo transform vì không đọc nổi cqw/cqh — Bé mất đường đi và đứng
+   chết dí ở góc trên bên trái khung tranh. Thà không có Bé còn hơn có một con Bé
+   nằm sai chỗ: giấu đi, khách vẫn thấy bức tranh và vẫn lấy được mã QR. */
+@supports not (width: 1cqw) {
+  .gift-rider-track { display: none; }
+}
+
+#gift-shell[data-phase="riding"] .gift-rider-track {
+  opacity: 1;
+  animation: gift-ride 4.8s linear both;
+}
+/* Nhịp thân Bé nằm trong cùng timeline 4,8 giây với đường chạy: nếu để nhún vô
+   hạn như bản cũ thì cú thắng không thể nén thân đúng lúc, và Bé vẫn rung sau
+   khi cả đoàn đã đứng nghiêm trước cổng. */
+#gift-shell[data-phase="riding"] .gift-rider { animation: gift-rider-body 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-crowd-far { animation: gift-crowd-pass 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-procession--back { animation: gift-procession-back 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-procession--front { animation: gift-procession-front 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-marcher { animation: gift-march 260ms ease-in-out infinite alternate; }
+#gift-shell[data-phase="riding"] .gift-procession--back .gift-marcher:nth-child(2),
+#gift-shell[data-phase="riding"] .gift-procession--front .gift-marcher:nth-child(2) { animation-delay: -130ms; }
+#gift-shell[data-phase="riding"] .gift-procession .gift-marcher:nth-child(3) { animation-delay: -70ms; }
+#gift-shell[data-phase="riding"] .gift-foreground { animation: gift-foreground-pass 4.8s linear both; }
+/* Đỗ Bé lại ở cổng cưới thay vì cho biến mất: thiếu hai dòng này thì opacity về 0
+   và Bé bốc hơi đúng khoảnh khắc vừa tới nơi. */
+#gift-shell[data-phase="arrived"] .gift-rider-track,
+#gift-shell[data-phase="received"] .gift-rider-track {
+  opacity: 1;
+  transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg);
+}
+#gift-shell[data-phase="arrived"] .gift-procession,
+#gift-shell[data-phase="received"] .gift-procession { opacity: .82; }
+#gift-shell[data-phase="arrived"] .gift-procession--back,
+#gift-shell[data-phase="received"] .gift-procession--back { transform: translate(4cqw, 39cqh) scale(.45); filter: saturate(.78); }
+#gift-shell[data-phase="arrived"] .gift-procession--front,
+#gift-shell[data-phase="received"] .gift-procession--front { transform: translate(43cqw, 50cqh) scale(.42); }
+
+/* width: 100% để bề rộng ô này khỏi phụ thuộc vào ĐỘ DÀI CÂU CAPTION. .gift-stage
+   đặt justify-items: center nên không khai bề rộng thì ô co lại vừa nội dung, mà
+   nội dung rộng nhất lại là dòng figcaption — sửa lời chú thích là gián tiếp đổi
+   bề rộng phong bì, và ở khoảng 541–620px thì kéo luôn mã QR xuống dưới 230px. */
+.gift-qr {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  gap: .9rem;
+  width: 100%;
+  animation: gift-envelope-in .68s cubic-bezier(.2, .9, .24, 1.18) both;
+}
+.gift-envelope { display: grid; justify-items: center; gap: .8rem; }
+.gift-envelope-art { width: min(150px, 40vw); height: auto; }
+/* KHÔNG dùng image-rendering: crisp-edges ở đây. Nó chỉ đúng khi PHÓNG TO pixel
+   art; mã QR luôn bị THU NHỎ (nguồn 370px về ~230px) và nearest-neighbour lúc thu
+   nhỏ thì ăn mất nguyên ô của mã. */
+#gift-qr-img {
   width: min(230px, 62vw);
   height: auto;
   padding: .8rem;
@@ -1212,17 +1390,38 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   border: 1px solid var(--peach);
   border-radius: 14px;
   box-shadow: 0 18px 40px -26px rgba(89, 71, 63, .8);
-  animation: gift-pop .5s var(--ease-out) both;
 }
 .gift-qr figcaption { color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
-.gift-joke { display: inline-block; margin-top: .35rem; font-size: .88rem; opacity: .85; }
+/* opacity: .85 cũ pha --ink-soft xuống #85746c = 4.17:1 ở cỡ 14px — rớt WCAG AA.
+   axe không cộng gộp opacity mức phần tử nên lần quét "0 lỗi" cũ không thấy. */
+.gift-joke { display: inline-block; margin-top: .35rem; font-size: .88rem; }
+
+/* Bố cục phong bì ôm lấy mã QR chỉ bật từ 541px trở lên. Vùng giấy trắng trong
+   tranh rộng 60.2% bề ngang phong bì và ô vuông an toàn lớn nhất là 46%, nên muốn
+   giữ mã QR >= 230px như hiện tại thì phong bì phải rộng >= 500px — điện thoại
+   không đủ chỗ. Dưới ngưỡng đó thì xếp chồng: phong bì thành hình minh hoạ, mã QR
+   giữ nguyên cỡ. Quét được quan trọng hơn bố cục đẹp. */
+@media (min-width: 541px) {
+  .gift-envelope { position: relative; display: block; width: min(500px, 100%); margin-inline: auto; }
+  .gift-envelope-art { display: block; width: 100%; }
+  #gift-qr-img {
+    position: absolute;
+    z-index: 1;
+    top: 9%;
+    left: 51.9%;
+    width: 46%;
+    transform: translateX(-50%);
+    padding: .5rem;
+    border: 0;
+    border-radius: 8px;
+    box-shadow: 0 3px 10px rgba(89, 71, 63, .18);
+  }
+}
 
 /* Lời cảm ơn thay chỗ QR sau khi webhook SePay báo tiền đã về. Không có số tiền
    ở đây, và cũng không nên thêm vào — thiệp đã hứa "chỉ nhìn tên để cảm ơn".
    Khối prefers-reduced-motion phía trên đã tắt mọi animation nên không khai lại. */
 .gift-thanks { display: grid; justify-items: center; gap: .55rem; animation: gift-pop .5s var(--ease-out) both; }
-/* display: grid đè mất thuộc tính hidden — phải trả lại, giống .gift-qr[hidden] */
-.gift-thanks[hidden] { display: none; }
 .gift-thanks-mark {
   width: 3rem;
   height: 2.6rem;
@@ -1242,6 +1441,130 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gift-thanks-sub { margin: 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
 .gift-more { margin-top: .7rem; }
 
+/* Lời thoại của chuyến đi. Nó nằm dưới sân khấu, trên nền giấy phẳng
+   --paper-warm, nơi --peach-ink đo được 4.64:1 — đừng bao giờ dời nó lên đè
+   tranh màu nước, chữ màu cố định trên tranh không chứng minh được tương phản. */
+.gift-status {
+  margin: 1.1rem auto 0;
+  max-width: 30rem;
+  color: var(--peach-ink);
+  font-family: var(--serif);
+  font-size: clamp(1.02rem, 4vw, 1.2rem);
+  font-style: italic;
+  line-height: 1.5;
+}
+/* KHÔNG cho nút này nhấp nháy. Nhãn cũ ở đây là mấy chữ hoa nhỏ nên nhấp nháy
+   được, còn giờ nó mang nguyên câu văn: hạ opacity xuống .45 là kéo --peach-ink
+   trên nền --paper-warm còn khoảng 1.9:1, rớt WCAG AA gần như suốt 4,8 giây —
+   đúng cái lỗi vừa sửa ở .gift-joke phía trên. Bản thân Bé đã chạy và nhún trên
+   đường suốt chuyến, còn lời thoại tự đổi ba lần: đủ "đang chạy" rồi. */
+
+/* Chặng cảm ơn: #gift-thanks đã in đúng câu này to và rõ ngay phía trên rồi, nên
+   ở đây chỉ giữ lại phần đọc cho trình đọc màn hình. KHÔNG dùng [hidden] hay
+   display:none — làm thế là gỡ vùng aria-live khỏi cây trợ năng và lời cảm ơn
+   không bao giờ được đọc. */
+#gift-shell[data-phase="received"] .gift-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* gift-confetti.webp là ảnh RGB đặc, không có kênh alpha — multiply chính là cách
+   khoét nền kem của nó đi. Chỉ an toàn nhờ isolation: isolate ở .gift-scene.
+   Buộc vào [data-phase="received"] thay vì gắn/gỡ node: nhờ vậy nút "Mừng thêm
+   lần nữa" dọn hoa giấy đi mà không phải viết thêm dòng nào. */
+.gift-celebration {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  /* multiply phải nằm ở ĐÂY, không phải ở thẻ <img> bên trong. z-index biến khối
+     này thành một stacking context, mà stacking context thì cô lập luôn phần trộn
+     màu của con nó: đặt ở <img> thì nó trộn với nền của chính khối này — trống
+     trơn — nên kết quả y hệt `normal` và mảng kem đặc của ảnh che kín bức tranh.
+     (Đã đo: pixel mặt đường 248,236,224 với multiply ở <img> so với 241,216,186
+     khi không có hoa giấy — tức là không trộn gì cả.) */
+  mix-blend-mode: multiply;
+}
+.gift-celebration img { width: 100%; height: 100%; object-fit: cover; opacity: .88; }
+#gift-shell[data-phase="received"] .gift-celebration { opacity: 1; animation: gift-celebrate-in .82s ease both; }
+
+/* Chỉ động transform, tuyệt đối không động left/top: trang này vừa chạy
+   IntersectionObserver cho hiệu ứng reveal, vừa có hoa lá động vô hạn và một bộ
+   đếm ngược — thêm 4,8 giây bắt trình duyệt tính lại layout từng khung hình là
+   giật thấy rõ trên điện thoại. */
+/* Mốc 100% phải TRÙNG KHÍT với luật [data-phase="arrived"] ở trên, không thì Bé
+   nhảy một cái đúng lúc đổi chặng. Dừng ở 67cqw chứ không phải 84: track rộng
+   26cqw, thu còn .34 quanh tâm nên mép phải rơi vào 84.4cqw — để 84 là Bé bị
+   overflow: clip của sân khấu xén mất nửa cái xe. */
+@keyframes gift-ride {
+  0%   { transform: translate(-19cqw, 69cqh) scale(.84) rotate(-5deg); }
+  7%   { transform: translate(-15cqw, 71cqh) scale(.79) rotate(-8deg); }
+  18%  { transform: translate(5cqw, 63cqh) scale(.80) rotate(5deg); }
+  36%  { transform: translate(24cqw, 59cqh) scale(.69) rotate(-4deg); }
+  53%  { transform: translate(36cqw, 55cqh) scale(.61) rotate(7deg); }
+  68%  { transform: translate(50cqw, 49cqh) scale(.51) rotate(-5deg); }
+  84%  { transform: translate(65cqw, 38cqh) scale(.39) rotate(4deg); }
+  92%  { transform: translate(70cqw, 34cqh) scale(.35) rotate(7deg); }
+  96%  { transform: translate(65cqw, 36cqh) scale(.36) rotate(-5deg); }
+  100% { transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg); }
+}
+@keyframes gift-rider-body {
+  0%, 7%   { transform: translateY(0) scale(1); }
+  10%      { transform: translateY(1.2cqh) scale(1.08, .90) rotate(-2deg); }
+  16%      { transform: translateY(-2.4cqh) scale(.93, 1.10) rotate(2deg); }
+  23%, 31%, 40%, 49%, 58%, 67%, 76% { transform: translateY(-.8cqh) rotate(-1deg); }
+  27%, 36%, 45%, 54%, 63%, 72%, 81% { transform: translateY(.7cqh) rotate(1deg); }
+  89%      { transform: translateY(-1cqh) scale(.94, 1.06) rotate(3deg); }
+  94%      { transform: translateY(1.1cqh) scale(1.10, .88) rotate(-4deg); }
+  100%     { transform: translateY(0) scale(1); }
+}
+@keyframes gift-crowd-pass {
+  0%, 8%   { opacity: 0; transform: translate(-36cqw, 43cqh) scale(.72); }
+  18%      { opacity: .25; }
+  55%      { opacity: .34; transform: translate(39cqw, 35cqh) scale(.56); }
+  78%      { opacity: .12; transform: translate(82cqw, 28cqh) scale(.45); }
+  100%     { opacity: 0; transform: translate(105cqw, 25cqh) scale(.4); }
+}
+@keyframes gift-procession-back {
+  0%, 12%  { opacity: 0; transform: translate(-43cqw, 53cqh) scale(.72); filter: saturate(.78); }
+  22%      { opacity: .62; }
+  48%      { opacity: .76; transform: translate(23cqw, 47cqh) scale(.61); filter: saturate(.82); }
+  72%      { opacity: .82; transform: translate(51cqw, 39cqh) scale(.49); filter: saturate(.82); }
+  86%      { opacity: .82; transform: translate(58cqw, 37cqh) scale(.46); filter: saturate(.78); }
+  100%     { opacity: .82; transform: translate(4cqw, 39cqh) scale(.45); filter: saturate(.78); }
+}
+@keyframes gift-procession-front {
+  0%, 20%  { opacity: 0; transform: translate(-55cqw, 69cqh) scale(1.02); }
+  29%      { opacity: .9; }
+  54%      { opacity: .94; transform: translate(17cqw, 61cqh) scale(.76); }
+  76%      { opacity: .9; transform: translate(51cqw, 51cqh) scale(.52); }
+  88%      { opacity: .84; transform: translate(59cqw, 48cqh) scale(.45); }
+  100%     { opacity: .82; transform: translate(43cqw, 50cqh) scale(.42); }
+}
+@keyframes gift-march {
+  from { transform: translateY(.7cqh) rotate(-2deg) scaleY(.97); }
+  to   { transform: translateY(-.8cqh) rotate(2deg) scaleY(1.02); }
+}
+@keyframes gift-foreground-pass {
+  0%, 27%  { opacity: 0; transform: translate(-35cqw, 0) rotate(-5deg); }
+  34%      { opacity: .7; }
+  58%      { opacity: .58; transform: translate(75cqw, -1cqh) rotate(3deg); }
+  68%, 100% { opacity: 0; transform: translate(128cqw, -2cqh) rotate(7deg); }
+}
+@keyframes gift-envelope-in {
+  from { opacity: 0; transform: translateY(28px) scale(.82) rotate(-3deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes gift-celebrate-in { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+
 @keyframes gift-heart {
   0%, 100% { transform: scale(1); }
   18% { transform: scale(1.15); }
@@ -1249,7 +1572,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   50% { transform: scale(1.09); }
 }
 
-@keyframes gift-blink { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes gift-pop {
   from { opacity: 0; transform: scale(.86) rotate(-3deg); }
   to { opacity: 1; transform: none; }

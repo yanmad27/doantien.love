@@ -395,15 +395,16 @@ function armNudge() {
    muốn mới mở. Bấm xong chạy vài dòng trạng thái cho vui rồi QR mới hiện.
    --------------------------------------------------------- */
 
-/* Màn diễn trước khi hiện QR. Trò đùa nằm ở chỗ thanh tiến trình kẹt ở 99% —
-   ai cũng từng chờ cái thanh đó. Tổng ~5.3s, đủ dài để đọc hết mà không chán. */
-const GIFT_STEPS = [
-  { text: 'Đang mở phong bì…', pct: 12, ms: 850 },
-  { text: 'Đang phủi bụi mã QR…', pct: 41, ms: 850 },
-  { text: 'Đang kiểm tra xem bạn có thật lòng không…', pct: 88, ms: 1000 },
-  { text: 'Kết quả: thật lòng 100%. Đang xúc động…', pct: 99, ms: 1000 },
-  { text: 'Vẫn 99%… thanh nào chẳng thế', pct: 99, ms: 1000 },
-  { text: 'Thôi hiện luôn cho nhanh!', pct: 100, ms: 600 },
+/* Màn diễn trước khi hiện QR: Bé Phong Bì bị một đoàn rước vui quá nhập hội.
+   Bốn câu thoại đổi theo từng nhịp phim, cộng dồn đúng 4800ms — bằng đúng
+   thời lượng của @keyframes gift-ride bên styles.css. Đổi một trong hai chỗ thì
+   phải đổi chỗ còn lại, không thì Bé tới nơi trước hoặc sau lời thoại cuối. */
+const RIDE_MS = 4_800
+const RIDE_STEPS = [
+  { text: 'Bé đang lặng lẽ lên đường…', ms: 1100 },
+  { text: 'Ơ, tiếng trống ở đâu tới vậy?', ms: 1200 },
+  { text: 'Khoan, Bé bị nhập vào đoàn rước rồi!', ms: 1450 },
+  { text: 'Thôi thì cùng vui tới cổng luôn nhé.', ms: 1050 },
 ]
 
 // Hỏi 5s một lần, bỏ cuộc sau 15 phút — quá lâu thì khách cũng đóng thiệp rồi.
@@ -444,6 +445,26 @@ if (gift && giftQrImg) {
   const statusEndpoint = wedding.gift.statusEndpoint
   const THANKED_KEY = `kd-dt-gift-${guestCode}`
 
+  const shell = document.getElementById('gift-shell')
+  const status = document.getElementById('gift-status')
+
+  /* Chặng của câu chuyện: idle → riding → arrived → received. CSS bám vào
+     data-phase để diễn, JS giữ thêm một bản trong biến vì cần đọc nó ở chỗ
+     showThanks (xem lý do ở đó). */
+  let phase = 'idle'
+  function setPhase(next) {
+    phase = next
+    if (shell) shell.dataset.phase = next
+  }
+
+  /* Vùng aria-live duy nhất của cả phần mừng cưới. Ghi lại ĐÚNG nội dung cũ là
+     trình đọc màn hình đọc thêm một lần nữa — hay gặp nhất là nhịp hỏi 5 giây
+     gọi lại renderThanks với cùng một lời cảm ơn — nên chặn ngay ở đây. */
+  function announce(text) {
+    if (!status || status.textContent === text) return
+    status.textContent = text
+  }
+
   /* Nhớ mốc thời gian của khoản mừng cưới mới nhất đã hiện lời cảm ơn.
      localStorage chứ không sessionStorage: khách đóng hẳn trình duyệt rồi mở
      lại thiệp thì vẫn phải nhớ, chứ không bày lại QR như chưa nhận gì.
@@ -470,17 +491,41 @@ if (gift && giftQrImg) {
     document.removeEventListener('visibilitychange', onVisible)
   }
 
-  function showThanks(at) {
+  /* Phần ghi nhớ trạng thái. Luôn chạy trọn vẹn TRƯỚC mọi thao tác DOM: thoát
+     sớm ở đây là mất luôn lượt ghi localStorage và lần tải sau bày lại QR như
+     chưa nhận gì. */
+  function commitThanks(at) {
     stopPolling()
     wantMore = false
     lastKnownAt = at || lastKnownAt || '1'
     rememberAt(lastKnownAt)
+  }
+
+  function renderThanks() {
+    setPhase('received')
     if (!thanks) return
     const line = document.getElementById('gift-thanks-line')
     // Tên đã escape sẵn ở server; gán qua textContent nên không dựng HTML.
     if (line && guestName) line.textContent = `Tụi mình nhận được rồi, cảm ơn ${guestName}!`
+    announce(guestName ? `Tụi mình nhận được rồi, cảm ơn ${guestName}.` : 'Tụi mình nhận được rồi. Cảm ơn bạn.')
+    /* Khách vừa bấm "Mừng thêm lần nữa" thì focus đang nằm trong chính cái QR sắp
+       bị ẩn — ẩn xong là focus rơi về <body>. Chỉ dời trong ĐÚNG trường hợp đó:
+       hàm này còn được nhịp hỏi 5 giây gọi bất chợt, dời focus vô điều kiện là
+       giật con trỏ của khách đang gõ dở sổ lời chúc bên dưới. */
+    const focusWasInQr = giftQr && giftQr.contains(document.activeElement)
     if (giftQr) giftQr.hidden = true
     thanks.hidden = false
+    if (focusWasInQr) thanks.focus({ preventScroll: true })
+  }
+
+  function showThanks(at) {
+    commitThanks(at)
+    /* Tiền về đúng lúc Bé đang chạy giữa đường thì đừng cắt ngang. lastKnownAt
+       vừa ghi xong nên reveal() ở cuối chuyến sẽ tự rơi vào nhánh cảm ơn. Cắt
+       ngang thì Bé bị giật ngược về đầu đường (keyframes có `both`) và lời cảm
+       ơn đọc chồng lên câu "Sắp tới rồi". */
+    if (phase === 'riding') return
+    renderThanks()
   }
 
   async function fetchStatus() {
@@ -528,50 +573,108 @@ if (gift && giftQrImg) {
     fetchStatus().then((data) => { if (data?.thanked) serverAt = data.at || '1' })
   }
 
-  document.getElementById('gift-open').addEventListener('click', (event) => {
-    const button = event.currentTarget
-    const stage = document.getElementById('gift-stage')
-    const status = document.getElementById('gift-status')
-    const qr = giftQr
-    button.hidden = true
-    stage.hidden = false
+  /* Bé phải chạy ngay lúc khách bấm, không được đứng hình chờ tải ảnh. Năm tấm
+     tranh đều nằm trong #gift-stage đang [hidden] nên loading="lazy" KHÔNG tải
+     một byte nào cho tới lúc bấm — muộn mất khoảng 0.3s trên 4G và vài giây trên
+     3G, mà cả chuyến đi chỉ có 4,8s. Nên hâm nóng sớm: khi khách cuộn tới gần
+     khối mừng cưới, và khi vừa chạm/di chuột vào nút. Người bật giảm chuyển động
+     không bao giờ xem hoạt cảnh (xem reveal()) nên không tải gì cả. */
+  /* Lấy đường dẫn TỪ CHÍNH THẺ <img> chứ không viết lại chuỗi './assets/...' ở
+     đây. script.js được phục vụ nguyên si cho cả hai loại trang, nhưng thiệp
+     riêng nằm ở /t/<mã>/ nên './assets/x.webp' trong JS sẽ nở thành
+     /t/<mã>/assets/x.webp — nginx nuốt vào location ^~ /t/ rồi trả về chính
+     trang thiệp. Tức là hâm nóng nhầm: tải trang HTML ba lần, còn tranh thì vẫn
+     nguội. Thuộc tính .src của phần tử luôn là URL đã phân giải đầy đủ, nên đúng
+     ở cả trang chung lẫn thiệp riêng (nơi bộ sinh đã đổi "./ thành "/). */
+  const GIFT_ART = ['.gift-scene-bg', '.gift-rider', '.gift-procession-source', '.gift-envelope-art']
+  let giftArtWarmed = false
+  function warmGiftArt() {
+    if (giftArtWarmed || reducedMotion.matches) return
+    giftArtWarmed = true
+    GIFT_ART.forEach((selector) => {
+      const img = gift.querySelector(selector)
+      if (img) new Image().src = img.src
+    })
+  }
 
-    const bar = document.getElementById('gift-bar')
+  const openButton = document.getElementById('gift-open')
+  const giftAction = document.getElementById('gift-action')
+  ;['pointerenter', 'focus', 'touchstart'].forEach((type) => {
+    openButton.addEventListener(type, warmGiftArt, { once: true, passive: true })
+  })
+  if ('IntersectionObserver' in window) {
+    const warmObserver = new IntersectionObserver((entries, observer) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      warmGiftArt()
+      observer.disconnect()
+    }, { rootMargin: '400px' })
+    warmObserver.observe(gift)
+  }
+  // Hoa giấy không nằm trong danh sách vì không cần: nó nằm trong khung tranh nên
+  // trình duyệt tự tải ngay khi mở sân khấu, sớm hơn lúc cần rất nhiều — lời cảm
+  // ơn còn phải chờ một cú chuyển khoản thật, tính bằng phút.
+
+  openButton.addEventListener('click', () => {
+    warmGiftArt()
+    const stage = document.getElementById('gift-stage')
+    const qr = giftQr
+    if (giftAction) giftAction.hidden = true
+    stage.hidden = false
+    /* Nút vừa bấm biến mất thì focus rơi về <body> và phím Tab kế tiếp quay lại
+       đầu thiệp. Dời vào sân khấu, preventScroll để màn hình không giật —
+       giống .nav, #success và #wish-thanks. */
+    stage.focus({ preventScroll: true })
+
     const reveal = () => {
-      status.hidden = true
-      bar.hidden = true
+      setPhase('arrived')
       /* Đã mừng cưới rồi thì đưa thẳng lời cảm ơn, đừng bày lại QR. Ưu tiên câu
          trả lời của máy chủ, rơi về storage khi mạng chưa kịp về. */
       const known = serverAt || lastKnownAt
       if (known && !wantMore) return showThanks(known)
+      /* Báo "QR đã hiện" phải nằm SAU nhánh trên, không phải trước: khách đã mừng
+         cưới rồi thì hàm này không bày QR nào cả, đọc câu đó lên là nói sai. */
+      announce('Bé đã tới nơi. Mã QR chuyển khoản mừng cưới đã hiện ra.')
       qr.hidden = false
       startPolling()
     }
     // Người bật giảm chuyển động thì bỏ màn diễn, hiện QR luôn — họ chỉ muốn
     // lấy mã chứ không muốn xem hoạt cảnh.
     if (reducedMotion.matches) return reveal()
+    /* Trình duyệt không có đơn vị container thì @supports bên styles.css đã giấu
+       Bé đi. Không có cái này thì khách vẫn phải ngồi đợi 4,8 giây trước một bức
+       tranh đứng yên rồi mới thấy QR — chờ suông vì một diễn viên không tồn tại. */
+    if (!window.CSS?.supports?.('width', '1cqw')) return reveal()
 
-    bar.hidden = false
+    setPhase('riding')
     // mỗi bước một thời lượng riêng nên phải cộng dồn, không nhân đều được
     let at = 0
-    GIFT_STEPS.forEach((step) => {
-      window.setTimeout(() => {
-        status.textContent = step.text
-        bar.style.setProperty('--pct', step.pct + '%')
-      }, at)
+    RIDE_STEPS.forEach((step) => {
+      window.setTimeout(() => { announce(step.text) }, at)
       at += step.ms
     })
-    window.setTimeout(reveal, at)
+    /* Kết chuyến bằng setTimeout chứ không nghe animationend: tab bị ẩn giữa
+       chừng thì sự kiện không bắn và DOM kẹt lại ở giữa đường. */
+    window.setTimeout(reveal, RIDE_MS)
   })
 
-  /* Mừng thêm lần nữa: lấy lại QR mà KHÔNG diễn lại 5.3 giây — khách đã xem một
+  /* Mừng thêm lần nữa: lấy lại QR mà KHÔNG diễn lại 4,8 giây — khách đã xem một
      lần rồi, bắt xem lại chỉ tổ phiền. Lời cảm ơn quay lại khi có khoản mới. */
   const moreButton = document.getElementById('gift-more')
   if (moreButton) {
     moreButton.addEventListener('click', () => {
       wantMore = true
+      // Về lại chặng "đã tới nơi": hoa giấy buộc vào [data-phase="received"] bên
+      // CSS nên dọn đi luôn, không phải gỡ node nào.
+      setPhase('arrived')
       if (thanks) thanks.hidden = true
       if (giftQr) giftQr.hidden = false
+      /* Dời focus TRƯỚC rồi mới báo. Làm ngược lại thì trình đọc màn hình đang đọc
+         dở câu thông báo đã bị cú nhảy focus cắt ngang để đọc nội dung <figure>
+         (bắt đầu bằng câu đùa trong figcaption).
+         Nút vừa bấm nằm trong #gift-thanks và vừa bị ẩn cùng nó — không dời thì
+         focus rơi về <body>. Dời sang đúng cái QR khách vừa xin. */
+      if (giftQr) giftQr.focus({ preventScroll: true })
+      announce('Mã QR chuyển khoản mừng cưới đã hiện lại.')
       startPolling()
     })
   }
