@@ -113,8 +113,33 @@ if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'm
    nó, kể cả position: fixed, đều bị kéo theo transform của nó. */
 const NAME_FLIGHT_MS = 780
 
+/* Hiệu ứng bay dựa hoàn toàn vào phép đo vị trí, nên chỉ chạy khi chữ đã ổn định.
+   KHÔNG dùng document.fonts.status để kiểm: ngay sau khi tải trang nó đã báo
+   "loaded" chỉ vì chưa font nào được yêu cầu — font script chỉ bắt đầu tải lúc
+   trình duyệt cần vẽ. Bấm mở trong khoảng đó thì đo bằng metrics của font dự
+   phòng, font thật về giữa chừng là chữ đích dịch ~9px và thấy nhảy rõ (hay gặp
+   trên điện thoại vì mạng và CPU chậm hơn).
+   Cũng không chờ suông document.fonts.ready: nếu font script chưa được yêu cầu
+   thì hàng đợi đang rỗng và nó cũng resolve ngay. Phải TỰ gọi fonts.load() cho
+   đúng font dùng để vẽ tên, rồi mới chờ ready. */
+let fontsSettled = false
+if (document.fonts && document.fonts.load) {
+  Promise.all([
+    document.fonts.load('400 4rem "Great Vibes"'),
+    document.fonts.load('500 1rem "Cormorant Garamond"'),
+  ])
+    .then(() => document.fonts.ready)
+    .catch(() => null)
+    .then(() => { fontsSettled = true })
+} else {
+  fontsSettled = true
+}
+
 function flyCoverNamesIntoPlace() {
   if (reducedMotion.matches || typeof Element.prototype.animate !== 'function') return false
+  // chưa ổn định thì bỏ hiệu ứng bay, rơi về cross-fade — bản đó không đo đạc gì
+  // nên không thể nhảy
+  if (!fontsSettled) return false
   const sources = document.querySelectorAll('#cover-title span')
   const targets = document.querySelectorAll('.hero-frame .couple-name')
   if (!sources.length || sources.length !== targets.length) return false
