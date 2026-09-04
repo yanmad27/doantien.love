@@ -29,6 +29,11 @@ const wedding = {
     // Đặt null để quay lại chế độ demo.
     endpoint: 'https://doantien.love/api/rsvp',
   },
+  gift: {
+    // App quanly trả lời "khách này đã mừng cưới chưa" để thiệp chạy lời cảm ơn.
+    // Chỉ có/chưa, không kèm số tiền. Đặt null để tắt hẳn phần hỏi.
+    statusEndpoint: 'https://doantien.love/api/gift-status',
+  },
   wishes: {
     // App quanly lưu và trả về sổ lời chúc, cũng đi qua domain thiệp như RSVP.
     // Đặt null để ẩn hẳn section — thà không có sổ còn hơn để khách viết vào
@@ -401,6 +406,10 @@ const GIFT_STEPS = [
   { text: 'Thôi hiện luôn cho nhanh!', pct: 100, ms: 600 },
 ]
 
+// Hỏi 5s một lần, bỏ cuộc sau 15 phút — quá lâu thì khách cũng đóng thiệp rồi.
+const GIFT_POLL_MS = 5_000
+const GIFT_POLL_GIVE_UP_MS = 15 * 60_000
+
 const gift = document.getElementById('gift')
 const giftQrImg = document.getElementById('gift-qr-img')
 
@@ -410,7 +419,86 @@ if (gift && giftQrImg) {
   const showGift = () => { gift.hidden = false }
   if (giftQrImg.complete && giftQrImg.naturalWidth) showGift()
   giftQrImg.addEventListener('load', showGift)
-  giftQrImg.addEventListener('error', () => { gift.hidden = true })
+
+  /* Thiệp riêng lấy QR từ qr.sepay.vn (mang mã khách). Dịch vụ đó chết mà ẩn
+     luôn cả khối thì khách hết đường mừng cưới — nên thử QR tĩnh trong repo
+     trước đã. Rơi về QR tĩnh thì vẫn chuyển khoản được, chỉ mất phần tự nhận ra
+     ai vừa gửi. Ẩn khối là bước cuối cùng, khi đến ảnh dự phòng cũng hỏng. */
+  giftQrImg.addEventListener('error', () => {
+    const fallback = giftQrImg.dataset.qrFallback
+    if (fallback && !giftQrImg.dataset.qrFellBack) {
+      giftQrImg.dataset.qrFellBack = '1'
+      giftQrImg.src = fallback
+      return
+    }
+    gift.hidden = true
+  })
+
+  /* --- Lời cảm ơn khi tiền về ---
+     Chỉ chạy trên thiệp riêng: thiệp chung không có mã khách nên không thể biết
+     ai vừa chuyển. */
+  const guestCode = document.body.dataset.guestCode || ''
+  const guestName = document.body.dataset.guestName || ''
+  const thanks = document.getElementById('gift-thanks')
+  const statusEndpoint = wedding.gift.statusEndpoint
+  const THANKED_KEY = `kd-dt-gift-${guestCode}`
+
+  // sessionStorage bị chặn ở chế độ riêng tư trên vài máy — hỏng chỗ này không
+  // được làm chết cả thiệp, giống cách phần nhạc nền đang làm.
+  function alreadyThanked() {
+    try { return window.sessionStorage.getItem(THANKED_KEY) === '1' } catch { return false }
+  }
+  function rememberThanked() {
+    try { window.sessionStorage.setItem(THANKED_KEY, '1') } catch { /* chặn thì thôi */ }
+  }
+
+  let pollTimer = 0
+  let giveUpAt = 0
+
+  function stopPolling() {
+    window.clearInterval(pollTimer)
+    pollTimer = 0
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+
+  function showThanks() {
+    stopPolling()
+    rememberThanked()
+    if (!thanks) return
+    const line = document.getElementById('gift-thanks-line')
+    // Tên đã escape sẵn ở server; gán qua textContent nên không dựng HTML.
+    if (line && guestName) line.textContent = `Tụi mình nhận được rồi, cảm ơn ${guestName}!`
+    const qr = document.getElementById('gift-qr')
+    if (qr) qr.hidden = true
+    thanks.hidden = false
+  }
+
+  async function checkGift() {
+    if (Date.now() > giveUpAt) return stopPolling()
+    try {
+      const res = await fetch(`${statusEndpoint}?code=${encodeURIComponent(guestCode)}`, { cache: 'no-store' })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.thanked) showThanks()
+    } catch { /* mạng chập chờn thì để lần hỏi sau lo */ }
+  }
+
+  function onVisible() {
+    /* Quan trọng nhất của cả tính năng: khách chuyển tiền ở app ngân hàng rồi
+       mới quay lại đây. Lúc tab bị ẩn, điện thoại thường treo luôn setInterval,
+       nên phải hỏi lại ngay khi tab sáng lại thay vì chờ nhịp kế tiếp. */
+    if (document.visibilityState === 'visible') checkGift()
+  }
+
+  function startPolling() {
+    if (pollTimer || !guestCode || !statusEndpoint) return
+    // QR dự phòng không mang mã khách nên có hỏi cũng không bao giờ khớp
+    if (giftQrImg.dataset.qrFellBack) return
+    giveUpAt = Date.now() + GIFT_POLL_GIVE_UP_MS
+    pollTimer = window.setInterval(checkGift, GIFT_POLL_MS)
+    document.addEventListener('visibilitychange', onVisible)
+    checkGift()
+  }
 
   document.getElementById('gift-open').addEventListener('click', (event) => {
     const button = event.currentTarget
@@ -424,7 +512,10 @@ if (gift && giftQrImg) {
     const reveal = () => {
       status.hidden = true
       bar.hidden = true
+      // Đã mừng cưới ở lần mở trước rồi thì đưa thẳng lời cảm ơn, đừng bày lại QR
+      if (alreadyThanked()) return showThanks()
       qr.hidden = false
+      startPolling()
     }
     // Người bật giảm chuyển động thì bỏ màn diễn, hiện QR luôn — họ chỉ muốn
     // lấy mã chứ không muốn xem hoạt cảnh.

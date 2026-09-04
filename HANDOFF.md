@@ -256,9 +256,26 @@ Khi `prefers-reduced-motion: reduce`:
   (`GIFT_STEPS`, tổng ~5.3s) rồi QR mới hiện. Mỗi bước có thời lượng riêng nên
   phải cộng dồn mốc thời gian, không nhân đều được.
 - Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
-- Ảnh: `assets/qr-mung-cuoi.png`. **Thiếu file thì ẩn cả section** (JS chỉ bỏ
-  `hidden` khi trình duyệt xác nhận tải được ảnh) — thà không có còn hơn để khách
-  bấm xong nhận một ô ảnh vỡ.
+- Ảnh QR:
+  - Thiệp chung dùng `assets/qr-mung-cuoi.png` — QR tĩnh, không mang mã ai cả.
+  - Thiệp riêng `/t/<mã>` được app quanly thay bằng ảnh từ `qr.sepay.vn/img`,
+    nội dung chuyển khoản mang sẵn `MC<mã khách>`.
+- **Ẩn cả section** khi không tải được ảnh (JS chỉ bỏ `hidden` sau khi trình duyệt
+  xác nhận ảnh về) — thà không có còn hơn để khách bấm xong nhận một ô ảnh vỡ.
+  Nhưng thiệp riêng thử `data-qr-fallback` (QR tĩnh trong repo) trước đã: `qr.sepay.vn`
+  chết thì khách vẫn mừng cưới được, chỉ mất phần nhận diện.
+
+### Lời cảm ơn khi tiền về
+
+- Chỉ chạy trên thiệp riêng, vì phải có `data-guest-code` mới biết ai vừa chuyển.
+- Sau khi QR hiện, thiệp hỏi `/api/gift-status?code=<mã>` mỗi 5 giây, bỏ cuộc sau
+  15 phút. Trả về đúng có/chưa, **không bao giờ kèm số tiền**.
+- **Hỏi lại ngay khi tab sáng lại** (`visibilitychange`) — đây là phần quan trọng
+  nhất: khách chuyển tiền ở app ngân hàng rồi mới quay lại, lúc tab bị ẩn điện
+  thoại thường treo luôn `setInterval`.
+- Nhận được → giấu QR, hiện `#gift-thanks` kèm tên khách, tim đập nhẹ. Ghi
+  `sessionStorage` để tải lại trang không diễn lại từ đầu.
+- Luồng phía máy chủ: xem `admin/README.md` mục "Mừng cưới qua SePay".
 
 ### Sổ lời chúc
 

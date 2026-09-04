@@ -29,6 +29,15 @@ const SITE_ORIGIN = process.env.SITE_ORIGIN || 'https://doantien.love'
 const TEMPLATE_PATH = path.join(HERE, 'invitation.html')
 const SEED_CSV = path.join(HERE, 'guests.csv')
 
+/* Mừng cưới qua SePay. Thiếu secret thì route webhook trả 503 chứ KHÔNG nhận
+   payload chưa xác thực — ai biết URL cũng bắn tiền giả vào được. */
+const SEPAY_WEBHOOK_SECRET = process.env.SEPAY_WEBHOOK_SECRET || ''
+const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '03009274502'
+const SEPAY_BANK = process.env.SEPAY_BANK || 'TPBank'
+// Phải khớp "Cấu trúc mã thanh toán" trên my.sepay.vn (tiền tố 2–5 ký tự).
+const GIFT_PREFIX = (process.env.GIFT_CODE_PREFIX || 'MC').toUpperCase()
+const SEPAY_SKEW_SEC = 300 // cửa sổ chống replay, đúng theo tài liệu SePay
+
 // scrypt: "salt:hash" dạng hex. Sinh bằng: node admin/hash-password.js '<mật khẩu>'
 const PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || ''
 const SESSION_SECRET = process.env.SESSION_SECRET || ''
@@ -47,7 +56,7 @@ const MAX_BODY = 64 * 1024
    Lưu trữ — một file JSON, ghi kiểu atomic (ghi tạm rồi rename)
    --------------------------------------------------------- */
 
-let db = { guests: [], rsvps: [], wishes: [] }
+let db = { guests: [], rsvps: [], gifts: [], wishes: [] }
 let writeChain = Promise.resolve()
 
 function parseSeedCsv() {
@@ -71,10 +80,11 @@ async function loadDb() {
     db = JSON.parse(await fsp.readFile(DB_PATH, 'utf8'))
     db.guests ||= []
     db.rsvps ||= []
+    db.gifts ||= []
     db.wishes ||= []
   } catch {
     // lần chạy đầu: nạp sẵn danh sách từ guests.csv để link đã gửi không chết
-    db = { guests: parseSeedCsv(), rsvps: [], wishes: [] }
+    db = { guests: parseSeedCsv(), rsvps: [], gifts: [], wishes: [] }
     await saveDb()
     console.log(`Khởi tạo dữ liệu với ${db.guests.length} khách từ guests.csv`)
   }
@@ -168,6 +178,20 @@ function seatsOf(value, fallback = 1) {
   return Number.isFinite(n) ? Math.min(Math.max(n, 1), 20) : fallback
 }
 
+/* QR mừng cưới mang mã riêng của khách trong nội dung chuyển khoản, nhờ vậy
+   webhook SePay biết ai vừa chuyển để thiệp của đúng người đó hiện lời cảm ơn.
+   Dùng ảnh SePay sinh sẵn thay vì tự viết bộ mã hoá QR — giữ luật không
+   dependency ngoài của app này. */
+function giftQrUrl(code) {
+  const q = new URLSearchParams({
+    acc: SEPAY_ACCOUNT,
+    bank: SEPAY_BANK,
+    des: `${GIFT_PREFIX}${code}`,
+    template: 'qronly', // chỉ ảnh QR, không khung/logo — CSS thiệp tự bọc khung
+  })
+  return `https://qr.sepay.vn/img?${q}`
+}
+
 function renderInvitation(guest) {
   const who = escapeHtml(fullName(guest))
   const code = escapeHtml(guest.code)
@@ -185,6 +209,14 @@ function renderInvitation(guest) {
   must('<body class="is-closed">',
     `<body class="is-closed" data-guest-name="${who}" data-guest-code="${code}"`
     + ` data-guest-seats="${seatsOf(guest.seats)}">`, 'thẻ body')
+
+  /* Đổi QR chung thành QR mang mã khách. Giữ luôn đường dẫn QR tĩnh làm dự
+     phòng: qr.sepay.vn hỏng thì thiệp rơi về ảnh trong repo, khách vẫn chuyển
+     khoản được — chỉ mất phần tự nhận ra ai gửi. Phải chạy TRƯỚC bước đổi "./
+     thành "/ bên dưới, vì lúc đó chuỗi src cũ không còn nữa. */
+  must('src="./assets/qr-mung-cuoi.png"',
+    `src="${escapeHtml(giftQrUrl(guest.code))}" data-qr-fallback="/assets/qr-mung-cuoi.png"`,
+    'ảnh QR mừng cưới')
 
   // thiệp nằm ở /t/<mã>/ nên đường dẫn tương đối ./ phải thành tuyệt đối /
   doc = doc.replaceAll('"./', '"/')
@@ -350,16 +382,6 @@ ${PRINT_HANDS}
    Tiện ích HTTP
    --------------------------------------------------------- */
 
-/* Trang thiệp nằm ở origin khác app này. Thực tế Traefik trỏ doantien.love/api/*
-   sang đây nên trình duyệt thấy là cùng origin, nhưng vẫn gửi kèm cho chắc —
-   và để gọi thẳng subdomain quanly khi chạy thử ở máy vẫn được. */
-const publicCors = (methods) => ({
-  'Access-Control-Allow-Origin': SITE_ORIGIN,
-  'Access-Control-Allow-Methods': methods,
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Max-Age': '86400',
-})
-
 function clientIp(req) {
   const fwd = req.headers['x-forwarded-for']
   if (typeof fwd === 'string' && fwd) return fwd.split(',')[0].trim()
@@ -378,7 +400,18 @@ function send(res, status, body, headers = {}) {
 const json = (res, status, obj, headers = {}) =>
   send(res, status, JSON.stringify(obj), { 'Content-Type': 'application/json; charset=utf-8', ...headers })
 
-function readBody(req) {
+// Các route công khai gọi từ trang thiệp — có thể khác origin (subdomain quanly)
+const PUBLIC_CORS = {
+  'Access-Control-Allow-Origin': SITE_ORIGIN,
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+}
+
+/* Bytes thô, chưa parse. Chữ ký HMAC của SePay ký trên đúng chuỗi byte đã gửi,
+   nên KHÔNG được parse rồi stringify lại: thứ tự khoá và cách escape Unicode
+   đổi là chữ ký hỏng ngay. */
+function readRawBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0
     const chunks = []
@@ -387,12 +420,16 @@ function readBody(req) {
       if (size > MAX_BODY) { reject(new Error('quá lớn')); req.destroy(); return }
       chunks.push(c)
     })
-    req.on('end', () => {
-      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}) }
-      catch { reject(new Error('JSON không hợp lệ')) }
-    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
+}
+
+async function readBody(req) {
+  const raw = await readRawBody(req)
+  if (!raw.length) return {}
+  try { return JSON.parse(raw.toString('utf8')) }
+  catch { throw new Error('JSON không hợp lệ') }
 }
 
 function newCode() {
@@ -432,6 +469,71 @@ async function serveStatic(res, urlPath) {
 }
 
 /* ---------------------------------------------------------
+   Mừng cưới — nhận webhook SePay
+   --------------------------------------------------------- */
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/* Tìm xem giao dịch này là của khách nào.
+
+   SePay trả mã thanh toán VIẾT HOA (MCAB3K9Z) trong khi mã khách lưu viết
+   thường — không hạ chữ trước khi so thì không bao giờ khớp.
+
+   Trường `code` chỉ có khi đã khai "Cấu trúc mã thanh toán" trên my.sepay.vn.
+   Chưa khai thì tự dò trong nội dung chuyển khoản, để tính năng vẫn chạy đúng
+   mà không phụ thuộc một ô cấu hình trên dashboard. */
+function matchGuestCode(code, content) {
+  const prefix = GIFT_PREFIX.toLowerCase()
+  const found = []
+  if (typeof code === 'string' && code) found.push(code.toLowerCase())
+  if (typeof content === 'string' && content) {
+    const re = new RegExp(`${escapeRe(prefix)}([a-z0-9]{${CODE_LEN}})`, 'g')
+    for (const m of content.toLowerCase().matchAll(re)) found.push(prefix + m[1])
+  }
+  for (const candidate of found) {
+    if (!candidate.startsWith(prefix)) continue
+    const guestCode = candidate.slice(prefix.length)
+    if (db.guests.some((g) => g.code === guestCode)) return guestCode
+  }
+  return ''
+}
+
+/* Trả null nếu hợp lệ, hoặc { status, message } để từ chối.
+   Chữ ký = HMAC-SHA256(secret, `${timestamp}.${body thô}`), gửi kèm dạng
+   "sha256=<hex>". Timestamp lệch quá 5 phút coi như replay. */
+function verifySepay(req, raw) {
+  const tsRaw = String(req.headers['x-sepay-timestamp'] || '')
+  const ts = Number(tsRaw)
+  if (!tsRaw || !Number.isFinite(ts)) return { status: 401, message: 'Missing timestamp' }
+  if (Math.abs(Date.now() / 1000 - ts) > SEPAY_SKEW_SEC) return { status: 401, message: 'Request expired' }
+
+  const expected = 'sha256=' + crypto.createHmac('sha256', SEPAY_WEBHOOK_SECRET)
+    .update(`${tsRaw}.`).update(raw).digest('hex')
+  const got = Buffer.from(String(req.headers['x-sepay-signature'] || ''))
+  const want = Buffer.from(expected)
+  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) {
+    return { status: 401, message: 'Invalid signature' }
+  }
+  return null
+}
+
+/* Chặn dò mã qua /api/gift-status. Thiệp hỏi 5s một lần nên 120 lượt/5 phút
+   là thừa cho người dùng thật, nhưng đủ chật để không quét được cả bảng mã. */
+const statusHits = new Map()
+function tooManyStatus(ip) {
+  const now = Date.now()
+  const rec = statusHits.get(ip)
+  if (!rec || now > rec.until) { statusHits.set(ip, { count: 1, until: now + 5 * 60_000 }); return false }
+  rec.count += 1
+  return rec.count > 120
+}
+// dọn định kỳ để Map không phình mãi; unref để không giữ tiến trình sống
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, rec] of statusHits) if (now > rec.until) statusHits.delete(ip)
+}, 10 * 60_000).unref()
+
+/* ---------------------------------------------------------
    Router
    --------------------------------------------------------- */
 
@@ -459,7 +561,7 @@ const server = http.createServer(async (req, res) => {
 
     /* --- RSVP: công khai, gọi từ trang thiệp (khác origin) --- */
     if (p === '/api/rsvp') {
-      const cors = publicCors('POST, OPTIONS')
+      const cors = PUBLIC_CORS
       if (req.method === 'OPTIONS') return send(res, 204, '', cors)
       if (req.method !== 'POST') return json(res, 405, { error: 'method' }, cors)
       const body = await readBody(req)
@@ -487,7 +589,7 @@ const server = http.createServer(async (req, res) => {
 
     /* --- Sổ lời chúc: công khai, đọc và ghi từ trang thiệp --- */
     if (p === '/api/wishes') {
-      const cors = publicCors('GET, POST, OPTIONS')
+      const cors = PUBLIC_CORS
       if (req.method === 'OPTIONS') return send(res, 204, '', cors)
 
       if (req.method === 'GET') {
@@ -525,6 +627,67 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, wish: publicWish(wish) }, cors)
     }
 
+    /* --- Webhook SePay: công khai, nhưng phải có chữ ký hợp lệ mới nhận.
+           Đặt TRƯỚC lớp kiểm tra đăng nhập bên dưới, nếu không SePay sẽ ăn 401. --- */
+    if (p === '/api/sepay-webhook') {
+      if (req.method !== 'POST') return json(res, 405, { success: false, message: 'Method not allowed' })
+      if (!SEPAY_WEBHOOK_SECRET) {
+        console.error('Thiếu SEPAY_WEBHOOK_SECRET — từ chối webhook thay vì nhận dữ liệu chưa xác thực.')
+        return json(res, 503, { success: false, message: 'Webhook chưa được cấu hình' })
+      }
+
+      let raw
+      try { raw = await readRawBody(req) }
+      catch { return json(res, 400, { success: false, message: 'Body quá lớn' }) }
+
+      const bad = verifySepay(req, raw)
+      if (bad) return json(res, bad.status, { success: false, message: bad.message })
+
+      let payload
+      try { payload = JSON.parse(raw.toString('utf8')) }
+      catch { return json(res, 400, { success: false, message: 'JSON không hợp lệ' }) }
+
+      const sepayId = payload?.id === undefined || payload?.id === null ? '' : String(payload.id)
+      if (!sepayId) return json(res, 400, { success: false, message: 'Thiếu id' })
+
+      /* Từ đây trở xuống mọi nhánh đều trả 200 { success: true }: SePay coi bất
+         cứ đáp án nào khác là thất bại và sẽ gửi lại mãi. Tiền ra, hay giao dịch
+         đã ghi rồi, đều là "đã xử lý xong" chứ không phải lỗi. */
+      if (payload.transferType !== 'in') return json(res, 200, { success: true })
+
+      /* Chống trùng: id giữ nguyên qua mọi lần retry và mọi lần bấm gửi lại tay
+         trên dashboard. Kiểm rồi push ngay, không chèn await vào giữa, để hai
+         webhook tới sát nhau không cùng lọt qua. */
+      if (!db.gifts.some((g) => g.id === sepayId)) {
+        db.gifts.push({
+          id: sepayId,
+          guestCode: matchGuestCode(payload.code, payload.content),
+          amount: Math.max(0, Math.floor(Number(payload.transferAmount) || 0)),
+          content: String(payload.content || '').slice(0, 500),
+          ref: String(payload.referenceCode || '').slice(0, 100),
+          gateway: String(payload.gateway || '').slice(0, 60),
+          at: new Date().toISOString(),
+        })
+        await saveDb()
+      }
+      return json(res, 200, { success: true })
+    }
+
+    /* --- Thiệp hỏi "tiền của mình tới chưa?" để chạy animation cảm ơn.
+           CHỈ trả có/chưa — không bao giờ trả số tiền ra ngoài trang quản trị. --- */
+    if (p === '/api/gift-status') {
+      const cors = PUBLIC_CORS
+      if (req.method === 'OPTIONS') return send(res, 204, '', cors)
+      if (req.method !== 'GET') return json(res, 405, { error: 'method' }, cors)
+      if (tooManyStatus(clientIp(req))) return json(res, 429, { error: 'Hỏi quá nhiều' }, cors)
+
+      const code = String(url.searchParams.get('code') || '').toLowerCase().slice(0, 32)
+      if (!code) return json(res, 400, { error: 'thiếu code' }, cors)
+      const gift = db.gifts.find((g) => g.guestCode === code)
+      return json(res, 200, { thanked: Boolean(gift), at: gift?.at || null },
+        { ...cors, 'Cache-Control': 'no-store' })
+    }
+
     /* --- đăng nhập --- */
     if (p === '/api/login' && req.method === 'POST') {
       const ip = clientIp(req)
@@ -549,7 +712,10 @@ const server = http.createServer(async (req, res) => {
       if (!authed) return json(res, 401, { error: 'Chưa đăng nhập' })
 
       if (p === '/api/data' && req.method === 'GET') {
-        return json(res, 200, { guests: db.guests, rsvps: db.rsvps, wishes: db.wishes, siteOrigin: SITE_ORIGIN })
+        // gifts kèm số tiền — chỗ duy nhất lộ số, và đã nằm sau đăng nhập
+        return json(res, 200, {
+          guests: db.guests, rsvps: db.rsvps, gifts: db.gifts, wishes: db.wishes, siteOrigin: SITE_ORIGIN,
+        })
       }
 
       if (p === '/api/guests' && req.method === 'POST') {

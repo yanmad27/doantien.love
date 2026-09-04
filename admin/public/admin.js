@@ -4,7 +4,7 @@ const loginView = $('#login')
 const appView = $('#app')
 const toastEl = $('#toast')
 
-let state = { guests: [], rsvps: [], wishes: [], siteOrigin: 'https://doantien.love' }
+let state = { guests: [], rsvps: [], wishes: [], gifts: [], siteOrigin: 'https://doantien.love' }
 let filter = ''
 
 /* --- tiện ích --- */
@@ -33,6 +33,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 
 const fullName = (g) => `${g.title || ''} ${g.name}`.trim()
 const guestUrl = (g) => `${state.siteOrigin}/t/${g.code}/`
+const money = (n) => `${(Number(n) || 0).toLocaleString('vi-VN')}đ`
 
 function csv(rows) {
   return rows.map((r) => r.map((cell) => {
@@ -69,6 +70,8 @@ function render() {
     ['Đã phản hồi', state.rsvps.length],
     ['Sẽ đến', going.length],
     ['Tổng số người', heads],
+    ['Đã mừng cưới', state.gifts.length],
+    ['Tổng đã nhận', money(state.gifts.reduce((sum, g) => sum + (Number(g.amount) || 0), 0))],
   ].map(([label, value]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')
 
   const needle = filter.trim().toLowerCase()
@@ -130,11 +133,31 @@ function render() {
       <button class="btn-mini btn-del" data-act="del-wish">Xoá</button>
     </div></td>
   </tr>`).join('')
+
+  /* Mừng cưới — chỗ DUY NHẤT hiện số tiền. Trang thiệp chỉ biết "đã nhận hay
+     chưa", đừng bao giờ đẩy số ra ngoài đây. */
+  const gifts = [...state.gifts].reverse()
+  $('#gift-count').textContent = `(${gifts.length})`
+  $('#gifts-empty').hidden = gifts.length > 0
+  $('#gifts tbody').innerHTML = gifts.map((g) => {
+    const guest = g.guestCode ? state.guests.find((x) => x.code === g.guestCode) : null
+    const who = guest
+      ? `<span class="who">${esc(fullName(guest))}</span><code>${esc(g.guestCode)}</code>`
+      : '<span class="pill pill-none">không rõ khách</span>'
+    return `<tr>
+      <td>${new Date(g.at).toLocaleString('vi-VN')}</td>
+      <td>${who}</td>
+      <td class="seats">${money(g.amount)}</td>
+      <td>${esc(g.content)}</td>
+    </tr>`
+  }).join('')
 }
 
 async function refresh() {
   state = await api('/api/data')
+  // máy chủ bản cũ chưa trả hai trường này
   state.wishes ||= []
+  state.gifts ||= []
   render()
 }
 
@@ -332,6 +355,16 @@ $('#export-rsvp').addEventListener('click', () => {
   download('phan-hoi-rsvp.csv', csv([
     ['thoi_diem', 'ma_khach', 'ten', 'tham_du', 'so_nguoi', 'karaoke', 'bai_hat', 'loi_nhan'],
     ...state.rsvps.map((r) => [r.at, r.guestCode, r.name, r.attendance, r.guests, r.karaoke, r.song, r.message]),
+  ]))
+})
+
+$('#export-gift').addEventListener('click', () => {
+  download('mung-cuoi.csv', csv([
+    ['thoi_diem', 'ma_khach', 'ten_khach', 'so_tien', 'noi_dung', 'ma_giao_dich', 'tham_chieu'],
+    ...state.gifts.map((g) => {
+      const guest = g.guestCode ? state.guests.find((x) => x.code === g.guestCode) : null
+      return [g.at, g.guestCode, guest ? fullName(guest) : '', g.amount, g.content, g.id, g.ref]
+    }),
   ]))
 })
 

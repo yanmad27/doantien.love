@@ -1217,6 +1217,37 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gift-qr figcaption { color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
 .gift-joke { display: inline-block; margin-top: .35rem; font-size: .88rem; opacity: .85; }
 
+/* Lời cảm ơn thay chỗ QR sau khi webhook SePay báo tiền đã về. Không có số tiền
+   ở đây, và cũng không nên thêm vào — thiệp đã hứa "chỉ nhìn tên để cảm ơn".
+   Khối prefers-reduced-motion phía trên đã tắt mọi animation nên không khai lại. */
+.gift-thanks { display: grid; justify-items: center; gap: .55rem; animation: gift-pop .5s var(--ease-out) both; }
+/* display: grid đè mất thuộc tính hidden — phải trả lại, giống .gift-qr[hidden] */
+.gift-thanks[hidden] { display: none; }
+.gift-thanks-mark {
+  width: 3rem;
+  height: 2.6rem;
+  margin: 0 0 .2rem;
+  background: var(--peach);
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+  animation: gift-heart 1.5s var(--ease-soft) infinite;
+}
+.gift-thanks-line {
+  margin: 0;
+  color: var(--peach-ink);
+  font-family: var(--serif);
+  font-size: clamp(1.35rem, 4.6vw, 1.7rem);
+  line-height: 1.35;
+}
+.gift-thanks-sub { margin: 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
+
+@keyframes gift-heart {
+  0%, 100% { transform: scale(1); }
+  18% { transform: scale(1.15); }
+  34% { transform: scale(1); }
+  50% { transform: scale(1.09); }
+}
+
 @keyframes gift-blink { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes gift-pop {
   from { opacity: 0; transform: scale(.86) rotate(-3deg); }
