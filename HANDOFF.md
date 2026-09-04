@@ -229,9 +229,10 @@ Khi `prefers-reduced-motion: reduce`:
 - Hiện sau khi mở thiệp **15–20 giây** (ngẫu nhiên), mỗi phiên **một lần**
   (`sessionStorage: kd-dt-nudge-xong`).
 - Không hiện nếu khách đã gửi phản hồi (panel `#success` đang có class `.show`).
-- Bấm "không" → modal nhảy sang góc khác và nài thêm; tới bước 3 thì nút "không"
-  biến mất. Bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài — đây là trò đùa,
-  không phải cái bẫy.
+- Chỉ hỏi **hai lần**: bấm "không" ở bước 1 thì modal nhảy sang góc khác và nài
+  thêm đúng một câu; bấm "không" lần hai là đóng hẳn, không nài tiếp.
+- Bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài — đây là trò đùa, không
+  phải cái bẫy.
 - Bấm "có" → đóng modal, chọn sẵn `attendance = yes`, focus ô đó rồi cuộn tới
   `#rsvp`. Phải hoãn một nhịp (`setTimeout 0`) vì `<dialog>` khi đóng trả focus
   về phần tử trước đó và trình duyệt cuộn theo focus.

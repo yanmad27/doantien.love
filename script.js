@@ -199,15 +199,16 @@ function flyCoverNamesIntoPlace() {
    Hỏi vui "bạn có đến không"
 
    Hiện sau khi mở thiệp một lúc ngẫu nhiên 15–20s. Bấm "không" thì modal nhảy
-   sang góc khác và nài thêm một câu, tới bước cuối thì nút "không" bỏ chạy luôn
-   — đây là trò đùa, nên bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
+   sang góc khác và nài thêm ĐÚNG một câu nữa; bấm "không" lần hai là thôi, không
+   nài tiếp. Đây là trò đùa nên bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài.
    --------------------------------------------------------- */
 
 const NUDGE_DELAY_MIN = 15000
 const NUDGE_DELAY_MAX = 20000
 const NUDGE_SEEN_KEY = 'kd-dt-nudge-xong'
 
-/* Mỗi bước đứng ở một góc khác nhau cho có cảm giác "nó lại hiện chỗ khác". */
+/* Hai bước, mỗi bước một góc khác nhau cho có cảm giác "nó lại hiện chỗ khác".
+   Bấm "không" ở bước cuối thì đóng hẳn — nài tới lần thứ ba là phiền. */
 const NUDGE_STEPS = [
   {
     place: 'center',
@@ -224,14 +225,6 @@ const NUDGE_STEPS = [
     copy: 'Tụi mình cưới đúng một lần duy nhất trong đời. Bạn không đến thì bàn tiệc dư một ghế, ảnh cưới thiếu một người, và tụi mình sẽ nhắc chuyện này tới già.',
     yes: 'Thôi được rồi, mình đến!',
     no: 'Vẫn không',
-  },
-  {
-    place: 'top-right',
-    overline: 'Thông báo',
-    title: 'Nút "không" vừa bỏ chạy',
-    copy: 'Nó nghỉ việc rồi, giờ chỉ còn đúng một nút thôi. Bấm đi, tụi mình chờ ở Long Phụng.',
-    yes: 'Ừ thì mình đến',
-    no: null,
   },
 ]
 
