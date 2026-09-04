@@ -1148,3 +1148,50 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   from { opacity: 0; transform: translateY(10px) scale(.97); }
   to { opacity: 1; transform: none; }
 }
+
+/* ---- Mừng cưới ---- */
+.gift { padding: clamp(4rem, 9vw, 7rem) 1.25rem; background: var(--paper-warm); }
+.gift[hidden] { display: none; }
+.gift-shell { max-width: 620px; margin: 0 auto; text-align: center; }
+.gift-title {
+  margin: 0 0 .7rem;
+  font-family: var(--serif);
+  font-size: clamp(1.9rem, 6vw, 2.8rem);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.gift-copy { margin: 0 auto 1.7rem; max-width: 30rem; color: var(--ink-soft); font-family: var(--serif); font-size: 1.05rem; line-height: 1.6; }
+.gift-open { width: fit-content; margin-inline: auto; }
+
+.gift-stage { display: grid; place-items: center; min-height: 132px; }
+.gift-status {
+  margin: 0;
+  color: var(--gold-ink);
+  font-family: var(--ui);
+  font-size: .8rem;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  animation: gift-blink 1.5s ease-in-out infinite;
+}
+.gift-status[hidden] { display: none; }
+
+.gift-qr { margin: 0; display: grid; justify-items: center; gap: .9rem; }
+.gift-qr[hidden] { display: none; }
+.gift-qr img {
+  width: min(230px, 62vw);
+  height: auto;
+  padding: .8rem;
+  background: #fff;
+  border: 1px solid var(--peach);
+  border-radius: 14px;
+  box-shadow: 0 18px 40px -26px rgba(89, 71, 63, .8);
+  animation: gift-pop .5s var(--ease-out) both;
+}
+.gift-qr figcaption { color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
+.gift-joke { display: inline-block; margin-top: .35rem; font-size: .88rem; opacity: .85; }
+
+@keyframes gift-blink { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+@keyframes gift-pop {
+  from { opacity: 0; transform: scale(.86) rotate(-3deg); }
+  to { opacity: 1; transform: none; }
+}

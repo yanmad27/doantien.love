@@ -206,6 +206,33 @@
         </div>
       </section>
 
+      <!-- Mừng cưới: QR nằm sau một nút bấm, không bày sẵn ra màn hình.
+           Khách không quan tâm thì lướt qua, ai muốn mới mở — đỡ kỳ.
+           JS ẩn cả section nếu thiếu file QR (xem #gift trong script.js). -->
+      <section class="gift" id="gift" hidden>
+        <div class="section-shell gift-shell" data-reveal>
+          <p class="section-label">Mừng cưới</p>
+          <h2 class="gift-title">Ở xa không tới được?</h2>
+          <p class="gift-copy">Có mặt là quý nhất rồi. Còn nếu bạn ở xa mà vẫn muốn góp một lời chúc,
+            tụi mình để cái nút này ở đây.</p>
+
+          <button class="button gift-open" id="gift-open" type="button">Gửi lời chúc mừng từ xa</button>
+
+          <div class="gift-stage" id="gift-stage" hidden>
+            <p class="gift-status" id="gift-status" role="status" aria-live="polite"></p>
+            <figure class="gift-qr" id="gift-qr" hidden>
+              <img src="./assets/qr-mung-cuoi.png" width="370" height="370"
+                   alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img">
+              <figcaption>
+                Quét mã là tới thẳng ví của tụi mình.<br>
+                <span class="gift-joke">Bao nhiêu cũng quý — tụi mình hứa chỉ nhìn tên để cảm ơn chứ không nhìn số.
+                  (Nhìn một xíu thôi.)</span>
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
       <section class="closing">
         <img src="./assets/floral-branch.webp" alt="" aria-hidden="true">
         <div data-reveal data-stagger>

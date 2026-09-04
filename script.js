@@ -372,6 +372,54 @@ function armNudge() {
 }
 
 /* ---------------------------------------------------------
+   Mừng cưới — QR giấu sau một nút bấm
+
+   Bày QR ra giữa thiệp thì kỳ, nên để sau nút "Gửi lời chúc mừng từ xa": ai
+   muốn mới mở. Bấm xong chạy vài dòng trạng thái cho vui rồi QR mới hiện.
+   --------------------------------------------------------- */
+
+const GIFT_STEPS = [
+  'Đang mở phong bì…',
+  'Đang phủi bụi mã QR…',
+  'Đang xúc động…',
+]
+const GIFT_STEP_MS = 750
+
+const gift = document.getElementById('gift')
+const giftQrImg = document.getElementById('gift-qr-img')
+
+if (gift && giftQrImg) {
+  /* Chỉ hiện cả khối khi trình duyệt xác nhận tải được ảnh QR. Thiếu file mà vẫn
+     để nút thì khách bấm xong nhận một ô ảnh vỡ — thà không có còn hơn. */
+  const showGift = () => { gift.hidden = false }
+  if (giftQrImg.complete && giftQrImg.naturalWidth) showGift()
+  giftQrImg.addEventListener('load', showGift)
+  giftQrImg.addEventListener('error', () => { gift.hidden = true })
+
+  document.getElementById('gift-open').addEventListener('click', (event) => {
+    const button = event.currentTarget
+    const stage = document.getElementById('gift-stage')
+    const status = document.getElementById('gift-status')
+    const qr = document.getElementById('gift-qr')
+    button.hidden = true
+    stage.hidden = false
+
+    const reveal = () => {
+      status.hidden = true
+      qr.hidden = false
+    }
+    // Người bật giảm chuyển động thì bỏ màn diễn, hiện QR luôn — họ chỉ muốn
+    // lấy mã chứ không muốn xem hoạt cảnh.
+    if (reducedMotion.matches) return reveal()
+
+    GIFT_STEPS.forEach((line, i) => {
+      window.setTimeout(() => { status.textContent = line }, i * GIFT_STEP_MS)
+    })
+    window.setTimeout(reveal, GIFT_STEPS.length * GIFT_STEP_MS)
+  })
+}
+
+/* ---------------------------------------------------------
    Nhạc nền
    --------------------------------------------------------- */
 
