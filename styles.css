@@ -824,7 +824,9 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .rsvp-panel { padding: clamp(1.5rem, 4vw, 3rem); background: var(--paper); border: 1px solid var(--peach); border-radius: 14px; }
 #rsvp-form { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
 #rsvp-form label { display: grid; gap: .45rem; color: var(--ink); font-size: .75rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
-#rsvp-form label:first-child, #rsvp-form label:nth-child(4) { grid-column: 1 / -1; }
+/* Đánh dấu bằng class chứ KHÔNG dùng nth-child: luật cũ nhắm label thứ 4, chèn
+   thêm một khối vào giữa form là ô Lời nhắn tuột mất full-width mà không ai để ý. */
+#rsvp-form .field-wide { grid-column: 1 / -1; }
 #rsvp-form .button--solid, #rsvp-form .form-error { grid-column: 1 / -1; }
 #rsvp-form input, #rsvp-form select, #rsvp-form textarea {
   width: 100%;
