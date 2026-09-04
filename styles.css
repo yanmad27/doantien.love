@@ -1331,16 +1331,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   position: absolute;
   z-index: 1;
   left: 0;
-  top: 0;
+  bottom: 0;
   display: flex;
   align-items: end;
   gap: .15cqw;
   width: 35cqw;
-  height: 23cqh;
+  height: 16.5cqh;
   opacity: 0;
   filter: blur(.55px) saturate(.48) sepia(.16);
   mix-blend-mode: multiply;
-  transform: translate(-36cqw, 43cqh) scale(.72);
+  transform: translate(-36cqw, -17cqh) scale(1.455);
+  transform-origin: left bottom;
 }
 .gift-crowd-far i {
   display: block;
@@ -1349,30 +1350,41 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background-image: url("./assets/gift-procession-sprites.webp");
   background-repeat: no-repeat;
   background-size: 400% 100%;
-  transform-origin: 50% 90%;
+  transform-origin: 50% 100%;
+  --path-lift: 0cqh;
+  --member-scale: 1;
+  transform: translateY(var(--path-lift)) scale(var(--member-scale));
 }
 .gift-crowd-far i:nth-child(4n + 1) { background-position: 0 0; }
 .gift-crowd-far i:nth-child(4n + 2) { background-position: 33.333% 0; }
 .gift-crowd-far i:nth-child(4n + 3) { background-position: 66.666% 0; }
 .gift-crowd-far i:nth-child(4n) { background-position: 100% 0; }
-.gift-crowd-far i:nth-child(2) { flex-basis: 4.8cqw; }
-.gift-crowd-far i:nth-child(3n) { flex-basis: 5cqw; }
+/* Sáu người mà giữ nguyên tổng bề rộng sẽ giăng ngang gần hết đoạn đường hẹp ở
+   sát cổng. Chồng nhẹ vai ở lớp xa để tâm cụm bám đường cong, không kéo hai đầu
+   sang lại vùng giấy trắng. */
+.gift-crowd-far i + i { margin-left: -1.6cqw; }
+.gift-crowd-far i:nth-child(2) { --path-lift: -1.8cqh; --member-scale: .93; }
+.gift-crowd-far i:nth-child(3) { --path-lift: -3.8cqh; --member-scale: .88; }
+.gift-crowd-far i:nth-child(4) { --path-lift: -5.4cqh; --member-scale: .83; }
+.gift-crowd-far i:nth-child(5) { --path-lift: -7cqh; --member-scale: .8; }
+.gift-crowd-far i:nth-child(6) { --path-lift: -8.4cqh; --member-scale: .76; }
 
 .gift-procession {
   position: absolute;
   z-index: 2;
   left: 0;
-  top: 0;
+  bottom: 0;
   display: flex;
   align-items: end;
   gap: .4cqw;
   width: 32cqw;
-  height: 24cqh;
+  height: 30.9cqh;
   opacity: 0;
   pointer-events: none;
+  transform-origin: left bottom;
 }
-.gift-procession--back { transform: translate(-43cqw, 53cqh) scale(.72); filter: saturate(.78); }
-.gift-procession--front { z-index: 3; transform: translate(-55cqw, 69cqh) scale(1.02); }
+.gift-procession--back { transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
+.gift-procession--front { z-index: 3; transform: translate(68cqw, -36cqh) scale(.475); }
 .gift-marcher {
   display: block;
   flex: 0 0 10.3cqw;
@@ -1380,14 +1392,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background-image: url("./assets/gift-procession-sprites.webp");
   background-repeat: no-repeat;
   background-size: 400% 100%;
-  transform-origin: 50% 88%;
+  transform-origin: 50% 100%;
+  --path-lift: 0cqh;
+  --member-scale: 1;
+  transform: translateY(var(--path-lift)) scale(var(--member-scale));
 }
 .gift-marcher--drum { background-position: 0 0; }
 .gift-marcher--flag { background-position: 33.333% 0; }
 .gift-marcher--flower { background-position: 66.666% 0; }
 .gift-marcher--cheer { background-position: 100% 0; }
-.gift-procession--back .gift-marcher:nth-child(2) { transform: scale(.88); }
-.gift-procession--front .gift-marcher:nth-child(2) { transform: scaleX(-1) scale(.92); }
+.gift-procession .gift-marcher:nth-child(2) { --path-lift: -4cqh; --member-scale: .94; }
+/* Người reo ở hàng trước có biên độ xoay/nở lớn hơn người ôm hoa hàng sau;
+   dùng cùng .94 làm bounding box của bạn ấy phình ngược lên gần bằng người đầu. */
+.gift-procession--front .gift-marcher:nth-child(2) { --member-scale: .85; }
+.gift-procession .gift-marcher:nth-child(3) { --path-lift: -9cqh; --member-scale: .83; }
 
 /* Tiền cảnh chỉ lướt qua đúng một nhịp. Giữ nó ở mép dưới và không thêm hoa
    có cánh chi tiết để lớp gần tạo tốc độ, không che mất mặt Bé trên màn 320px. */
@@ -1566,9 +1584,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 #gift-shell[data-phase="arrived"] .gift-procession,
 #gift-shell[data-phase="received"] .gift-procession { opacity: .82; }
 #gift-shell[data-phase="arrived"] .gift-procession--back,
-#gift-shell[data-phase="received"] .gift-procession--back { transform: translate(4cqw, 39cqh) scale(.45); filter: saturate(.78); }
+#gift-shell[data-phase="received"] .gift-procession--back { transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
 #gift-shell[data-phase="arrived"] .gift-procession--front,
-#gift-shell[data-phase="received"] .gift-procession--front { transform: translate(43cqw, 50cqh) scale(.42); }
+#gift-shell[data-phase="received"] .gift-procession--front { transform: translate(68cqw, -36cqh) scale(.475); }
 
 /* Cú mừng khi vừa tới chỉ chạy một lần và không kéo dài thời gian chờ: QR đã
    hiện ở hàng dưới ngay lúc phase đổi, còn nhịp bật nằm trọn trong tranh. */
@@ -1771,8 +1789,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   100% { transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg); }
 }
 @keyframes gift-far-march {
-  from { transform: translateY(.6cqh) rotate(-1.5deg); }
-  to { transform: translateY(-.7cqh) rotate(1.5deg); }
+  from { transform: translateY(calc(var(--path-lift) + .6cqh)) rotate(-1.5deg) scale(var(--member-scale)); }
+  to { transform: translateY(calc(var(--path-lift) - .7cqh)) rotate(1.5deg) scale(var(--member-scale)); }
 }
 @keyframes gift-rider-body {
   0%, 7%   { transform: translateY(0) scale(1); }
@@ -1784,44 +1802,54 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   94%      { transform: translateY(1.1cqh) scale(1.10, .88) rotate(-4deg); }
   100%     { transform: translateY(0) scale(1); }
 }
+/* Tâm lòng đường dò trên chính gift-journey-scene.webp, theo % khung:
+   (43,86) → (58,76) → (76,64) → (75,53) → (82,47). Neo x của đoàn theo dải
+   này để chân người không cắt ngang khoảng giấy trắng bên trái khúc cua. */
 @keyframes gift-crowd-pass {
-  0%, 8%   { opacity: 0; transform: translate(-36cqw, 43cqh) scale(.72); }
+  /* Sprite xa cao gốc 16,5cqh; scale = .49 × (footY - 34) / 16,5. */
+  0%, 8%   { opacity: 0; transform: translate(-36cqw, -17cqh) scale(1.455); }
   18%      { opacity: .25; }
-  55%      { opacity: .34; transform: translate(39cqw, 35cqh) scale(.56); }
-  78%      { opacity: .12; transform: translate(82cqw, 28cqh) scale(.45); }
-  100%     { opacity: 0; transform: translate(105cqw, 25cqh) scale(.4); }
+  32%      { opacity: .31; transform: translate(18cqw, -24cqh) scale(1.247); }
+  55%      { opacity: .34; transform: translate(67cqw, -47cqh) scale(.575); }
+  78%      { opacity: .12; transform: translate(76cqw, -53cqh) scale(.386); }
+  100%     { opacity: 0; transform: translate(88cqw, -56cqh) scale(.297); }
 }
 @keyframes gift-procession-back {
-  0%, 12%  { opacity: 0; transform: translate(-43cqw, 53cqh) scale(.72); filter: saturate(.78); }
+  /* Sprite đoàn cao gốc 30,9cqh; scale = .49 × (footY - 34) / 30,9.
+     Tất cả scale ở hai đường chạy dưới đây đều sinh từ công thức này, không phải
+     chỉnh riêng bằng mắt; đổi footY thì phải tính lại bằng đúng công thức. */
+  0%, 12%  { opacity: 0; transform: translate(-43cqw, -12cqh) scale(.856); filter: saturate(.78); }
   22%      { opacity: .62; }
-  48%      { opacity: .76; transform: translate(23cqw, 47cqh) scale(.61); filter: saturate(.82); }
-  72%      { opacity: .82; transform: translate(51cqw, 39cqh) scale(.49); filter: saturate(.82); }
-  86%      { opacity: .82; transform: translate(58cqw, 37cqh) scale(.46); filter: saturate(.78); }
-  100%     { opacity: .82; transform: translate(4cqw, 39cqh) scale(.45); filter: saturate(.78); }
+  32%      { opacity: .7; transform: translate(12cqw, -18cqh) scale(.761); filter: saturate(.8); }
+  48%      { opacity: .76; transform: translate(68cqw, -36cqh) scale(.475); filter: saturate(.82); }
+  72%      { opacity: .82; transform: translate(71cqw, -46cqh) scale(.317); filter: saturate(.82); }
+  86%      { opacity: .82; transform: translate(74cqw, -50cqh) scale(.254); filter: saturate(.78); }
+  100%     { opacity: .82; transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
 }
 @keyframes gift-procession-front {
-  0%, 20%  { opacity: 0; transform: translate(-55cqw, 69cqh) scale(1.02); }
+  0%, 20%  { opacity: 0; transform: translate(-55cqw, -6cqh) scale(.951); }
   29%      { opacity: .9; }
-  54%      { opacity: .94; transform: translate(17cqw, 61cqh) scale(.76); }
-  76%      { opacity: .9; transform: translate(51cqw, 51cqh) scale(.52); }
-  88%      { opacity: .84; transform: translate(59cqw, 48cqh) scale(.45); }
-  100%     { opacity: .82; transform: translate(43cqw, 50cqh) scale(.42); }
+  36%      { opacity: .92; transform: translate(-5cqw, -10cqh) scale(.888); }
+  54%      { opacity: .94; transform: translate(20cqw, -18cqh) scale(.761); }
+  76%      { opacity: .9; transform: translate(58cqw, -28cqh) scale(.602); }
+  88%      { opacity: .84; transform: translate(66cqw, -34cqh) scale(.507); }
+  100%     { opacity: .82; transform: translate(68cqw, -36cqh) scale(.475); }
 }
 @keyframes gift-march {
-  from { transform: translateY(.7cqh) rotate(-2deg) scaleY(.97); }
-  to   { transform: translateY(-.8cqh) rotate(2deg) scaleY(1.02); }
+  from { transform: translateY(calc(var(--path-lift) + .7cqh)) rotate(-2deg) scale(var(--member-scale)) scaleY(.97); }
+  to   { transform: translateY(calc(var(--path-lift) - .8cqh)) rotate(2deg) scale(var(--member-scale)) scaleY(1.02); }
 }
 @keyframes gift-drummer-step {
-  from { transform: translateY(.8cqh) rotate(-3deg) scale(1.02, .96); }
-  to { transform: translateY(-1cqh) rotate(3deg) scale(.98, 1.04); }
+  from { transform: translateY(calc(var(--path-lift) + .8cqh)) rotate(-3deg) scale(var(--member-scale)) scale(1.02, .96); }
+  to { transform: translateY(calc(var(--path-lift) - 1cqh)) rotate(3deg) scale(var(--member-scale)) scale(.98, 1.04); }
 }
 @keyframes gift-flag-step {
-  from { transform: translateY(.5cqh) rotate(-4deg) skewX(-1deg); }
-  to { transform: translateY(-1cqh) rotate(5deg) skewX(2deg); }
+  from { transform: translateY(calc(var(--path-lift) + .5cqh)) rotate(-4deg) skewX(-1deg) scale(var(--member-scale)); }
+  to { transform: translateY(calc(var(--path-lift) - 1cqh)) rotate(5deg) skewX(2deg) scale(var(--member-scale)); }
 }
 @keyframes gift-cheer-step {
-  from { transform: translateY(.7cqh) rotate(-2deg) scale(.98); }
-  to { transform: translateY(-1.3cqh) rotate(3deg) scale(1.04); }
+  from { transform: translateY(calc(var(--path-lift) + .7cqh)) rotate(-2deg) scale(var(--member-scale)) scale(.98); }
+  to { transform: translateY(calc(var(--path-lift) - 1.3cqh)) rotate(3deg) scale(var(--member-scale)) scale(1.04); }
 }
 @keyframes gift-foreground-pass {
   0%, 27%  { opacity: 0; transform: translate(-35cqw, 0) rotate(-5deg); }
@@ -1845,16 +1873,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   58% { transform: translateY(-4.2cqh) scale(.94, 1.08) rotate(4deg); }
 }
 @keyframes gift-arrival-cheer {
-  from { transform: translateY(.4cqh) rotate(-3deg) scale(.97); }
-  to { transform: translateY(-2.4cqh) rotate(4deg) scale(1.06); }
+  from { transform: translateY(calc(var(--path-lift) + .4cqh)) rotate(-3deg) scale(var(--member-scale)) scale(.97); }
+  to { transform: translateY(calc(var(--path-lift) - 2.4cqh)) rotate(4deg) scale(var(--member-scale)) scale(1.06); }
 }
 @keyframes gift-victory-hop {
   from { transform: translateY(.5cqh) rotate(-2deg) scale(1.04, .96); }
   to { transform: translateY(-4.5cqh) rotate(4deg) scale(.95, 1.07); }
 }
 @keyframes gift-victory-cheer {
-  from { transform: translateY(.5cqh) rotate(-5deg) scale(.96); }
-  to { transform: translateY(-3cqh) rotate(6deg) scale(1.08); }
+  from { transform: translateY(calc(var(--path-lift) + .5cqh)) rotate(-5deg) scale(var(--member-scale)) scale(.96); }
+  to { transform: translateY(calc(var(--path-lift) - 3cqh)) rotate(6deg) scale(var(--member-scale)) scale(1.08); }
 }
 @keyframes gift-firework-burst {
   0% { opacity: 0; transform: rotate(var(--ray-angle)) translateY(0) scale(.25); }
