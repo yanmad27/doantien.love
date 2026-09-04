@@ -233,7 +233,12 @@ Khi `prefers-reduced-motion: reduce`:
   ngay khi đã hỏi — không dùng IntersectionObserver để còn kiểm chứng tự động được.
 - Không hiện nếu khách đã gửi phản hồi (panel `#success` đang có class `.show`).
 - Chỉ hỏi **hai lần**: bấm "không" ở bước 1 thì modal nhảy sang góc khác và nài
-  thêm đúng một câu; bấm "không" lần hai là đóng hẳn, không nài tiếp.
+  thêm đúng một câu; bấm "không" **lần hai** thì **gửi luôn phản hồi là không đến**
+  (điền `attendance = no` rồi submit form thay khách).
+- Trang chung không có sẵn tên nên không gửi thay được: chỉ chọn sẵn "không đến"
+  rồi đưa khách tới form để tự điền tên.
+- Lời cảm ơn sau khi gửi đổi theo câu trả lời — báo không đến mà vẫn đọc "mong
+  được gặp bạn trong ngày vui" thì vô duyên.
 - Bước nào cũng đóng được bằng Esc hoặc bấm ra ngoài — đây là trò đùa, không
   phải cái bẫy.
 - Bấm "có" → đóng modal, chọn sẵn `attendance = yes`, focus ô đó rồi cuộn tới

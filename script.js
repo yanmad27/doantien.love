@@ -281,9 +281,37 @@ if (nudge && typeof nudge.showModal === 'function') {
 
   document.getElementById('nudge-no').addEventListener('click', () => {
     stepIndex += 1
-    if (stepIndex >= NUDGE_STEPS.length) return closeNudge()
+    if (stepIndex >= NUDGE_STEPS.length) return declineForGuest()
     renderNudgeStep(stepIndex)
   })
+
+  /* Nói "không" tới lần thứ hai thì gửi luôn phản hồi là không đến — khách đã
+     trả lời rồi, bắt họ cuộn xuống điền lại y hệt là thừa. */
+  function declineForGuest() {
+    closeNudge()
+    const attendance = document.querySelector('#rsvp-form [name="attendance"]')
+    const nameField = document.querySelector('#rsvp-form [name="name"]')
+    const rsvpForm = document.getElementById('rsvp-form')
+    if (!attendance || !nameField || !rsvpForm) return
+    attendance.value = 'no'
+    /* Hoãn 60ms chứ không phải 0: <dialog> đóng xong trình duyệt mới trả focus về
+       phần tử trước đó, và cú trả focus đó xảy ra SAU một vòng lặp sự kiện — đặt
+       focus ở nhịp 0 là bị nó ghi đè, con trỏ rơi về <body>. */
+    window.setTimeout(() => {
+      /* Không có tên thì không gửi thay được — trang chung không điền sẵn tên.
+         Đưa khách tới ô tên thay vì bắn ra lỗi đỏ mà họ không hiểu vì sao. */
+      if (!nameField.value.trim()) {
+        // focus TRƯỚC rồi mới cuộn, giống nhánh nút "có" — làm ngược lại thì cú
+        // cuộn nuốt mất focus và con trỏ không vào ô tên
+        nameField.focus({ preventScroll: true })
+        document.getElementById('rsvp').scrollIntoView({
+          behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'start',
+        })
+        return
+      }
+      rsvpForm.requestSubmit()
+    }, 60)
+  }
 
   document.getElementById('nudge-yes').addEventListener('click', () => {
     closeNudge()
@@ -785,6 +813,14 @@ form.addEventListener('submit', (event) => {
   sendRsvp(buildPayload())
     .then(() => {
       form.hidden = true
+      // Khách vừa báo không đến mà vẫn đọc "mong được gặp bạn trong ngày vui"
+      // thì vô duyên — đổi lời theo đúng câu trả lời.
+      const line = success.querySelector('p')
+      if (line) {
+        line.textContent = form.elements.attendance.value === 'no'
+          ? 'Chúng mình đã ghi nhận. Tiếc là lần này chưa gặp được bạn, hẹn bạn dịp khác nhé.'
+          : 'Chúng mình đã ghi nhận phản hồi và mong được gặp bạn trong ngày vui.'
+      }
       success.classList.add('show')
       success.focus()
     })
