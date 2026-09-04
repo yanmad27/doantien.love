@@ -730,10 +730,23 @@ function validate() {
 const guest = {
   name: document.body.dataset.guestName || '',
   code: document.body.dataset.guestCode || '',
+  seats: Number(document.body.dataset.guestSeats) || 0,
 }
 
 if (guest.name && !form.elements.name.value) {
   form.elements.name.value = guest.name
+}
+
+/* Điền sẵn số người theo số chỗ chủ thiệp đã mời cho khách này.
+   Ô chọn chỉ có sẵn 1–4 vì đa số khách đi lẻ; mời cả nhà đông hơn thì sinh thêm
+   lựa chọn cho vừa, chứ không im lặng cắt xuống 4 rồi để chủ thiệp thiếu mâm. */
+if (guest.seats > 0) {
+  const select = form.elements.guests
+  const max = Math.max(guest.seats, select.options.length)
+  for (let n = select.options.length + 1; n <= max; n += 1) {
+    select.add(new Option(`${n} người`, String(n)))
+  }
+  select.value = String(guest.seats)
 }
 
 function buildPayload() {

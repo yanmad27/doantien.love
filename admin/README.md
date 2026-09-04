@@ -20,6 +20,20 @@ Crawler của Zalo/Messenger/Facebook không chạy JS. Muốn preview khi share
 đúng tên người nhận thì tên phải nằm sẵn trong HTML. Render tại server đạt được
 điều đó **và** thêm khách là link sống ngay, không cần deploy lại.
 
+## Số lượng khách mời
+
+Mỗi khách có trường **Số lượng** (`seats`, 1–20, mặc định 1) = số chỗ mời cho
+khách đó.
+
+- Cột "Số lượng" trong bảng danh sách, sửa được qua nút **Sửa**.
+- Thẻ thống kê **Tổng chỗ mời** cộng dồn cả danh sách, để ước lượng số mâm.
+- Thiệp riêng nhúng số này vào `<body data-guest-seats>`; form xác nhận **tự
+  chọn sẵn** đúng số người, khách chỉ việc bấm gửi.
+- Ô chọn trên thiệp vốn chỉ có 1–4. Khách được mời đông hơn thì thiệp tự sinh
+  thêm lựa chọn cho đủ, chứ không im lặng cắt xuống 4.
+- "Thêm nhiều cùng lúc" luôn đặt 1 — sửa lại từng khách sau. Không đọc số từ
+  dòng nhập vì tên có thể chứa dấu phẩy, tách nhầm là hỏng tên.
+
 ## Dữ liệu
 
 Một file JSON ở `/data/guests.json`, nằm trên Docker volume `quanly-data`.

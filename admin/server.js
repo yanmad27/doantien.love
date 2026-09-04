@@ -57,7 +57,7 @@ function parseSeedCsv() {
     const [code, title, ...rest] = row.split(',')
     const name = rest.join(',').trim()
     if (code?.trim() && name) {
-      out.push({ code: code.trim(), title: (title || '').trim(), name, note: '', createdAt: new Date().toISOString() })
+      out.push({ code: code.trim(), title: (title || '').trim(), name, seats: 1, note: '', createdAt: new Date().toISOString() })
     }
   }
   return out
@@ -158,6 +158,13 @@ function fullName(g) {
   return `${g.title || ''} ${g.name}`.trim()
 }
 
+/* Số chỗ mời cho một khách. Trần 20 cho khớp với giới hạn của API nhận RSVP —
+   để lệch nhau thì auto-fill điền được một số mà form gửi lên lại bị cắt. */
+function seatsOf(value, fallback = 1) {
+  const n = Math.floor(Number(value))
+  return Number.isFinite(n) ? Math.min(Math.max(n, 1), 20) : fallback
+}
+
 function renderInvitation(guest) {
   const who = escapeHtml(fullName(guest))
   const code = escapeHtml(guest.code)
@@ -173,7 +180,8 @@ function renderInvitation(guest) {
   must('<!--GUEST_COVER-->', `<p class="guest-cover">Thân mời <b>${who}</b></p>`, 'GUEST_COVER')
   must('<!--GUEST_HERO-->', `<p class="guest-hero">${who}</p>`, 'GUEST_HERO')
   must('<body class="is-closed">',
-    `<body class="is-closed" data-guest-name="${who}" data-guest-code="${code}">`, 'thẻ body')
+    `<body class="is-closed" data-guest-name="${who}" data-guest-code="${code}"`
+    + ` data-guest-seats="${seatsOf(guest.seats)}">`, 'thẻ body')
 
   // thiệp nằm ở /t/<mã>/ nên đường dẫn tương đối ./ phải thành tuyệt đối /
   doc = doc.replaceAll('"./', '"/')
@@ -355,6 +363,7 @@ const server = http.createServer(async (req, res) => {
           code: newCode(),
           title: String(body.title || '').trim().slice(0, 40),
           name,
+          seats: seatsOf(body.seats),
           note: String(body.note || '').trim().slice(0, 200),
           createdAt: new Date().toISOString(),
         }
@@ -374,7 +383,7 @@ const server = http.createServer(async (req, res) => {
           const title = parts.length > 1 ? parts[0].trim().slice(0, 40) : ''
           const name = (parts.length > 1 ? parts.slice(1).join(',') : line).trim().slice(0, 120)
           if (!name) continue
-          const guest = { code: newCode(), title, name, note: '', createdAt: new Date().toISOString() }
+          const guest = { code: newCode(), title, name, seats: 1, note: '', createdAt: new Date().toISOString() }
           db.guests.push(guest)
           added.push(guest)
         }
@@ -406,6 +415,7 @@ const server = http.createServer(async (req, res) => {
           if (body.name !== undefined) guest.name = String(body.name).trim().slice(0, 120) || guest.name
           if (body.title !== undefined) guest.title = String(body.title).trim().slice(0, 40)
           if (body.note !== undefined) guest.note = String(body.note).trim().slice(0, 200)
+          if (body.seats !== undefined) guest.seats = seatsOf(body.seats, guest.seats || 1)
           await saveDb()
           return json(res, 200, guest)
         }
