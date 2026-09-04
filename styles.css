@@ -1176,6 +1176,79 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gift-action { display: grid; justify-items: center; }
 .gift-microcopy { margin: .8rem 0 0; color: var(--ink-soft); font-family: var(--serif); font-size: .95rem; font-style: italic; }
 
+/* Sân khấu chính còn [hidden] trước khi bấm, nên cố nhét chuyển động idle vào đó
+   sẽ không vẽ được một khung nào. Tiểu cảnh nhẹ này dùng lại đúng hai ảnh đã tải,
+   không thêm asset chỉ để làm nút trông sống hơn. */
+.gift-idle-party {
+  position: relative;
+  width: 176px;
+  height: 86px;
+  margin: 0 auto .65rem;
+}
+.gift-idle-rider {
+  position: absolute;
+  z-index: 2;
+  left: 55px;
+  bottom: 0;
+  display: block;
+  width: 74px;
+  transform-origin: 50% 88%;
+}
+.gift-idle-rider img { display: block; width: 100%; height: auto; }
+.gift-idle-drummer {
+  position: absolute;
+  left: 14px;
+  bottom: 2px;
+  width: 35px;
+  aspect-ratio: 1 / 2;
+  background: url("./assets/gift-procession-sprites.webp") 0 0 / 400% 100% no-repeat;
+  transform-origin: 50% 90%;
+}
+.gift-idle-flag {
+  position: absolute;
+  right: 15px;
+  bottom: 7px;
+  width: 3px;
+  height: 58px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--gold) 75%, #7a5936);
+  transform-origin: 50% 100%;
+}
+.gift-idle-flag::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  width: 30px;
+  height: 22px;
+  background: color-mix(in srgb, var(--peach) 85%, transparent);
+  clip-path: polygon(0 0, 100% 30%, 0 100%);
+}
+.gift-idle-notes { position: absolute; inset: 0; pointer-events: none; }
+.gift-idle-notes i {
+  position: absolute;
+  left: 43px;
+  top: 18px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--peach-ink);
+  opacity: 0;
+}
+.gift-idle-notes i::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  bottom: 3px;
+  width: 2px;
+  height: 13px;
+  border-radius: 2px;
+  background: inherit;
+  transform: rotate(-8deg);
+}
+.gift-idle-notes i:nth-child(2) { left: 137px; top: 7px; background: var(--gold-ink); transform: scale(.78); }
+.gift-idle-notes i:nth-child(3) { left: 31px; top: 2px; background: var(--peach); transform: scale(.62); }
+
 /* Tới nơi rồi thì đổi màu tiêu đề thay vì đổi chữ: đổi chữ ngay cạnh một vùng
    aria-live là thêm một nguồn đọc nữa, mà màu cũng đã đủ báo "xong chuyến". */
 #gift-shell[data-phase="arrived"] .gift-title,
@@ -1223,9 +1296,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .gift-procession-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
-/* Đám đông xa mà dùng lại nguyên sprite có nét mặt sẽ biến lớp nền thành một
-   hàng sticker sắc cạnh. Các bóng thưa này cố ý chỉ còn đầu và áo, lại được làm
-   mềm bằng filter để mắt đọc chúng như một lớp màu nước ở xa. */
+/* Lớp xa vẫn dùng tranh màu nước thật, nhưng hạ tương phản và làm mềm cả cụm.
+   Bản cũ ghép đầu tròn + thân bo bằng CSS thành sáu "viên thuốc" xám, nổi bật
+   đúng theo nghĩa placeholder và phá chất giấy của toàn khung. */
 .gift-crowd-far {
   position: absolute;
   z-index: 1;
@@ -1233,34 +1306,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   top: 0;
   display: flex;
   align-items: end;
-  gap: 1.7cqw;
-  width: 31cqw;
-  height: 18cqh;
+  gap: .15cqw;
+  width: 35cqw;
+  height: 23cqh;
   opacity: 0;
-  filter: blur(.35px) saturate(.72);
+  filter: blur(.55px) saturate(.48) sepia(.16);
+  mix-blend-mode: multiply;
   transform: translate(-36cqw, 43cqh) scale(.72);
 }
 .gift-crowd-far i {
-  position: relative;
   display: block;
-  width: 3.7cqw;
-  height: 8cqh;
-  border-radius: 55% 55% 30% 30%;
-  background: color-mix(in srgb, var(--peach) 66%, #a4a77a);
+  flex: 0 0 5.5cqw;
+  aspect-ratio: 1 / 2;
+  background-image: url("./assets/gift-procession-sprites.webp");
+  background-repeat: no-repeat;
+  background-size: 400% 100%;
+  transform-origin: 50% 90%;
 }
-.gift-crowd-far i::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: -2.6cqh;
-  width: 3.2cqw;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: inherit;
-  transform: translateX(-50%);
-}
-.gift-crowd-far i:nth-child(2n) { height: 10cqh; background: color-mix(in srgb, var(--gold) 55%, #969c73); }
-.gift-crowd-far i:nth-child(3n) { transform: scale(.82); transform-origin: bottom; }
+.gift-crowd-far i:nth-child(4n + 1) { background-position: 0 0; }
+.gift-crowd-far i:nth-child(4n + 2) { background-position: 33.333% 0; }
+.gift-crowd-far i:nth-child(4n + 3) { background-position: 66.666% 0; }
+.gift-crowd-far i:nth-child(4n) { background-position: 100% 0; }
+.gift-crowd-far i:nth-child(2) { flex-basis: 4.8cqw; }
+.gift-crowd-far i:nth-child(3n) { flex-basis: 5cqw; }
 
 .gift-procession {
   position: absolute;
@@ -1315,6 +1383,83 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: rgba(137, 145, 91, .42);
   box-shadow: 6cqw -2cqh 0 rgba(218, 119, 105, .28);
 }
+
+.gift-road-magic,
+.gift-road-dust,
+.gift-fireworks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gift-road-magic { z-index: 3; }
+.gift-road-magic i {
+  position: absolute;
+  display: block;
+  opacity: 0;
+  color: var(--peach-ink);
+  font-family: var(--serif);
+  font-style: normal;
+  line-height: 1;
+}
+.gift-road-magic i::before { display: block; }
+.gift-road-heart::before { content: "♥"; font-size: 2.6cqw; }
+.gift-road-note::before { content: "♪"; color: var(--gold-ink); font-size: 3.2cqw; }
+.gift-road-magic i:nth-child(1) { left: 17cqw; top: 68cqh; }
+.gift-road-magic i:nth-child(2) { left: 27cqw; top: 58cqh; }
+.gift-road-magic i:nth-child(3) { left: 43cqw; top: 60cqh; }
+.gift-road-magic i:nth-child(4) { left: 51cqw; top: 48cqh; }
+.gift-road-magic i:nth-child(5) { left: 64cqw; top: 46cqh; }
+.gift-road-magic i:nth-child(6) { left: 72cqw; top: 36cqh; }
+
+.gift-road-dust { z-index: 3; }
+.gift-road-dust i {
+  position: absolute;
+  display: block;
+  width: 4.5cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(203, 169, 123, .26);
+  opacity: 0;
+  filter: blur(.5px);
+}
+.gift-road-dust i:nth-child(1) { left: 9cqw; top: 76cqh; }
+.gift-road-dust i:nth-child(2) { left: 31cqw; top: 68cqh; }
+.gift-road-dust i:nth-child(3) { left: 53cqw; top: 57cqh; }
+.gift-road-dust i:nth-child(4) { left: 69cqw; top: 44cqh; }
+
+/* Mỗi chùm chỉ có tám tia. Hạt tự chạy bằng transform/opacity; không dùng ảnh
+   chuỗi khung hình, canvas hay box-shadow đổi từng frame — ba cách đó hoặc nặng
+   băng thông, hoặc buộc CPU vẽ lại cả khung trên Android phổ thông. */
+.gift-fireworks { z-index: 5; opacity: 0; overflow: hidden; }
+.gift-firework {
+  position: absolute;
+  display: block;
+  width: 1px;
+  height: 1px;
+}
+.gift-firework:nth-child(1) { left: 18cqw; top: 23cqh; --burst-delay: 0ms; --spark: var(--peach-ink); }
+.gift-firework:nth-child(2) { left: 49cqw; top: 15cqh; --burst-delay: 180ms; --spark: var(--gold); }
+.gift-firework:nth-child(3) { left: 78cqw; top: 25cqh; --burst-delay: 340ms; --spark: var(--peach); }
+.gift-firework i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: .9cqw;
+  aspect-ratio: 1;
+  border-radius: 50% 50% 42% 58%;
+  background: var(--spark);
+  opacity: 0;
+  transform: rotate(var(--ray-angle)) translateY(0) scale(.35);
+}
+.gift-firework i:nth-child(1) { --ray-angle: 0deg; --ray-delay: 0ms; }
+.gift-firework i:nth-child(2) { --ray-angle: 45deg; --ray-delay: 18ms; }
+.gift-firework i:nth-child(3) { --ray-angle: 90deg; --ray-delay: 36ms; }
+.gift-firework i:nth-child(4) { --ray-angle: 135deg; --ray-delay: 54ms; }
+.gift-firework i:nth-child(5) { --ray-angle: 180deg; --ray-delay: 72ms; }
+.gift-firework i:nth-child(6) { --ray-angle: 225deg; --ray-delay: 90ms; }
+.gift-firework i:nth-child(7) { --ray-angle: 270deg; --ray-delay: 108ms; }
+.gift-firework i:nth-child(8) { --ray-angle: 315deg; --ray-delay: 126ms; }
 
 .gift-rider-track {
   position: absolute;

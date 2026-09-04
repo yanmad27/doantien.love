@@ -251,6 +251,15 @@
           <!-- Ẩn cả khối chứ không riêng cái nút: dòng giới thiệu Bé nằm ngay dưới
                nút, để lại một mình nó sau khi bấm thì thành câu nói trống không. -->
           <div class="gift-action" id="gift-action">
+            <div class="gift-idle-party" aria-hidden="true">
+              <span class="gift-idle-drummer"></span>
+              <span class="gift-idle-rider">
+                <img src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                     loading="lazy" decoding="async" alt="">
+              </span>
+              <span class="gift-idle-flag"></span>
+              <span class="gift-idle-notes"><i></i><i></i><i></i></span>
+            </div>
             <button class="button gift-open" id="gift-open" type="button">Gọi Bé Phong Bì</button>
             <p class="gift-microcopy">Bé chỉ định đi một mình thôi. Ít nhất Bé nghĩ vậy.</p>
           </div>
@@ -262,12 +271,19 @@
             <div class="gift-scene" aria-hidden="true">
               <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
                    loading="lazy" decoding="async" alt="">
-              <!-- Đoàn xa chỉ là mảng màu dựng bằng CSS: nếu dùng luôn người có
-                   đủ mắt mũi ở lớp này thì khung 390px đặc kín chi tiết, Bé mất
-                   vai chính trước khi đoàn rước kịp nhập hội. -->
+              <!-- Dùng lại sprite màu nước rồi làm mềm cả lớp thay cho mấy khối
+                   bo tròn tự vẽ: khối phẳng ở xa nhìn như placeholder chưa xong,
+                   nhưng giữ nguyên nét mặt sắc ở cỡ này lại làm khung 390px rối. -->
               <div class="gift-crowd-far">
                 <i></i><i></i><i></i><i></i><i></i><i></i>
               </div>
+
+              <div class="gift-road-magic">
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+              </div>
+              <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
 
               <!-- Một sprite sheet được cắt lại ở nhiều ô và đổi tỉ lệ/lật/ngắt
                    nhịp. Tách mỗi người thành một file sẽ làm 4G phải mở nhiều kết
@@ -288,6 +304,14 @@
               </div>
               <div class="gift-foreground">
                 <i></i><i></i><i></i>
+              </div>
+              <!-- Pháo hoa bị nhốt trong chính khung tranh, không phủ .gift-stage:
+                   ở arrived mã QR nằm ở hàng dưới nên camera không bao giờ phải
+                   nhìn xuyên qua hạt; received thì QR đã được thay bằng cảm ơn. -->
+              <div class="gift-fireworks">
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
               </div>
               <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
                    sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
