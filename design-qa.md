@@ -442,3 +442,76 @@ chữ trong chú thích. Toàn bộ logic mừng cưới không bị đụng.
   camera phóng sẵn (dolly chỉ dùng `%` và số không đơn vị, không dùng `cq`), Bé bị
   `@supports` giấu đi. Chưa dựng được môi trường để đo thật.
 - Chưa chạy Lighthouse, chưa chạy Firefox/Safari, chưa đo lại fps sau thay đổi.
+
+## 15. Vòng 10 — bỏ cận cảnh, pháo hoa nổ ra mã QR ở khoảng trời trống
+
+- **Ngày QA:** 05.09.2026
+- **Trình duyệt:** Google Chrome headless (CDP)
+- **Viewport:** 320 / 390 / 1280px, thêm một lượt `prefers-reduced-motion: reduce`
+
+### Vì sao bỏ cú phóng cận cảnh của §14
+
+Chủ thiệp xem bản đang chạy thật và chỉ ra: *"góc trên trong hình bị trống, làm
+pháo hoa hiện QR đi; còn người di chuyển thì bỏ hiệu ứng mờ mờ đi, 9 người di
+chuyển nhỏ dần là được."*
+
+Cú dolly ở §14 giải quyết đúng "QR trong hình" nhưng bằng cách **bỏ toàn cảnh** —
+kết chuyến chỉ còn thấy cổng, mất con đường và cả đoàn người. Hướng mới giữ nguyên
+toàn cảnh và dùng chính khoảng trời trống góc trên–trái làm chỗ đặt mã, lấy pháo
+hoa làm cái cớ để mắt nhìn sang. Đổi lại tranh không bị phóng to nên **không còn
+vấn đề nở ảnh** (§14 phải cân `--dolly` theo bề rộng khung để giữ nét).
+
+Toàn bộ lớp `.gift-camera`, `@keyframes gift-dolly` và `gift-actor-exit` đã gỡ.
+
+### Đổi gì
+
+| | Trước (§14) | Sau |
+|---|---|---|
+| Khung cuối | cận cảnh cổng, dolly 2,7–3,9× | giữ toàn cảnh, không phóng |
+| Chỗ đặt QR | trên tấm bảng của cổng | khoảng trời trống góc trên–trái |
+| Cách QR hiện | mờ dần sau 0,12s | **pháo hoa nổ trước, mã hiện sau 0,34s** |
+| Đoàn người | 12 người, 3 cụm, lớp xa bị `saturate(.78)` | **9 người một hàng, không lọc gì** |
+| Chiều sâu | một phần do làm mềm lớp xa | hoàn toàn do cỡ người (1,00 → 0,31) |
+
+Vị trí và cỡ 9 người suy từ tâm đường đo ở §11 và `h = 0,49 × (chân y − 34)`, nên
+ai cũng đứng đúng mặt đường ở mọi bề rộng — không phải media query nào.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` |
+| Cỡ mã QR | 141px | 161px | 230px |
+| Mã nằm trọn trong khung tranh | ✅ | ✅ | ✅ |
+| Số người | 9 | 9 | 9 |
+| Cao người, gần → xa (px) | — | 51→16 | 89→28 |
+| `filter` trên người | `none` | `none` | `none` |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+| `received`: mã tắt, lời cảm ơn hiện | ✅ | ✅ | ✅ |
+
+**Reduced motion:** vào thẳng `arrived`, `getAnimations()` trong `#gift` đếm **0
+animation đang chạy**, mã `opacity: 1` ngay, 0 tràn ngang, 0 lỗi JS.
+
+**Trợ năng:** mã QR **không** nằm trong nhánh `aria-hidden`, `#gift` vẫn đúng
+**một** vùng `aria-live`.
+
+**Hai cái bẫy gặp khi dựng:**
+
+1. `gift-arrival-cheer` / `gift-victory-cheer` chuyển từ `.gift-marcher` sang
+   `.gift-crowd i` mà quên mở đầu bằng `translateX(-50%) scaleX(var(--flip))`.
+   `transform` ghi đè cả chuỗi nên cả chín người nhảy sang phải nửa thân đúng lúc
+   reo mừng. Đã thêm lại vào cả hai keyframes.
+2. Ba chùm pháo hoa đặt ở tâm mã thì bị chính mã che (mã có `z-index` cao hơn).
+   Đã dời ra **mép** mã để tia toả ra ngoài. Giữ nguyên thứ tự chồng: hạt không
+   bao giờ được nằm trên mặt mã, camera điện thoại sẽ đọc hụt.
+
+**Cỡ mã ở 320px:** `41vw` thuần cho ra 132px (~23mm máy thật), quét phập phù. Đã
+thêm sàn `max(140px, …)` → 141px. Trong khung 280×187 là 75% chiều cao, chật
+nhưng vẫn hở mép trên.
+
+### Chưa kiểm được
+
+- **Chưa quét bằng camera thật.** Đây là việc cần làm trước tiên, nhất là ở 320px.
+- **Thiệp riêng `/t/<mã>`:** chưa dựng app quanly ở máy.
+- Chưa iOS Safari / Android thật, chưa Firefox/Safari, chưa Lighthouse, chưa đo lại fps.

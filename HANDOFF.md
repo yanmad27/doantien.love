@@ -255,35 +255,40 @@ Khi `prefers-reduced-motion: reduce`:
 - Bấm nút → Bé Phong Bì lên đường, bị một đoàn rước nhập hội, đi hết 4,8 giây
   (`RIDE_MS` / `RIDE_STEPS` trong `script.js`, phải khớp `@keyframes gift-ride`)
   rồi QR mới hiện.
-- **Máy quay tiến tới cổng, không phải Bé chạy ra xa.** Lớp `.gift-camera` bọc mọi
-  thứ vẽ trong tranh và phóng dần về tâm tấm bảng trên cổng cưới
-  (`transform-origin: 83% 28.5%`, đo trên chính `gift-journey-scene.webp`). Kết
-  chuyến là cận cảnh cổng — "Doãn & Tiên ở gần" chứ không còn là một cái cổng bé
-  tí ở cuối đường.
-  - Dolly dồn về **1/3 cuối** chuyến. Đẩy đều từ giây đầu thì Bé bị kéo văng khỏi
-    khung ngay giữa đường: đường đi nằm ở tiền cảnh dưới–trái còn tâm phóng ở
-    trên–phải, chỉ cần phóng 2,45 lần là Bé đã ra tới −29%.
-  - Ngang kéo **−27%**, không phải −33% (mức căn giữa hoàn hảo): tâm phóng sát mép
-    phải nên kéo đủ 33% sẽ **hở một vệt giấy dọc mép phải** ở mức dolly desktop.
-  - `--dolly` mobile **3.9**, desktop **2.7**. Ngược đời nhưng đúng: độ nở của ảnh
-    nền là (bề rộng khung × dolly) / 1120px, mà khung desktop rộng gấp rưỡi.
-  - Pháo hoa và hoa giấy nằm **ngoài** `.gift-camera` — chúng là hiệu ứng trên ống
-    kính. Để trong thì dolly kéo chúng đi và hai trong ba chùm pháo hoa văng khỏi
-    khung đúng lúc cao trào.
-  - Bé và đoàn rước **mờ hẳn** ở 18% cuối (`gift-actor-exit`). Theo phối cảnh họ
-    nằm lại phía sau ống kính; giữ lại chỉ được một mẩu sprite dính mép dưới.
-- **QR nằm TRONG tranh**, treo lên tấm bảng của cổng — không còn đặt dưới khung.
+- **Đoàn đi trên đường: 9 người, nhỏ dần theo phối cảnh.** Một lớp `.gift-crowd`
+  duy nhất thay cho ba cụm rời của bản trước (6 xa + 3 sau + 3 trước).
+  - Toạ độ chân và chiều cao suy từ tâm đường đo ở `design-qa.md` §11 và công thức
+    `h = 0,49 × (chân y − 34)`, nên ai cũng đứng đúng mặt đường ở mọi bề rộng.
+    Cỡ giảm đều **1,00 → 0,31** từ người gần nhất tới người xa nhất.
+  - **Không còn lớp làm mềm / giảm bão hoà** nào. Bản trước phải `filter:
+    saturate(.78)` lớp xa để giả chiều sâu; giờ chiều sâu đến từ chính cỡ người.
+  - Ô sprite 250×500 nên rộng = nửa cao. Cao tính bằng `cqh`, rộng phải đổi sang
+    `cqw`: khung 3:2 nên `1cqh = 2/3 cqw`, thành ra `rộng = --h / 3 cqw`. Sai chỗ
+    này thì người bị bóp ngang ở mọi màn hình mà nhìn qua rất khó nhận ra.
+  - `gift-arrival-cheer` / `gift-victory-cheer` phải mở đầu bằng
+    `translateX(-50%) scaleX(var(--flip))` giống transform gốc — `transform` ghi
+    đè cả chuỗi, thiếu hai phép đó là cả chín người nhảy sang phải nửa thân đúng
+    lúc reo mừng.
+- **QR nằm TRONG tranh, ở khoảng trời trống góc trên–trái** — không còn đặt dưới
+  khung, và **không** dùng cú phóng cận cảnh (đã thử ở bản trước, xem §14).
+  - Pháo hoa nổ ở chính chỗ đó rồi mã QR hiện ra sau **0,34s**. Vùng ấy vốn trống
+    trơn: vừa là chỗ duy nhất đủ rộng để đặt mã, vừa cần một cái cớ để mắt nhìn sang.
+  - Ba chùm đặt ở **mép** mã nên tia toả ra ngoài. Mã có `z-index` cao hơn lớp
+    pháo hoa nên phần tia chạy vào giữa bị mã che — cố ý: hạt nằm trên mặt mã là
+    camera điện thoại đọc hụt.
   - Ảnh QR (`.gift-qr-code`) là con của `.gift-frame`, **không** nằm trong
     `.gift-scene`: scene mang `aria-hidden` nên để vào trong là trình đọc màn hình
     mất sạch phần mừng cưới. Nhìn thì trong tranh, cấu trúc thì ngoài.
   - Hiện/ẩn theo `data-phase` bằng CSS, không cần JS gắn/gỡ.
-  - Cỡ mã **cố tình lớn hơn** mặt giấy vẽ trong tranh, đọc như tấm biển treo lên
-    cổng. Nhét vừa khít mép bảng thì phải phóng gấp đôi nữa và ảnh nền nát.
-    Quét được quan trọng hơn bố cục đẹp.
+  - Cỡ mã: `min(230px, max(140px, 41vw))`. Vùng trống thật sự (x 2–68%, y 3–40%)
+    chỉ cao 86px trên khung mobile 350×233 — nhét vừa khít vào đó thì mã còn ~80px
+    và không quét nổi. Nên mã lấn xuống phần đường nét đứt mờ: hộp dùng được là
+    **x 22–68%, y 3–70%**. `max(140px, …)` là sàn cho màn 320px. Quét được quan
+    trọng hơn bố cục đẹp.
   - Lời chú vẫn ở **dưới** khung, trên nền giấy phẳng — chữ đè lên tranh màu nước
     không bao giờ chứng minh nổi đủ tương phản (bài học vòng 7, design-qa §12).
-- Bật `prefers-reduced-motion` thì bỏ màn diễn, vào thẳng cận cảnh cổng và hiện QR
-  luôn — dolly ở `arrived` là transform tĩnh nên không có tí chuyển động nào.
+- Bật `prefers-reduced-motion` thì bỏ màn diễn, vào thẳng chặng `arrived` và hiện
+  QR luôn — đã đo `getAnimations()` trong `#gift` đếm 0 animation đang chạy.
 - Ảnh QR:
   - Thiệp chung dùng `assets/qr-mung-cuoi.png` — QR tĩnh, không mang mã ai cả.
   - Thiệp riêng `/t/<mã>` được app quanly thay bằng ảnh từ `qr.sepay.vn/img`,

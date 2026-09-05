@@ -1107,10 +1107,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .gift-idle-flag,
   .gift-rider-track,
   .gift-rider,
-  .gift-crowd-far,
-  .gift-crowd-far i,
-  .gift-procession,
-  .gift-marcher,
+  .gift-crowd,
+  .gift-crowd i,
   .gift-title,
   .gift-qr,
   .gift-thanks,
@@ -1324,33 +1322,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   border-radius: 14px;
 }
 
-/* Máy quay: thay vì Bé chạy xa dần về phía cổng bé tí, cả cảnh tiến tới cổng cho
-   tới khi cổng cưới ở ngay trước mặt.
-   transform-origin đặt đúng tâm mặt giấy trên cổng — đo trên chính
-   gift-journey-scene.webp: mặt giấy nằm trong khoảng x 76,5–89%, y 21–36%,
-   tâm (83%, 28,5%). Phóng quanh điểm đó thì nó đứng yên tại chỗ, rồi translate
-   kéo nó về giữa khung.
-
-   Ngang dùng −27% chứ KHÔNG phải −33% (mức đưa tấm bảng vào đúng chính giữa).
-   Tâm phóng nằm sát mép phải, nên kéo đủ 33% thì mép phải bức tranh chỉ tới 95,9%
-   khung ở mức dolly desktop 2,7 — hở một vệt giấy trắng dọc mép phải. Ngưỡng phủ
-   kín là 17×(1−dolly) = −28,9%, nên −27% an toàn cho cả hai mức dolly. Đổi lại
-   tấm bảng dừng ở 56% ngang thay vì 50%, và .gift-qr-code canh theo đúng 56% đó.
-   Dọc thì +21,5% = (50 − 28,5) vì mép trên/dưới đều thừa sẵn.
-
-   --dolly để mobile phóng SÂU HƠN desktop, nghe ngược nhưng đúng: mức nở của ảnh
-   nền là (bề rộng khung × dolly) / 1120px ảnh gốc. Khung mobile ~350px nên 3,9 lần
-   mới chạm 1,22× — còn nét; khung desktop 560px mà phóng bằng đó thì thành 1,95×
-   và tranh màu nước nhoè hẳn. */
-.gift-camera {
-  position: absolute;
-  inset: 0;
-  --dolly: 3.9;
-  transform-origin: 83% 28.5%;
-}
-@media (min-width: 641px) {
-  .gift-camera { --dolly: 2.7; }
-}
 .gift-scene-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 /* Hai tấm biển theo đúng hệ tọa độ của ảnh, nên object-fit có crop thì chữ cũng
@@ -1444,88 +1415,37 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .gift-procession-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
-/* Lớp xa vẫn dùng tranh màu nước thật, nhưng hạ tương phản và làm mềm cả cụm.
-   Bản cũ ghép đầu tròn + thân bo bằng CSS thành sáu "viên thuốc" xám, nổi bật
-   đúng theo nghĩa placeholder và phá chất giấy của toàn khung. */
-.gift-crowd-far {
-  position: absolute;
-  z-index: 1;
-  left: 0;
-  bottom: 0;
-  display: flex;
-  align-items: end;
-  gap: .15cqw;
-  width: 35cqw;
-  height: 16.5cqh;
-  opacity: 0;
-  filter: blur(.55px) saturate(.48) sepia(.16);
-  mix-blend-mode: multiply;
-  transform: translate(-36cqw, -17cqh) scale(1.455);
-  transform-origin: left bottom;
-}
-.gift-crowd-far i {
-  display: block;
-  flex: 0 0 5.5cqw;
-  aspect-ratio: 1 / 2;
-  background-image: url("./assets/gift-procession-sprites.webp");
-  background-repeat: no-repeat;
-  background-size: 400% 100%;
-  transform-origin: 50% 100%;
-  --path-lift: 0cqh;
-  --member-scale: 1;
-  transform: translateY(var(--path-lift)) scale(var(--member-scale));
-}
-.gift-crowd-far i:nth-child(4n + 1) { background-position: 0 0; }
-.gift-crowd-far i:nth-child(4n + 2) { background-position: 33.333% 0; }
-.gift-crowd-far i:nth-child(4n + 3) { background-position: 66.666% 0; }
-.gift-crowd-far i:nth-child(4n) { background-position: 100% 0; }
-/* Sáu người mà giữ nguyên tổng bề rộng sẽ giăng ngang gần hết đoạn đường hẹp ở
-   sát cổng. Chồng nhẹ vai ở lớp xa để tâm cụm bám đường cong, không kéo hai đầu
-   sang lại vùng giấy trắng. */
-.gift-crowd-far i + i { margin-left: -1.6cqw; }
-.gift-crowd-far i:nth-child(2) { --path-lift: -1.8cqh; --member-scale: .93; }
-.gift-crowd-far i:nth-child(3) { --path-lift: -3.8cqh; --member-scale: .88; }
-.gift-crowd-far i:nth-child(4) { --path-lift: -5.4cqh; --member-scale: .83; }
-.gift-crowd-far i:nth-child(5) { --path-lift: -7cqh; --member-scale: .8; }
-.gift-crowd-far i:nth-child(6) { --path-lift: -8.4cqh; --member-scale: .76; }
+/* Chín người trên đường, nhỏ dần theo phối cảnh.
+   Bản trước chia ba cụm (6 xa + 3 sau + 3 trước) và phải làm mềm/giảm bão hoà lớp
+   xa để giả chiều sâu. Bỏ hẳn phần làm mềm đó: chiều sâu bây giờ đến từ chính cỡ
+   người, mà cỡ người thì suy thẳng từ số đo đường ở design-qa §11 —
+   h = 0,49 × (chân y − 34). Nhờ vậy ai cũng đứng đúng mặt đường ở mọi bề rộng.
 
-.gift-procession {
+   Ô sprite là 250×500 nên rộng = nửa cao. Cao tính bằng cqh, rộng phải đổi sang
+   cqw: khung 3:2 nên 1cqh = 2/3 cqw, thành ra rộng = --h × 0,5 × 2/3 = --h/3 cqw.
+   Sai chỗ này thì người bị bóp ngang ở mọi màn hình mà nhìn qua rất khó nhận ra. */
+.gift-crowd { position: absolute; inset: 0; z-index: 2; }
+.gift-crowd i {
   position: absolute;
-  z-index: 2;
-  left: 0;
-  bottom: 0;
-  display: flex;
-  align-items: end;
-  gap: .4cqw;
-  width: 32cqw;
-  height: 30.9cqh;
-  opacity: 0;
-  pointer-events: none;
-  transform-origin: left bottom;
-}
-.gift-procession--back { transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
-.gift-procession--front { z-index: 3; transform: translate(68cqw, -36cqh) scale(.475); }
-.gift-marcher {
-  display: block;
-  flex: 0 0 10.3cqw;
-  aspect-ratio: 1 / 2;
+  left: calc(var(--x) * 1cqw);
+  top: calc((var(--y) - var(--h)) * 1cqh);
+  height: calc(var(--h) * 1cqh);
+  width: calc(var(--h) / 3 * 1cqw);
+  --flip: 1;
+  transform: translateX(-50%) scaleX(var(--flip));
   background-image: url("./assets/gift-procession-sprites.webp");
-  background-repeat: no-repeat;
   background-size: 400% 100%;
-  transform-origin: 50% 100%;
-  --path-lift: 0cqh;
-  --member-scale: 1;
-  transform: translateY(var(--path-lift)) scale(var(--member-scale));
+  background-repeat: no-repeat;
 }
-.gift-marcher--drum { background-position: 0 0; }
-.gift-marcher--flag { background-position: 33.333% 0; }
-.gift-marcher--flower { background-position: 66.666% 0; }
-.gift-marcher--cheer { background-position: 100% 0; }
-.gift-procession .gift-marcher:nth-child(2) { --path-lift: -4cqh; --member-scale: .94; }
-/* Người reo ở hàng trước có biên độ xoay/nở lớn hơn người ôm hoa hàng sau;
-   dùng cùng .94 làm bounding box của bạn ấy phình ngược lên gần bằng người đầu. */
-.gift-procession--front .gift-marcher:nth-child(2) { --member-scale: .85; }
-.gift-procession .gift-marcher:nth-child(3) { --path-lift: -9cqh; --member-scale: .83; }
+.gift-crowd i:nth-child(1) { --x: 43.0; --y: 86.0; --h: 25.5; z-index: 9; background-position: 0 0; }
+.gift-crowd i:nth-child(2) { --x: 48.7; --y: 82.2; --h: 23.6; z-index: 8; background-position: 33.333% 0; --flip: -1; }
+.gift-crowd i:nth-child(3) { --x: 54.5; --y: 78.4; --h: 21.7; z-index: 7; background-position: 66.666% 0; }
+.gift-crowd i:nth-child(4) { --x: 60.2; --y: 74.5; --h: 19.9; z-index: 6; background-position: 100% 0; }
+.gift-crowd i:nth-child(5) { --x: 65.9; --y: 70.7; --h: 18.0; z-index: 5; background-position: 0 0; --flip: -1; }
+.gift-crowd i:nth-child(6) { --x: 71.7; --y: 66.9; --h: 16.1; z-index: 4; background-position: 33.333% 0; }
+.gift-crowd i:nth-child(7) { --x: 75.8; --y: 62.3; --h: 13.9; z-index: 3; background-position: 66.666% 0; }
+.gift-crowd i:nth-child(8) { --x: 75.2; --y: 55.5; --h: 10.5; z-index: 2; background-position: 100% 0; --flip: -1; }
+.gift-crowd i:nth-child(9) { --x: 78.4; --y: 50.1; --h: 7.9; z-index: 1; background-position: 0 0; }
 
 /* Tiền cảnh chỉ lướt qua đúng một nhịp. Giữ nó ở mép dưới và không thêm hoa
    có cánh chi tiết để lớp gần tạo tốc độ, không che mất mặt Bé trên màn 320px. */
@@ -1603,9 +1523,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   width: 1px;
   height: 1px;
 }
-.gift-firework:nth-child(1) { left: 18cqw; top: 23cqh; --burst-delay: 0ms; --spark: var(--peach-ink); }
-.gift-firework:nth-child(2) { left: 49cqw; top: 15cqh; --burst-delay: 180ms; --spark: var(--gold); }
-.gift-firework:nth-child(3) { left: 78cqw; top: 25cqh; --burst-delay: 340ms; --spark: var(--peach); }
+/* Ba chùm đặt ở mép mã QR (mã trải x 19–65%, y 5–73% trên khung mobile) nên tia
+   toả RA NGOÀI mã. Mã có z-index cao hơn lớp pháo hoa, nên phần tia chạy vào giữa
+   bị mã che — cố ý: hạt nằm trên mặt mã là camera điện thoại đọc hụt. Nổ trước,
+   mã hiện sau (độ trễ .34s ở transition của .gift-qr-code). */
+.gift-firework:nth-child(1) { left: 19cqw; top: 9cqh; --burst-delay: 0ms; --spark: var(--peach-ink); }
+.gift-firework:nth-child(2) { left: 66cqw; top: 15cqh; --burst-delay: 170ms; --spark: var(--gold); }
+.gift-firework:nth-child(3) { left: 24cqw; top: 70cqh; --burst-delay: 330ms; --spark: var(--peach); }
 .gift-firework i {
   position: absolute;
   left: 0;
@@ -1659,47 +1583,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .gift-rider-track { display: none; }
 }
 
-/* Máy quay tiến tới cổng suốt chuyến đi. Chậm ở đầu rồi dấn về cuối: đẩy đều
-   ngay từ giây đầu thì mất cảm giác "đường còn xa", mà dồn hết vào cuối lại
-   thành cú giật. */
-#gift-shell[data-phase="riding"] .gift-camera {
-  will-change: transform;
-  animation: gift-dolly 4.8s linear both;
-}
-/* Đứng lại ở đúng nơi chuyến đi kết thúc. Phải TRÙNG KHÍT mốc 100% của
-   @keyframes gift-dolly, không thì hết animation là cảnh giật một nhịp về chỗ
-   khác — cùng luật đã ghi cho .gift-rider-track bên dưới.
-   Đây cũng là thứ người bật giảm chuyển động nhìn thấy: JS bỏ thẳng chặng diễn
-   và nhảy vào arrived, nên họ vào ngay cảnh cổng ở gần, không có tí chuyển động
-   nào mà vẫn thấy mã QR đúng chỗ. */
-#gift-shell[data-phase="arrived"] .gift-camera,
-#gift-shell[data-phase="received"] .gift-camera {
-  transform: translate(-27%, 21.5%) scale(var(--dolly));
-}
-
 #gift-shell[data-phase="riding"] .gift-rider-track {
   opacity: 1;
   will-change: transform;
-  animation: gift-ride 4.8s linear both, gift-actor-exit 4.8s linear both;
+  animation: gift-ride 4.8s linear both;
 }
 /* Nhịp thân Bé nằm trong cùng timeline 4,8 giây với đường chạy: nếu để nhún vô
    hạn như bản cũ thì cú thắng không thể nén thân đúng lúc, và Bé vẫn rung sau
    khi cả đoàn đã đứng nghiêm trước cổng. */
 #gift-shell[data-phase="riding"] .gift-rider { animation: gift-rider-body 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-crowd-far { will-change: transform, opacity; animation: gift-crowd-pass 4.8s linear both, gift-actor-exit 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-crowd-far i { animation: gift-far-march 420ms ease-in-out infinite alternate; }
-#gift-shell[data-phase="riding"] .gift-crowd-far i:nth-child(2n) { animation-delay: -210ms; }
-#gift-shell[data-phase="riding"] .gift-crowd-far i:nth-child(3n) { animation-delay: -90ms; }
-#gift-shell[data-phase="riding"] .gift-procession--back { will-change: transform; animation: gift-procession-back 4.8s linear both, gift-actor-exit 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-procession--front { will-change: transform; animation: gift-procession-front 4.8s linear both, gift-actor-exit 4.8s linear both; }
-#gift-shell[data-phase="riding"] .gift-marcher { animation: gift-march 260ms ease-in-out infinite alternate; }
-#gift-shell[data-phase="riding"] .gift-marcher--drum { animation-name: gift-drummer-step; animation-duration: 210ms; }
-#gift-shell[data-phase="riding"] .gift-marcher--flag { animation-name: gift-flag-step; animation-duration: 360ms; }
-#gift-shell[data-phase="riding"] .gift-marcher--cheer { animation-name: gift-cheer-step; animation-duration: 300ms; }
-#gift-shell[data-phase="riding"] .gift-procession--back .gift-marcher:nth-child(2),
-#gift-shell[data-phase="riding"] .gift-procession--front .gift-marcher:nth-child(2) { animation-delay: -130ms; }
-#gift-shell[data-phase="riding"] .gift-procession .gift-marcher:nth-child(3) { animation-delay: -70ms; }
-#gift-shell[data-phase="riding"] .gift-foreground { animation: gift-foreground-pass 4.8s linear both, gift-actor-exit 4.8s linear both; }
+/* Cả hàng đi tới trước và nhỏ lại một nhịp trong suốt chuyến — "đi xa dần" đọc
+   ra ngay mà không phải tính lại toạ độ từng người. Bước chân lệch pha theo
+   nth-child để không thành chín con rối nhún cùng lúc. */
+#gift-shell[data-phase="riding"] .gift-crowd { will-change: transform; animation: gift-crowd-walk 4.8s linear both; }
+#gift-shell[data-phase="riding"] .gift-crowd i { animation: gift-step 320ms ease-in-out infinite alternate; }
+#gift-shell[data-phase="riding"] .gift-crowd i:nth-child(2n) { animation-delay: -160ms; animation-duration: 280ms; }
+#gift-shell[data-phase="riding"] .gift-crowd i:nth-child(3n) { animation-delay: -90ms; animation-duration: 360ms; }
+#gift-shell[data-phase="riding"] .gift-foreground { animation: gift-foreground-pass 4.8s linear both; }
 #gift-shell[data-phase="riding"] .gift-road-magic i { animation: gift-road-pop .78s ease-out both; }
 #gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(1) { animation-delay: .82s; }
 #gift-shell[data-phase="riding"] .gift-road-magic i:nth-child(2) { animation-delay: 1.28s; }
@@ -1714,31 +1614,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 #gift-shell[data-phase="riding"] .gift-road-dust i:nth-child(4) { animation-delay: 3.62s; }
 /* Đỗ Bé lại ở cổng cưới thay vì cho biến mất: thiếu hai dòng này thì opacity về 0
    và Bé bốc hơi đúng khoảnh khắc vừa tới nơi. */
-/* Bé và đoàn rước tắt hẳn ở cuối chuyến. Máy quay đã tiến sát cổng nên theo đúng
-   phối cảnh họ nằm lại phía sau ống kính — đo được Bé rơi vào (4,8%, 101%), tức
-   ngoài khung. Giữ opacity 1 ở đây thì chỉ được một mẩu sprite dính ở mép dưới
-   trông như lỗi cắt ảnh. Họ mờ dần trong 18% cuối của chuyến (gift-actor-exit)
-   nên mắt đọc thành "camera vượt qua đoàn rước", không phải "nhân vật biến mất". */
 #gift-shell[data-phase="arrived"] .gift-rider-track,
 #gift-shell[data-phase="received"] .gift-rider-track {
-  opacity: 0;
+  opacity: 1;
   transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg);
 }
-#gift-shell[data-phase="arrived"] .gift-procession,
-#gift-shell[data-phase="received"] .gift-procession { opacity: 0; }
-#gift-shell[data-phase="arrived"] .gift-crowd-far,
-#gift-shell[data-phase="received"] .gift-crowd-far,
-#gift-shell[data-phase="arrived"] .gift-foreground,
-#gift-shell[data-phase="received"] .gift-foreground { opacity: 0; }
-#gift-shell[data-phase="arrived"] .gift-procession--back,
-#gift-shell[data-phase="received"] .gift-procession--back { transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
-#gift-shell[data-phase="arrived"] .gift-procession--front,
-#gift-shell[data-phase="received"] .gift-procession--front { transform: translate(68cqw, -36cqh) scale(.475); }
+/* Đứng lại đúng chỗ cuối chuyến. Phải TRÙNG KHÍT mốc 100% của gift-crowd-walk,
+   không thì hết animation là cả hàng giật một nhịp về chỗ khác. */
+#gift-shell[data-phase="arrived"] .gift-crowd,
+#gift-shell[data-phase="received"] .gift-crowd { transform: translate(6cqw, -4cqh) scale(.86); }
 
 /* Cú mừng khi vừa tới chỉ chạy một lần và không kéo dài thời gian chờ: QR đã
    hiện ở hàng dưới ngay lúc phase đổi, còn nhịp bật nằm trọn trong tranh. */
 #gift-shell[data-phase="arrived"] .gift-rider { animation: gift-arrival-hop .72s cubic-bezier(.2, .8, .25, 1.25) 2; }
-#gift-shell[data-phase="arrived"] .gift-marcher { animation: gift-arrival-cheer .42s ease-in-out 4 alternate; }
+#gift-shell[data-phase="arrived"] .gift-crowd i { animation: gift-arrival-cheer .42s ease-in-out 4 alternate; }
 #gift-shell[data-phase="arrived"] .gift-title { animation: gift-title-pop .58s var(--ease-out) both; }
 #gift-shell[data-phase="arrived"] .gift-fireworks,
 #gift-shell[data-phase="received"] .gift-fireworks { opacity: 1; }
@@ -1753,7 +1642,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Received là lúc tiền đã về thật nên được phép ăn mừng lâu hơn. Giới hạn năm
    lượt thay vì infinite để tab khách bỏ quên không tiếp tục đốt pin vô hạn. */
 #gift-shell[data-phase="received"] .gift-rider { animation: gift-victory-hop .64s ease-in-out 8 alternate; }
-#gift-shell[data-phase="received"] .gift-marcher { animation: gift-victory-cheer .38s ease-in-out 14 alternate; }
+#gift-shell[data-phase="received"] .gift-crowd i { animation: gift-victory-cheer .38s ease-in-out 14 alternate; }
 #gift-shell[data-phase="received"] .gift-title { animation: gift-title-received .7s var(--ease-out) both; }
 #gift-shell[data-phase="received"] .gift-firework:nth-child(1) { --burst-distance: -10cqw; }
 #gift-shell[data-phase="received"] .gift-firework:nth-child(2) { --burst-distance: -12cqw; }
@@ -1777,23 +1666,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gift-qr-note { margin: 0; color: var(--ink-soft); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
 
 /* Mã QR treo lên tấm bảng của cổng cưới. Sau dolly, tâm tấm bảng nằm đúng giữa
-   khung (xem .gift-camera) nên chỉ cần canh giữa .gift-frame.
+   khoảng trời trống góc trên–trái của tranh — chỗ duy nhất đủ rộng để đặt mã mà
+   không đè lên biển "Nhà bạn", con đường hay cổng cưới.
 
-   Cỡ mã cố tình LỚN HƠN mặt giấy vẽ trong tranh. Mặt giấy chỉ rộng ~12,5% khung,
-   phóng 3,9 lần ra ~49% — trên khung mobile 350px là ~170px, đã sát ngưỡng quét.
-   Nhét vừa khít vào trong mép bảng thì phải phóng gấp đôi nữa và ảnh nền nát.
-   Nên để mã tràn nhẹ ra ngoài mép, đọc như tấm biển treo lên cổng. Cùng nguyên
-   tắc đã ghi ở bản phong bì cũ: quét được quan trọng hơn bố cục đẹp.
+   Vùng trống thật sự (x 2–68%, y 3–40%) chỉ cao 86px trên khung mobile 350×233,
+   nhét mã vừa khít vào đó thì còn ~80px và không quét nổi. Nên mã lấn xuống phần
+   đường nét đứt mờ phía dưới: hộp dùng được là x 22–68%, y 3–70%, đủ cho 160px
+   mobile và 230px desktop. Cùng nguyên tắc đã ghi ở bản phong bì cũ: quét được
+   quan trọng hơn bố cục đẹp.
 
    KHÔNG dùng image-rendering: crisp-edges. Nó chỉ đúng khi PHÓNG TO pixel art;
    mã QR luôn bị THU NHỎ (nguồn 370px) và nearest-neighbour lúc thu nhỏ thì ăn
    mất nguyên ô của mã. */
 .gift-qr-code {
   position: absolute;
-  z-index: 4;
-  left: 56%;
-  top: 50%;
-  width: min(230px, 47vw);
+  z-index: 6;
+  left: 45%;
+  top: 39%;
+  /* max(140px, …) là SÀN cho màn 320px: cứ để 41vw thuần thì mã rớt xuống 132px
+     (~23mm trên máy thật), quét bắt đầu phập phù. 140px trong khung 280×187 là
+     75% chiều cao — chật, nhưng vẫn hở mép trên và vẫn là đánh đổi đúng chiều:
+     quét được quan trọng hơn bố cục đẹp. */
+  width: min(230px, max(140px, 41vw));
   height: auto;
   padding: .5rem;
   background: #fff;
@@ -1812,7 +1706,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   opacity: 1;
   visibility: visible;
   transform: translate(-50%, -50%) scale(1);
-  transition: opacity .5s ease .12s, transform .5s cubic-bezier(.2, .9, .24, 1.18) .12s;
+  transition: opacity .55s ease .34s, transform .55s cubic-bezier(.2, .9, .24, 1.18) .34s;
 }
 /* opacity: .85 cũ pha --ink-soft xuống #85746c = 4.17:1 ở cỡ 14px — rớt WCAG AA.
    axe không cộng gộp opacity mức phần tử nên lần quét "0 lỗi" cũ không thấy. */
@@ -1923,27 +1817,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   22%, 62% { opacity: .78; }
   100% { opacity: 0; transform: translate(8px, -18px) scale(var(--note-scale)) rotate(8deg); }
 }
-/* Máy quay gần như đứng yên hai phần ba đầu rồi mới dấn tới cổng. Đẩy đều từ giây
-   đầu thì Bé bị kéo văng khỏi khung ngay giữa chuyến: cả đường đi nằm ở tiền cảnh
-   dưới–trái, mà tâm phóng lại ở cổng trên–phải, nên chỉ cần phóng 2,45 lần là Bé
-   đã ra tới −29%. Để cảnh đi hết đường rồi mới tiến là vừa giữ được chuyến đi,
-   vừa lấy được cận cảnh cổng.
-
-   Mọi mốc dùng chung một hệ số k: translate = k × mốc cuối, scale = 1 + k×(dolly−1).
-   Nhờ vậy tấm bảng chạy thẳng về giữa khung, không lượn.
-   Mốc 100% phải TRÙNG KHÍT luật [data-phase="arrived"] .gift-camera ở trên. */
-@keyframes gift-dolly {
-  0%   { transform: translate(0, 0) scale(1); }
-  45%  { transform: translate(calc(-27% * .04), calc(21.5% * .04)) scale(calc(1 + (var(--dolly) - 1) * .04)); }
-  65%  { transform: translate(calc(-27% * .14), calc(21.5% * .14)) scale(calc(1 + (var(--dolly) - 1) * .14)); }
-  80%  { transform: translate(calc(-27% * .36), calc(21.5% * .36)) scale(calc(1 + (var(--dolly) - 1) * .36)); }
-  90%  { transform: translate(calc(-27% * .62), calc(21.5% * .62)) scale(calc(1 + (var(--dolly) - 1) * .62)); }
-  100% { transform: translate(-27%, 21.5%) scale(var(--dolly)); }
+/* Mốc 100% phải TRÙNG KHÍT luật [data-phase="arrived"] .gift-crowd. */
+@keyframes gift-crowd-walk {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(6cqw, -4cqh) scale(.86); }
 }
-/* Mờ dần đúng lúc máy quay bắt đầu vượt qua họ. */
-@keyframes gift-actor-exit {
-  0%, 82%  { opacity: 1; }
-  100%     { opacity: 0; }
+@keyframes gift-step {
+  from { transform: translateX(-50%) scaleX(var(--flip)) translateY(.5cqh) rotate(-1.2deg); }
+  to   { transform: translateX(-50%) scaleX(var(--flip)) translateY(-.6cqh) rotate(1.2deg); }
 }
 @keyframes gift-ride {
   0%   { transform: translate(-19cqw, 69cqh) scale(.84) rotate(-5deg); }
@@ -1956,10 +1837,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   92%  { transform: translate(70cqw, 34cqh) scale(.35) rotate(7deg); }
   96%  { transform: translate(65cqw, 36cqh) scale(.36) rotate(-5deg); }
   100% { transform: translate(67cqw, 35cqh) scale(.34) rotate(-1deg); }
-}
-@keyframes gift-far-march {
-  from { transform: translateY(calc(var(--path-lift) + .6cqh)) rotate(-1.5deg) scale(var(--member-scale)); }
-  to { transform: translateY(calc(var(--path-lift) - .7cqh)) rotate(1.5deg) scale(var(--member-scale)); }
 }
 @keyframes gift-rider-body {
   0%, 7%   { transform: translateY(0) scale(1); }
@@ -1974,52 +1851,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Tâm lòng đường dò trên chính gift-journey-scene.webp, theo % khung:
    (43,86) → (58,76) → (76,64) → (75,53) → (82,47). Neo x của đoàn theo dải
    này để chân người không cắt ngang khoảng giấy trắng bên trái khúc cua. */
-@keyframes gift-crowd-pass {
-  /* Sprite xa cao gốc 16,5cqh; scale = .49 × (footY - 34) / 16,5. */
-  0%, 8%   { opacity: 0; transform: translate(-36cqw, -17cqh) scale(1.455); }
-  18%      { opacity: .25; }
-  32%      { opacity: .31; transform: translate(18cqw, -24cqh) scale(1.247); }
-  55%      { opacity: .34; transform: translate(67cqw, -47cqh) scale(.575); }
-  78%      { opacity: .12; transform: translate(76cqw, -53cqh) scale(.386); }
-  100%     { opacity: 0; transform: translate(88cqw, -56cqh) scale(.297); }
-}
-@keyframes gift-procession-back {
-  /* Sprite đoàn cao gốc 30,9cqh; scale = .49 × (footY - 34) / 30,9.
-     Tất cả scale ở hai đường chạy dưới đây đều sinh từ công thức này, không phải
-     chỉnh riêng bằng mắt; đổi footY thì phải tính lại bằng đúng công thức. */
-  0%, 12%  { opacity: 0; transform: translate(-43cqw, -12cqh) scale(.856); filter: saturate(.78); }
-  22%      { opacity: .62; }
-  32%      { opacity: .7; transform: translate(12cqw, -18cqh) scale(.761); filter: saturate(.8); }
-  48%      { opacity: .76; transform: translate(68cqw, -36cqh) scale(.475); filter: saturate(.82); }
-  72%      { opacity: .82; transform: translate(71cqw, -46cqh) scale(.317); filter: saturate(.82); }
-  86%      { opacity: .82; transform: translate(74cqw, -50cqh) scale(.254); filter: saturate(.78); }
-  100%     { opacity: .82; transform: translate(73cqw, -51cqh) scale(.238); filter: saturate(.78); }
-}
-@keyframes gift-procession-front {
-  0%, 20%  { opacity: 0; transform: translate(-55cqw, -6cqh) scale(.951); }
-  29%      { opacity: .9; }
-  36%      { opacity: .92; transform: translate(-5cqw, -10cqh) scale(.888); }
-  54%      { opacity: .94; transform: translate(20cqw, -18cqh) scale(.761); }
-  76%      { opacity: .9; transform: translate(58cqw, -28cqh) scale(.602); }
-  88%      { opacity: .84; transform: translate(66cqw, -34cqh) scale(.507); }
-  100%     { opacity: .82; transform: translate(68cqw, -36cqh) scale(.475); }
-}
-@keyframes gift-march {
-  from { transform: translateY(calc(var(--path-lift) + .7cqh)) rotate(-2deg) scale(var(--member-scale)) scaleY(.97); }
-  to   { transform: translateY(calc(var(--path-lift) - .8cqh)) rotate(2deg) scale(var(--member-scale)) scaleY(1.02); }
-}
-@keyframes gift-drummer-step {
-  from { transform: translateY(calc(var(--path-lift) + .8cqh)) rotate(-3deg) scale(var(--member-scale)) scale(1.02, .96); }
-  to { transform: translateY(calc(var(--path-lift) - 1cqh)) rotate(3deg) scale(var(--member-scale)) scale(.98, 1.04); }
-}
-@keyframes gift-flag-step {
-  from { transform: translateY(calc(var(--path-lift) + .5cqh)) rotate(-4deg) skewX(-1deg) scale(var(--member-scale)); }
-  to { transform: translateY(calc(var(--path-lift) - 1cqh)) rotate(5deg) skewX(2deg) scale(var(--member-scale)); }
-}
-@keyframes gift-cheer-step {
-  from { transform: translateY(calc(var(--path-lift) + .7cqh)) rotate(-2deg) scale(var(--member-scale)) scale(.98); }
-  to { transform: translateY(calc(var(--path-lift) - 1.3cqh)) rotate(3deg) scale(var(--member-scale)) scale(1.04); }
-}
 @keyframes gift-foreground-pass {
   0%, 27%  { opacity: 0; transform: translate(-35cqw, 0) rotate(-5deg); }
   34%      { opacity: .7; }
@@ -2041,17 +1872,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   28% { transform: translateY(1.1cqh) scale(1.10, .88) rotate(-3deg); }
   58% { transform: translateY(-4.2cqh) scale(.94, 1.08) rotate(4deg); }
 }
+/* Phải mở đầu bằng translateX(-50%) scaleX(var(--flip)) giống transform gốc của
+   .gift-crowd i — transform ghi đè cả chuỗi, thiếu hai phép đó là cả chín người
+   nhảy sang phải nửa thân đúng lúc reo mừng. */
 @keyframes gift-arrival-cheer {
-  from { transform: translateY(calc(var(--path-lift) + .4cqh)) rotate(-3deg) scale(var(--member-scale)) scale(.97); }
-  to { transform: translateY(calc(var(--path-lift) - 2.4cqh)) rotate(4deg) scale(var(--member-scale)) scale(1.06); }
+  from { transform: translateX(-50%) scaleX(var(--flip)) translateY(.4cqh) rotate(-3deg) scale(.97); }
+  to   { transform: translateX(-50%) scaleX(var(--flip)) translateY(-2.4cqh) rotate(4deg) scale(1.06); }
 }
 @keyframes gift-victory-hop {
   from { transform: translateY(.5cqh) rotate(-2deg) scale(1.04, .96); }
   to { transform: translateY(-4.5cqh) rotate(4deg) scale(.95, 1.07); }
 }
 @keyframes gift-victory-cheer {
-  from { transform: translateY(calc(var(--path-lift) + .5cqh)) rotate(-5deg) scale(var(--member-scale)) scale(.96); }
-  to { transform: translateY(calc(var(--path-lift) - 3cqh)) rotate(6deg) scale(var(--member-scale)) scale(1.08); }
+  from { transform: translateX(-50%) scaleX(var(--flip)) translateY(.5cqh) rotate(-5deg) scale(.96); }
+  to   { transform: translateX(-50%) scaleX(var(--flip)) translateY(-3cqh) rotate(6deg) scale(1.08); }
 }
 @keyframes gift-firework-burst {
   0% { opacity: 0; transform: rotate(var(--ray-angle)) translateY(0) scale(.25); }
