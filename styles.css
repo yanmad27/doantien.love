@@ -1108,6 +1108,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .gift-rider-track,
   .gift-rider,
   .gift-camera,
+  .gift-qr-sign,
+  .gift-qr-paper,
   .gift-crowd,
   .gift-crowd i,
   .gift-title,
@@ -1570,9 +1572,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    toả RA NGOÀI mã. Mã có z-index cao hơn lớp pháo hoa, nên phần tia chạy vào giữa
    bị mã che — cố ý: hạt nằm trên mặt mã là camera điện thoại đọc hụt. Nổ trước,
    mã hiện sau (độ trễ .34s ở transition của .gift-qr-paper). */
-.gift-firework:nth-child(1) { left: 19cqw; top: 9cqh; --burst-delay: 0ms; --spark: var(--peach-ink); }
-.gift-firework:nth-child(2) { left: 66cqw; top: 15cqh; --burst-delay: 170ms; --spark: var(--gold); }
-.gift-firework:nth-child(3) { left: 24cqw; top: 70cqh; --burst-delay: 330ms; --spark: var(--peach); }
+.gift-firework:nth-child(1) { left: 19cqw; top: 9cqh; --burst-delay: 780ms; --spark: var(--peach-ink); }
+.gift-firework:nth-child(2) { left: 66cqw; top: 15cqh; --burst-delay: 950ms; --spark: var(--gold); }
+.gift-firework:nth-child(3) { left: 24cqw; top: 70cqh; --burst-delay: 1110ms; --spark: var(--peach); }
 .gift-firework i {
   position: absolute;
   left: 0;
@@ -1725,40 +1727,82 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
    KHÔNG dùng image-rendering: crisp-edges. Nó chỉ đúng khi PHÓNG TO pixel art;
    mã QR luôn bị THU NHỎ (nguồn 370px) và nearest-neighbour lúc thu nhỏ thì ăn
    mất nguyên ô của mã. */
-/* Tờ giấy mang mã QR. Mượn nguyên ngôn ngữ "mẩu giấy" của sổ lời chúc (.wish)
-   thay vì tự chế: giấy kem --paper chứ không phải #fff, viền mực rất nhạt, bo 3px
-   và nghiêng nhẹ. Bản trước dùng trắng tinh + bo 10px + bóng nổi nên đọc ra ngay
-   thành một cái thẻ giao diện dán đè lên tranh màu nước.
-   Nghiêng 1,8° đủ để mắt thấy "tờ giấy ai đó ghim lên" chứ không phải khối do máy
-   đặt; máy quét không bận tâm góc nghiêng này.
-   Bóng hai lớp: quầng kem toả rộng cho mép giấy tan vào nền trời (bắt chước vệt
-   loang màu nước), và một bóng tiếp đất bám sát đúng như .wish.
+/* Cột biển mang mã QR, cắm xuống đất bên đường.
+
+   Chân cột đặt ở y = 88% khung. Cột cao 11% chiều cao khung: đủ để đọc ra "có
+   cái cột" mà tổng cột + bảng vẫn nằm trong khung ở CẢ 320px — ca chật nhất, ở
+   đó bảng đã chiếm 75% chiều cao và chỉ còn hở mép trên 2%. Đẩy cột cao hơn là
+   tràn ra ngoài khung tranh.
+
+   Bảng vẫn mượn ngôn ngữ mẩu giấy của sổ lời chúc (.wish): giấy kem --paper chứ
+   không phải #fff, viền mực rất nhạt, bo 3px, nghiêng nhẹ. Bỏ mẩu băng dính của
+   bản trước — giờ đã có cột giữ, không cần cái cớ nào nữa.
 
    isolation: isolate để mix-blend-mode của ảnh mã chỉ nhân với chính tờ giấy này,
    không ăn xuống bức tranh phía dưới. */
-.gift-qr-paper {
+.gift-qr-sign {
   position: absolute;
   z-index: 6;
   left: 45%;
-  top: 39%;
+  bottom: 12%;
   /* max(140px, …) là SÀN cho màn 320px: cứ để 41vw thuần thì mã rớt xuống 132px
-     (~23mm trên máy thật), quét bắt đầu phập phù. 140px trong khung 280×187 là
-     75% chiều cao — chật, nhưng vẫn hở mép trên và vẫn là đánh đổi đúng chiều:
-     quét được quan trọng hơn bố cục đẹp. */
-  width: min(230px, max(140px, 41vw));
-  padding: .55rem;
+     (~23mm trên máy thật), quét bắt đầu phập phù. Quét được quan trọng hơn bố cục. */
+  --board: min(230px, max(140px, 41vw));
+  width: var(--board);
+  translate: -50% 0;
+  /* Mọc lên từ chân cột, nên gốc biến hình phải nằm ở đáy. */
+  transform-origin: bottom center;
+  /* Ẩn bằng visibility chứ không display:none — ảnh phải nằm trong bố cục để
+     trình duyệt tải và bắn `load`, thứ mà script.js dựa vào để bỏ [hidden] của
+     cả section. */
+  opacity: 0;
+  visibility: hidden;
+}
+.gift-qr-paper {
+  /* Đệm mỏng thôi. Ảnh qr-mung-cuoi.png đã mang sẵn vùng lặng của nó, nên viền
+     giấy ở đây chỉ là mép giấy chứ không phải vùng lặng — đệm dày là ăn thẳng vào
+     bề ngang mã. .55rem cũ lấy mất ~20px, tức mã thật ở 320px chỉ còn ~120px
+     trong khi tờ giấy đo được 140px. */
+  padding: .35rem;
   background: var(--paper);
   border: 1px solid rgba(89, 71, 63, .12);
   border-radius: 3px;
   rotate: -1.8deg;
   isolation: isolate;
   box-shadow: 0 0 16px 10px rgba(255, 250, 243, .7), 0 9px 20px -16px rgba(89, 71, 63, .85);
-  /* Ẩn bằng visibility chứ không display:none — ảnh phải nằm trong bố cục để
-     trình duyệt tải và bắn `load`, thứ mà script.js dựa vào để bỏ [hidden] của
-     cả section. */
-  opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, -50%) scale(.88);
+}
+/* Thân cột: dải sáng ở giữa, tối dần hai mép và loang trong suốt ở rìa — đủ để
+   đọc ra khối gỗ tròn mà không phải vẽ thêm asset nào. Hai đầu trong suốt cũng
+   giúp chân cột tan vào mặt đường thay vì cắt ngang một nhát. */
+.gift-qr-post {
+  display: block;
+  width: 6.5%;
+  min-width: 4px;
+  /* Cao suy từ BỀ RỘNG bảng chứ không phải %: cha (.gift-qr-sign) cao auto nên
+     height:% quy chiếu về 0 và cột biến mất. 0,16 × bảng cho ra 22 / 26 / 37px ở
+     320 / 390 / desktop — bám sát mức 11% chiều cao khung đã tính. */
+  height: calc(var(--board) * .16);
+  margin: -2px auto 0;
+  background: linear-gradient(90deg,
+    rgba(184, 144, 98, 0) 0%, rgba(150, 116, 76, .85) 20%,
+    rgba(214, 186, 150, .95) 48%, rgba(150, 116, 76, .85) 78%, rgba(184, 144, 98, 0) 100%);
+  border-radius: 2px 2px 1px 1px;
+  position: relative;
+}
+/* Vệt bóng tiếp đất. Thiếu nó thì cột đứng lơ lửng trên mặt đường — mắt cần một
+   chỗ tối ở chân để tin rằng nó được cắm xuống. Ellipse rất nhạt và loang hẳn ra
+   rìa, không viền, để không thành một khối hình học nằm trên tranh màu nước. */
+.gift-qr-post::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 620%;
+  height: 9px;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center,
+    rgba(122, 96, 70, .3) 0%, rgba(122, 96, 70, .14) 45%, rgba(122, 96, 70, 0) 72%);
 }
 /* multiply: ảnh qr-mung-cuoi.png mang sẵn nền TRẮNG TINH của riêng nó, nên đặt
    thẳng lên tờ giấy kem sẽ thành hai hình chữ nhật lồng nhau — trắng trong kem,
@@ -1774,31 +1818,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   height: auto;
   mix-blend-mode: multiply;
 }
-/* Mẩu băng dính dán mép trên, dùng lại đúng công thức của .wish::before. Không
-   có nó thì tờ giấy trôi lơ lửng giữa nền trời, không có gì giữ — mắt đọc ra
-   "ảnh dán đè lên" chứ không phải "ai đó ghim tờ giấy vào bức tranh". Một mẩu
-   băng dính là đủ để giải thích vì sao nó ở đó.
-   Lệch tâm 6% và nghiêng ngược chiều tờ giấy cho khỏi thẳng hàng như đồ in. */
-.gift-qr-paper::before {
-  content: "";
-  position: absolute;
-  top: -9px;
-  left: 44%;
-  width: 34%;
-  height: 17px;
-  translate: -50% 0;
-  rotate: 2.6deg;
-  background: rgba(215, 117, 112, .17);
-  border-left: 1px solid rgba(255, 255, 255, .5);
-  border-right: 1px solid rgba(255, 255, 255, .5);
-}
 /* Hiện theo chặng, không cần JS gắn/gỡ: máy trạng thái sẵn có đã đúng nhịp —
-   arrived là lúc bày mã, received là lúc lời cảm ơn thế chỗ. */
-#gift-shell[data-phase="arrived"] .gift-qr-paper {
+   arrived là lúc bày mã, received là lúc lời cảm ơn thế chỗ.
+   Người bật giảm chuyển động: khối reduced-motion phía trên tắt animation, nên họ
+   nhận thẳng trạng thái cuối (opacity 1, không biến hình) — cột không mọc, mã có
+   ngay. Vì vậy trạng thái NGHỈ của .gift-qr-sign phải là "đã hiện đủ", còn phần
+   ẩn đi nằm ở mốc 0% của keyframes. */
+#gift-shell[data-phase="arrived"] .gift-qr-sign {
   opacity: 1;
   visibility: visible;
-  transform: translate(-50%, -50%) scale(1);
-  transition: opacity .55s ease .34s, transform .55s cubic-bezier(.2, .9, .24, 1.18) .34s;
+  animation: gift-sign-rise .82s cubic-bezier(.18, .89, .32, 1.22) .18s both;
+}
+#gift-shell[data-phase="arrived"] .gift-qr-paper {
+  animation: gift-board-settle .62s cubic-bezier(.2, .9, .24, 1.2) .62s both;
 }
 /* opacity: .85 cũ pha --ink-soft xuống #85746c = 4.17:1 ở cỡ 14px — rớt WCAG AA.
    axe không cộng gộp opacity mức phần tử nên lần quét "0 lỗi" cũ không thấy. */
@@ -1908,6 +1940,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   0% { opacity: 0; transform: translate(0, 8px) scale(calc(var(--note-scale) * .55)) rotate(-8deg); }
   22%, 62% { opacity: .78; }
   100% { opacity: 0; transform: translate(8px, -18px) scale(var(--note-scale)) rotate(8deg); }
+}
+/* Cột mọc lên khỏi mặt đất. scaleY quanh gốc đáy nên chân cột đứng yên tại chỗ
+   cắm, chỉ phần thân vươn lên — đúng cảm giác "mọc". Vọt qua 1,04 rồi lún về 1
+   cho có độ nảy của thứ vừa bật khỏi đất, không phải một thanh trượt lên.
+   scaleX nhích theo một chút ở đoạn cuối để cột không bị kéo mảnh như sợi chỉ
+   trong lúc còn thấp. */
+@keyframes gift-sign-rise {
+  0%   { opacity: 0; transform: scale(.72, 0); }
+  38%  { opacity: 1; }
+  72%  { transform: scale(1.03, 1.04); }
+  100% { opacity: 1; transform: scale(1, 1); }
+}
+/* Tấm bảng lắc một nhịp rồi đứng yên, như biển gỗ vừa được cắm xuống còn rung.
+   Kết thúc ĐÚNG -1,8deg trùng với rotate nghỉ của .gift-qr-paper, không thì hết
+   animation là bảng giật một cái về góc khác. */
+@keyframes gift-board-settle {
+  0%   { rotate: -7.5deg; }
+  45%  { rotate: 1.6deg; }
+  75%  { rotate: -3.2deg; }
+  100% { rotate: -1.8deg; }
 }
 /* Vào nhanh, giữ, rồi nhả ra đúng lúc Bé tới nơi và pháo hoa nổ. Nhả ở 15% cuối
    để cú thu về trùng nhịp với khoảnh khắc mã QR sắp hiện. */

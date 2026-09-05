@@ -355,10 +355,18 @@
                    section khi ảnh này bắn `load`, mà ảnh lazy nằm trong khối
                    display:none thì không bao giờ tải — thêm vào là mất sạch phần
                    mừng cưới trên bản chạy thật, không một lỗi nào trong console. -->
-              <div class="gift-qr-paper">
-                <img class="gift-qr-code" src="./assets/qr-mung-cuoi.png" width="370" height="370"
-                     alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img"
-                     aria-describedby="gift-qr-note">
+              <!-- Cột biển mọc lên khỏi mặt đất rồi mới bày mã ra. Bức tranh vốn đã
+                   có hai cái biển gỗ cắm đất (biển chỉ đường và cổng cưới) nên cái
+                   thứ ba là thứ thuộc về thế giới đó — khác hẳn tờ giấy dán lơ lửng
+                   giữa nền trời của bản trước. Cột là phần tử trang trí thuần nên
+                   aria-hidden; phần có nghĩa vẫn là ảnh mã và lời chú dưới khung. -->
+              <div class="gift-qr-sign">
+                <div class="gift-qr-paper">
+                  <img class="gift-qr-code" src="./assets/qr-mung-cuoi.png" width="370" height="370"
+                       alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img"
+                       aria-describedby="gift-qr-note">
+                </div>
+                <span class="gift-qr-post" aria-hidden="true"></span>
               </div>
             </div>
 

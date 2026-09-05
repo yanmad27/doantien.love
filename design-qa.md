@@ -610,3 +610,65 @@ CSS mồ côi: 0. `script.js` vẫn chỉ đổi 2 dòng so với `main`.
   làm nền mã thành kem `#fffaf3` thay vì trắng; tương phản tính ra ~19:1 nhưng
   chưa ai đưa điện thoại lên quét thử.
 - Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
+
+## 17. Vòng 12 — zoom vào bảng cổng, và cột biển QR mọc lên
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px + reduced motion
+
+### Đổi gì
+
+Chủ thiệp: *"zoom in vào bảng đám cưới Doãn Tiên, xong có 1 cái cột bảng QR mọc
+lên, làm animation đẹp tí nhé."*
+
+1. **Tâm zoom** dời vào tấm bảng cổng: `transform-origin: 83% 28.5%`. Phóng quanh
+   điểm đó thì tấm bảng đứng yên còn mọi thứ khác nở ra quanh nó.
+2. **Cột biển QR mọc lên khỏi mặt đất** thay cho tờ giấy dán lơ lửng. Bức tranh
+   vốn đã có hai biển gỗ cắm đất (biển chỉ đường và cổng cưới) nên cái thứ ba là
+   thứ thuộc về thế giới đó. Bỏ mẩu băng dính — đã có cột giữ, không cần cái cớ.
+3. Nhịp: cột mọc (`gift-sign-rise`, 0,82s, vọt 1,04 rồi lún về 1) → bảng lắc một
+   nhịp rồi đứng (`gift-board-settle`, kết thúc đúng −1,8° trùng rotate nghỉ) →
+   pháo hoa nổ (dời sang 780/950/1110ms để mừng lúc biển vừa dựng xong).
+4. Thêm **vệt bóng tiếp đất** ở chân cột — thiếu nó thì cột đứng lơ lửng trên mặt
+   đường.
+
+### Ba lỗi bắt được trong lúc dựng
+
+| Lỗi | Biểu hiện | Nguyên nhân |
+|---|---|---|
+| Mã QR nở thành 381px, tràn ngang 94px | ảnh về cỡ gốc | thay khối CSS đã **xoá nhầm** luật `.gift-qr-code` |
+| Cột cao 0px, biến mất | `height: 11%` | cha `.gift-qr-sign` cao `auto` nên `%` quy chiếu về 0. Đổi sang `calc(var(--board) * .16)` |
+| **Số cỡ mã QR các vòng trước đều SAI** | báo 144/165/237px | đó là bề rộng **tờ giấy**, không phải vùng mã. Đệm `.55rem` ăn mất ~20px mỗi chiều |
+
+Lỗi thứ ba đáng nhớ nhất: suốt §15–§16 tôi báo cáo cỡ mã bằng cách đo
+`getBoundingClientRect()` của tờ giấy. Mã thật ở 320px chỉ ~120px chứ không phải
+144px. Đã giảm đệm xuống `.35rem` (ảnh QR mang sẵn vùng lặng của nó, viền giấy
+không phải vùng lặng) và từ nay đo bằng `img.offsetWidth`.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px | +reduced motion |
+|---|---|---|---|---|
+| **Mã QR thật** (`img.offsetWidth`) | 127px | 147px | 217px | 147px |
+| Bề rộng tờ giấy | 140px | 160px | 230px | 160px |
+| Cột (rộng × cao) | 8×22 | 10×26 | 15×37 | 10×26 |
+| Chân cột | 88,0% | 88,0% | 88,0% | 88,0% |
+| Mép trên biển | 2,1% | 9,4% | 17,1% | 9,4% |
+| Biển nằm trọn trong khung | ✅ | ✅ | ✅ | ✅ |
+| Người bị biển che | **0/9** | **0/9** | **0/9** | **0/9** |
+| `camTransform` lúc `arrived` | none | none | none | none |
+| Biến hình của biển lúc nghỉ | identity | identity | identity | **none** |
+| Animation đang chạy | 0 | 0 | 0 | **0** |
+| Mã trong nhánh aria-hidden | không | không | không | không |
+| Vùng `aria-live` trong `#gift` | 1 | 1 | 1 | 1 |
+| Tràn ngang | 0 | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 | 0 |
+
+Reduced motion cho `transform: none` — biển hiện thẳng ở trạng thái cuối, cột
+không mọc, đúng như thiết kế (trạng thái nghỉ là "đã hiện đủ", phần ẩn nằm ở mốc
+0% của keyframes).
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật.** Ở 320px mã thật chỉ 127px (~22mm) và nền là
+  kem `#fffaf3` do `mix-blend-mode: multiply`. Vẫn là việc cần làm trước tiên.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
