@@ -718,3 +718,70 @@ có chuyển động nào. Đo ở 1500ms cho đúng 0.
 
 - Chưa quét mã bằng camera thật (vẫn là việc cần làm trước tiên).
 - Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse: chưa.
+
+## 19. Vòng 14 — bảng QR thành biển gỗ
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px
+
+Chủ thiệp: *"QR có viền gỗ background màu gỗ luôn được không."*
+
+Đổi mặt giấy kem thành **mặt gỗ nhạt + khung gỗ**, cho khớp với hai cái biển gỗ
+vốn có trong tranh.
+
+### Nền gỗ không đe doạ khả năng quét
+
+Nghe thì ngược, nhưng ô mã là **đen tuyền** nên tương phản với gỗ vẫn rất cao:
+
+| Mặt bảng | Tương phản với ô đen |
+|---|---:|
+| `#f2e2c8` | 16,5:1 |
+| **`#ecd9b9`** (đang dùng, giữa dải gradient) | **15,2:1** |
+| `#e6d0ac` | 14,0:1 |
+
+Khác hẳn nền màu thường: nếu ô mã là màu thì nền gỗ mới thành vấn đề.
+
+### Tông gỗ lấy mẫu từ chính bức tranh, không tự chọn
+
+Bản đầu tôi chọn khung `#a9855a → #8e6d40` theo cảm nhận "màu gỗ". Dựng ra thì nó
+đọc thành **vật liệu khác hẳn**, dán lên tranh chứ không thuộc về tranh.
+
+Đọc pixel thật từ `gift-journey-scene.webp`:
+
+| Chỗ lấy mẫu | Màu |
+|---|---|
+| Mặt biển "Nhà bạn" | `#fbf4e8` |
+| Cột biển | `#ffe9d1` |
+| Cột trái cổng cưới | `#f4ddc0` |
+| Hàng rào gỗ (chỗ sẫm nhất tìm được) | `#d9b58f` |
+
+Gỗ trong tranh **nhạt hơn nhiều** so với "màu gỗ" mặc định trong đầu. Đã đổi khung
+sang `#d9b58f → #c69c6d` và mặt bảng `#f0dfc2 → #e6d0ac`.
+
+### Khung ăn vào trong, không nở ra ngoài
+
+Nở ra ngoài thì đụng đoàn người: ở 320px mép phải bảng ở 70%, mép trái người gần
+nhất ở 71,6% — chỉ hở **4,5px**. Nên đệm khung ăn vào trong, mã hẹp lại ~7px mỗi
+bên.
+
+### Kết quả
+
+| | 320px | 390px | 1280px |
+|---|---|---|---|
+| Mã QR thật | 124px | 144px | 214px |
+| Bề rộng bảng | 140px | 160px | 230px |
+| Người bị biển che | **0** | **0** | **0** |
+| `mix-blend-mode` | multiply | multiply | multiply |
+| Biển trọn trong khung | ✅ | ✅ | ✅ |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+
+Mã ở 320px xuống còn **124px** (trước khi có khung gỗ là 127px). Đây là lần thứ
+hai cỡ mã bị bào mỏng vì lý do thẩm mỹ — nếu lần quét thử bằng camera thật không
+ăn, chỗ cần nới đầu tiên là `--board`, và nới thì phải tính lại dải đường của
+chín người.
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật.** Giờ mã còn nằm trên nền GỖ chứ không phải
+  trắng — tương phản tính ra 15,2:1 nhưng đó vẫn là phép tính, không phải phép thử.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari: chưa.
