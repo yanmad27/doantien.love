@@ -267,76 +267,105 @@
                phím Tab kế tiếp quay lại đầu thiệp. JS dời focus vào đây, giống cách
                .nav và #wish-thanks đang làm. -->
           <div class="gift-stage" id="gift-stage" tabindex="-1" hidden>
-            <div class="gift-scene" aria-hidden="true">
-              <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
-                   loading="lazy" decoding="async" alt="">
-              <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
-                   cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
-                   thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
-                   duyệt chỉ tải gift-journey-scene.webp một lần. -->
-              <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
-                   loading="lazy" decoding="async" alt="">
-              <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
-                   aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
-                   Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
-              <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
-              <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
-              <!-- Dùng lại sprite màu nước rồi làm mềm cả lớp thay cho mấy khối
-                   bo tròn tự vẽ: khối phẳng ở xa nhìn như placeholder chưa xong,
-                   nhưng giữ nguyên nét mặt sắc ở cỡ này lại làm khung 390px rối. -->
-              <div class="gift-crowd-far">
-                <i></i><i></i><i></i><i></i><i></i><i></i>
-              </div>
+            <!-- Hộp định vị chung cho tranh và mã QR. Mã QR phải nằm NGOÀI
+                 .gift-scene: scene mang aria-hidden nên đặt mã vào trong là trình
+                 đọc màn hình mất sạch phần mừng cưới. Ở đây thì nhìn vẫn là "QR
+                 nằm trong tranh", còn cây trợ năng vẫn thấy đủ. -->
+            <div class="gift-frame">
+              <div class="gift-scene" aria-hidden="true">
+                <!-- Máy quay. Chỉ để dấn tới một nhịp trong lúc Bé chạy vào rồi TRẢ VỀ
+                     nguyên khung khi tới nơi — chỗ đặt mã QR và vị trí chín người đều
+                     canh theo khung không zoom, giữ zoom lại là hỏng cả hai.
+                     container-type nằm ở .gift-scene chứ không phải lớp này, nên cqw/cqh
+                     vẫn quy chiếu về khung tranh và mọi toạ độ bên trong giữ nguyên.
+                     Pháo hoa và hoa giấy cố ý nằm NGOÀI lớp này: chúng là hiệu ứng trên
+                     ống kính, bị máy quay kéo theo là sai. -->
+                <div class="gift-camera">
+                  <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                       loading="lazy" decoding="async" alt="">
+                  <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
+                       cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
+                       thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
+                       duyệt chỉ tải gift-journey-scene.webp một lần. -->
+                  <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                       loading="lazy" decoding="async" alt="">
+                  <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
+                       aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
+                       Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
+                  <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
+                  <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
+                  <div class="gift-road-magic">
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                  </div>
+                  <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
+  
+                  <!-- Chín người đi trên đường, nhỏ dần theo phối cảnh — thay cho ba
+                       cụm rời (6 người xa + 3 sau + 3 trước) của bản trước. Bản cũ có
+                       một lớp bị làm mềm và giảm bão hoà để giả chiều sâu; bỏ hẳn,
+                       chiều sâu giờ đến từ chính cỡ người.
+                       Toạ độ chân và chiều cao suy từ tâm đường đo ở design-qa §11 và
+                       công thức h = 0,49×(chân y − 34), nên ai cũng đứng đúng mặt
+                       đường ở mọi bề rộng màn hình. Cỡ giảm đều 1,00 → 0,31.
+                       Vẫn một sprite sheet cắt ở 4 ô, đổi ô/lật/ngắt nhịp để không ai
+                       giống ai; tách thành nhiều file sẽ bắt 4G mở thêm kết nối. -->
+                  <div class="gift-crowd">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                  <div class="gift-rider-track">
+                    <img class="gift-rider" src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                         loading="lazy" decoding="async" alt="">
+                  </div>
+                  <div class="gift-foreground">
+                    <i></i><i></i><i></i>
+                  </div>
+                  <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
+                       sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
+                       /t/<mã>/ hâm nóng nhầm một trang HTML thay vì sprite. -->
+                  <img class="gift-procession-source" src="./assets/gift-procession-sprites.webp"
+                       width="1000" height="500" loading="lazy" decoding="async" alt="">
+                </div>
 
-              <div class="gift-road-magic">
-                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
-                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
-                <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                <!-- Pháo hoa nổ ở khoảng trời trống góc trên–trái rồi mã QR hiện ra
+                     từ chính chỗ đó: vùng ấy trong tranh vốn trống trơn, vừa là chỗ
+                     duy nhất đủ rộng để đặt mã, vừa cần một cái cớ để mắt nhìn sang.
+                     Ba chùm dịch về đúng tâm mã (xem .gift-firework trong styles.css)
+                     nên hạt nổ quanh mã chứ không rơi đè lên nó.
+                     Vẫn nhốt trong khung tranh, không phủ cả .gift-stage. -->
+                <div class="gift-fireworks">
+                  <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                </div>
+                <!-- Hoa giấy giữ trong khung tranh vì khung 3:2 khớp đúng tỉ lệ ảnh:
+                     object-fit: cover trên một khối cao và hẹp sẽ cắt đúng khoảng
+                     giữa trống trơn của ảnh và chỉ còn lại một mảng kem phẳng. -->
+                <div class="gift-celebration">
+                  <img src="./assets/gift-confetti.webp" width="1400" height="933"
+                       loading="lazy" decoding="async" alt="">
+                </div>
               </div>
-              <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
-
-              <!-- Một sprite sheet được cắt lại ở nhiều ô và đổi tỉ lệ/lật/ngắt
-                   nhịp. Tách mỗi người thành một file sẽ làm 4G phải mở nhiều kết
-                   nối và rất dễ vượt ngân sách ảnh chỉ để tạo cảm giác đông. -->
-              <div class="gift-procession gift-procession--back">
-                <span class="gift-marcher gift-marcher--flag"></span>
-                <span class="gift-marcher gift-marcher--flower"></span>
-                <span class="gift-marcher gift-marcher--cheer"></span>
-              </div>
-              <div class="gift-rider-track">
-                <img class="gift-rider" src="./assets/gift-be-phong-bi.webp" width="400" height="400"
-                     loading="lazy" decoding="async" alt="">
-              </div>
-              <div class="gift-procession gift-procession--front">
-                <span class="gift-marcher gift-marcher--drum"></span>
-                <span class="gift-marcher gift-marcher--cheer"></span>
-                <span class="gift-marcher gift-marcher--flag"></span>
-              </div>
-              <div class="gift-foreground">
-                <i></i><i></i><i></i>
-              </div>
-              <!-- Pháo hoa bị nhốt trong chính khung tranh, không phủ .gift-stage:
-                   ở arrived mã QR nằm ở hàng dưới nên camera không bao giờ phải
-                   nhìn xuyên qua hạt; received thì QR đã được thay bằng cảm ơn. -->
-              <div class="gift-fireworks">
-                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-                <span class="gift-firework"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-              </div>
-              <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
-                   sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
-                   /t/<mã>/ hâm nóng nhầm một trang HTML thay vì sprite. -->
-              <img class="gift-procession-source" src="./assets/gift-procession-sprites.webp"
-                   width="1000" height="500" loading="lazy" decoding="async" alt="">
-              <!-- Hoa giấy nằm TRONG khung tranh chứ không phủ cả sân khấu: ảnh hoa
-                   giấy là khung viền cánh hoa quanh một khoảng giữa trống trơn, mà
-                   object-fit: cover trên một khối cao và hẹp thì cắt đúng cái khoảng
-                   trống đó — thành ra chỉ còn một mảng kem phẳng làm mờ luôn bức
-                   tranh. Đặt ở đây thì khung 3:2 khớp đúng tỉ lệ ảnh, cánh hoa hiện
-                   đủ, và hoa giấy bung ra ngay trên đầu Bé vừa tới nơi. -->
-              <div class="gift-celebration">
-                <img src="./assets/gift-confetti.webp" width="1400" height="933"
-                     loading="lazy" decoding="async" alt="">
+              <!-- Mã QR treo lên đúng tấm bảng trắng của cổng cưới sau khi máy quay
+                   tiến tới. Nằm ngoài .gift-scene (đang aria-hidden) nên trình đọc
+                   màn hình vẫn thấy; CSS cho hiện theo data-phase="arrived" chứ
+                   không cần JS gắn/gỡ, đúng nhịp mà #gift-qr vẫn đang dùng.
+                   KHÔNG thêm loading="lazy": script.js chỉ bỏ [hidden] của cả
+                   section khi ảnh này bắn `load`, mà ảnh lazy nằm trong khối
+                   display:none thì không bao giờ tải — thêm vào là mất sạch phần
+                   mừng cưới trên bản chạy thật, không một lỗi nào trong console. -->
+              <!-- Cột biển mọc lên khỏi mặt đất rồi mới bày mã ra. Bức tranh vốn đã
+                   có hai cái biển gỗ cắm đất (biển chỉ đường và cổng cưới) nên cái
+                   thứ ba là thứ thuộc về thế giới đó — khác hẳn tờ giấy dán lơ lửng
+                   giữa nền trời của bản trước. Cột là phần tử trang trí thuần nên
+                   aria-hidden; phần có nghĩa vẫn là ảnh mã và lời chú dưới khung. -->
+              <div class="gift-qr-sign">
+                <div class="gift-qr-paper">
+                  <img class="gift-qr-code" src="./assets/qr-mung-cuoi.png" width="370" height="370"
+                       alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img"
+                       aria-describedby="gift-qr-note">
+                </div>
+                <span class="gift-qr-post" aria-hidden="true"></span>
               </div>
             </div>
 
@@ -352,24 +381,20 @@
               </span>
             </p>
 
-            <figure class="gift-qr" id="gift-qr" tabindex="-1" hidden>
-              <div class="gift-envelope">
-                <img class="gift-envelope-art" src="./assets/gift-envelope-open.webp" width="711" height="720"
-                     loading="lazy" decoding="async" alt="" aria-hidden="true">
-                <!-- KHÔNG thêm loading="lazy" cho riêng ảnh QR này: script.js chỉ bỏ
-                     [hidden] của cả section khi ảnh bắn sự kiện `load`, mà ảnh lazy
-                     nằm trong khối display:none thì không bao giờ được tải — thêm vào
-                     là mất sạch phần mừng cưới trên bản chạy thật, không một lỗi nào
-                     trong console. -->
-                <img src="./assets/qr-mung-cuoi.png" width="370" height="370"
-                     alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img">
-              </div>
-              <figcaption>
+            <!-- Chỉ còn lời chú, mã QR đã lên tấm bảng trong tranh. Chữ giữ ở đây,
+                 trên nền giấy phẳng, chứ không đè lên tranh màu nước: màu chữ cố
+                 định đặt trên tranh thì không bao giờ chứng minh nổi đủ tương phản
+                 (bài học vòng 7, design-qa §12). Con phong bì mặt cười đi cùng lượt
+                 này — mã QR đã nằm trong tranh nên cái khung phong bì bọc ngoài vừa
+                 thừa vừa đá nhau về phong cách.
+                 JS vẫn bật/tắt đúng #gift-qr như cũ, không phải sửa script. -->
+            <div class="gift-qr" id="gift-qr" tabindex="-1" hidden>
+              <p class="gift-qr-note" id="gift-qr-note">
                 Quét mã là tới thẳng ví của tụi mình.<br>
                 <span class="gift-joke">Bao nhiêu cũng quý — tụi mình hứa chỉ nhìn tên để cảm ơn chứ không nhìn số.
                   (Nhìn một xíu thôi.)</span>
-              </figcaption>
-            </figure>
+              </p>
+            </div>
 
             <!-- Hiện khi webhook SePay báo tiền của đúng khách này đã về (xem
                  #gift trong script.js). Chỉ lời cảm ơn, không bao giờ kèm số tiền.

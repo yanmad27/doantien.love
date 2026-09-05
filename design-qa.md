@@ -371,3 +371,304 @@ sau phép biến đổi ảnh, không lấy cả vùng nền sáng xung quanh:
 | `Gia đình cô Lê Thị Lan` | 5,38:1 |
 
 Toàn bộ tám ảnh `.tmp-*` đã được xoá sau khi soi.
+
+## 14. Vòng 9 — lật phối cảnh, đưa mã QR vào trong tranh
+
+- **Ngày QA:** 05.09.2026
+- **Trình duyệt:** Google Chrome headless (CDP), tab `visible`
+- **Viewport:** 320 / 390 / 1280px, thêm một lượt `--force-prefers-reduced-motion`
+
+### Đổi gì
+
+Yêu cầu của chủ thiệp: *"thay vì chạy tới Doãn Tiên ở xa thì flip cho Doãn Tiên ở
+gần, xong thì mở cái QR trong hình luôn chứ không phải ngoài hình."*
+
+Thêm lớp `.gift-camera` bọc mọi thứ vẽ trong tranh và cho nó dolly về tâm tấm bảng
+trên cổng cưới. Bé vẫn đi hết con đường như cũ; cái đổi là **máy quay tiến tới**,
+nên kết chuyến là cận cảnh cổng thay vì một cái cổng bé tí ở cuối đường. Mã QR
+chuyển từ dưới khung lên treo trên chính tấm bảng đó.
+
+`container-type` vẫn nằm ở `.gift-scene` chứ không phải lớp mới, nên `cqw/cqh` giữ
+nguyên hệ quy chiếu và **không phải tính lại một toạ độ nào** của Bé hay đoàn rước.
+
+### Ba thứ hỏng khi dựng, đã sửa
+
+| Vấn đề | Đo được | Sửa |
+|---|---|---|
+| Dolly đều từ giây đầu kéo Bé văng khỏi khung giữa chuyến | ở nửa chuyến Bé ra tới **−29,3%** | dồn dolly về 1/3 cuối (`gift-dolly` 45/65/80/90/100%) |
+| Pháo hoa nằm trong máy quay nên bị kéo đi | chùm 1 và 2 ra **−203%** và **−82,6%** | đưa `.gift-fireworks` + `.gift-celebration` ra ngoài `.gift-camera` |
+| Kéo ngang đủ −33% làm hở mép phải tranh | mép phải chỉ tới **95,9%** ở dolly 2,7 | dùng **−27%** (ngưỡng phủ kín là 17×(1−dolly) = −28,9%) |
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` |
+| Mã QR nằm trọn trong khung tranh | ✅ | ✅ | ✅ |
+| Cỡ mã QR | 151px | 184px | 231px |
+| Khung tranh | 280×187 | 350×233 | 560×373 |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+| `received`: QR tắt, lời cảm ơn hiện, pháo hoa trong khung | ✅ | ✅ | ✅ |
+
+**Reduced motion:** vào thẳng `arrived`, `getAnimations()` trong `#gift` đếm được
+**0 animation đang chạy**, mã QR `opacity: 1` ngay, không tràn ngang, 0 lỗi JS.
+Dolly ở `arrived` là transform tĩnh nên người bật giảm chuyển động vẫn thấy đúng
+cận cảnh cổng mà không có một khung hình chuyển động nào.
+
+**Trợ năng:** mã QR **không** nằm trong nhánh `aria-hidden` (`.gift-scene` vẫn
+`aria-hidden="true"`), có `alt` và `aria-describedby` trỏ đúng lời chú, xuất hiện
+trong cây AX với `ignored=false`. `#gift` vẫn chỉ có **đúng một** vùng `aria-live`
+và nó nằm ngoài `#gift-stage`.
+
+**Hợp đồng chức năng:** 14 điểm grep được đều còn nguyên (`visibilitychange`, so
+mốc `at`, `commitThanks`, fallback QR, ẩn section khi ảnh hỏng, poll 5s/15 phút,
+`preventScroll`, guard reduced-motion và container query, mã QR không `loading="lazy"`).
+`script.js` chỉ đổi **2 dòng**: bỏ `.gift-envelope-art` khỏi `GIFT_ART` và sửa một
+chữ trong chú thích. Toàn bộ logic mừng cưới không bị đụng.
+
+**Ngân sách ảnh:** 138.985 byte (135,7 KiB), giảm từ 166.750 — đã xoá
+`gift-envelope-open.webp` vì mã QR không còn khung phong bì bọc ngoài nữa.
+
+### Chưa kiểm được
+
+- **Thiết bị thật:** chưa chạy trên iOS Safari và Android Chrome thật. Đặc biệt cần
+  thử **quét mã bằng camera thật ở 320px**, nơi mã chỉ còn 151px — tính ra khoảng
+  27mm trên màn hình thật, đủ nhưng sát ngưỡng.
+- **Thiệp riêng `/t/<mã>`:** chưa dựng app quanly ở máy nên chưa xác minh mã QR từ
+  `qr.sepay.vn` hiện đúng chỗ trên tấm bảng. Đường dẫn ảnh không đổi nên rủi ro thấp,
+  nhưng chưa phải là đã kiểm.
+- **Trình duyệt không hỗ trợ container query:** suy luận là rơi vào `arrived` với
+  camera phóng sẵn (dolly chỉ dùng `%` và số không đơn vị, không dùng `cq`), Bé bị
+  `@supports` giấu đi. Chưa dựng được môi trường để đo thật.
+- Chưa chạy Lighthouse, chưa chạy Firefox/Safari, chưa đo lại fps sau thay đổi.
+
+## 15. Vòng 10 — bỏ cận cảnh, pháo hoa nổ ra mã QR ở khoảng trời trống
+
+- **Ngày QA:** 05.09.2026
+- **Trình duyệt:** Google Chrome headless (CDP)
+- **Viewport:** 320 / 390 / 1280px, thêm một lượt `prefers-reduced-motion: reduce`
+
+### Vì sao bỏ cú phóng cận cảnh của §14
+
+Chủ thiệp xem bản đang chạy thật và chỉ ra: *"góc trên trong hình bị trống, làm
+pháo hoa hiện QR đi; còn người di chuyển thì bỏ hiệu ứng mờ mờ đi, 9 người di
+chuyển nhỏ dần là được."*
+
+Cú dolly ở §14 giải quyết đúng "QR trong hình" nhưng bằng cách **bỏ toàn cảnh** —
+kết chuyến chỉ còn thấy cổng, mất con đường và cả đoàn người. Hướng mới giữ nguyên
+toàn cảnh và dùng chính khoảng trời trống góc trên–trái làm chỗ đặt mã, lấy pháo
+hoa làm cái cớ để mắt nhìn sang. Đổi lại tranh không bị phóng to nên **không còn
+vấn đề nở ảnh** (§14 phải cân `--dolly` theo bề rộng khung để giữ nét).
+
+Toàn bộ lớp `.gift-camera`, `@keyframes gift-dolly` và `gift-actor-exit` đã gỡ.
+
+### Đổi gì
+
+| | Trước (§14) | Sau |
+|---|---|---|
+| Khung cuối | cận cảnh cổng, dolly 2,7–3,9× | giữ toàn cảnh, không phóng |
+| Chỗ đặt QR | trên tấm bảng của cổng | khoảng trời trống góc trên–trái |
+| Cách QR hiện | mờ dần sau 0,12s | **pháo hoa nổ trước, mã hiện sau 0,34s** |
+| Đoàn người | 12 người, 3 cụm, lớp xa bị `saturate(.78)` | **9 người một hàng, không lọc gì** |
+| Chiều sâu | một phần do làm mềm lớp xa | hoàn toàn do cỡ người (1,00 → 0,31) |
+
+Vị trí và cỡ 9 người suy từ tâm đường đo ở §11 và `h = 0,49 × (chân y − 34)`, nên
+ai cũng đứng đúng mặt đường ở mọi bề rộng — không phải media query nào.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` |
+| Cỡ mã QR | 141px | 161px | 230px |
+| Mã nằm trọn trong khung tranh | ✅ | ✅ | ✅ |
+| Số người | 9 | 9 | 9 |
+| Cao người, gần → xa (px) | — | 51→16 | 89→28 |
+| `filter` trên người | `none` | `none` | `none` |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+| `received`: mã tắt, lời cảm ơn hiện | ✅ | ✅ | ✅ |
+
+**Reduced motion:** vào thẳng `arrived`, `getAnimations()` trong `#gift` đếm **0
+animation đang chạy**, mã `opacity: 1` ngay, 0 tràn ngang, 0 lỗi JS.
+
+**Trợ năng:** mã QR **không** nằm trong nhánh `aria-hidden`, `#gift` vẫn đúng
+**một** vùng `aria-live`.
+
+**Hai cái bẫy gặp khi dựng:**
+
+1. `gift-arrival-cheer` / `gift-victory-cheer` chuyển từ `.gift-marcher` sang
+   `.gift-crowd i` mà quên mở đầu bằng `translateX(-50%) scaleX(var(--flip))`.
+   `transform` ghi đè cả chuỗi nên cả chín người nhảy sang phải nửa thân đúng lúc
+   reo mừng. Đã thêm lại vào cả hai keyframes.
+2. Ba chùm pháo hoa đặt ở tâm mã thì bị chính mã che (mã có `z-index` cao hơn).
+   Đã dời ra **mép** mã để tia toả ra ngoài. Giữ nguyên thứ tự chồng: hạt không
+   bao giờ được nằm trên mặt mã, camera điện thoại sẽ đọc hụt.
+
+**Cỡ mã ở 320px:** `41vw` thuần cho ra 132px (~23mm máy thật), quét phập phù. Đã
+thêm sàn `max(140px, …)` → 141px. Trong khung 280×187 là 75% chiều cao, chật
+nhưng vẫn hở mép trên.
+
+### Chưa kiểm được
+
+- **Chưa quét bằng camera thật.** Đây là việc cần làm trước tiên, nhất là ở 320px.
+- **Thiệp riêng `/t/<mã>`:** chưa dựng app quanly ở máy.
+- Chưa iOS Safari / Android thật, chưa Firefox/Safari, chưa Lighthouse, chưa đo lại fps.
+
+## 16. Vòng 11 — zoom lúc Bé chạy vào, và mã QR bớt rời rạc
+
+- **Ngày QA:** 05.09.2026 · Chrome headless (CDP) · 320 / 390 / 1280px + reduced motion
+
+### a. Mã QR không còn "rời rạc"
+
+Chủ thiệp: *"cái QR bị rời rạc quá."* Soi ở cỡ lớn thì thấy hai lỗi chồng nhau:
+
+1. Khối trắng tinh, bo 10px, đổ bóng nổi — đúng chất thẻ giao diện dán đè lên
+   tranh màu nước.
+2. **Ảnh `qr-mung-cuoi.png` mang sẵn nền TRẮNG của riêng nó**, nên bọc thêm một
+   lớp giấy kem quanh nó thành **hai hình chữ nhật lồng nhau**, thấy rõ đường
+   viền trắng bên trong kem. Đây mới là nguồn gốc chính của cảm giác rời rạc.
+
+Đã sửa: mượn nguyên ngôn ngữ mẩu giấy của sổ lời chúc (`.wish`) — giấy kem
+`--paper`, viền mực rất nhạt, bo 3px, nghiêng 1,8°, bóng hai lớp (quầng kem toả
+rộng cho mép tan vào nền trời + bóng tiếp đất bám sát). Ảnh mã đặt
+`mix-blend-mode: multiply` nên nền trắng của nó nhân với giấy kem thành kem, ô đen
+giữ nguyên — hết hẳn hình chữ nhật lồng nhau. Tương phản còn ~19:1.
+
+Thêm **mẩu băng dính** ở mép trên (dùng lại `.wish::before`): không có nó thì tờ
+giấy trôi lơ lửng, không có gì giữ.
+
+### b. Zoom khi Bé chạy vào
+
+Chủ thiệp: *"zoom in khi bé phong bì chạy vào đi."*
+
+Dựng lại `.gift-camera` bọc các lớp vẽ và `@keyframes gift-zoom-in`:
+1 → 1,22 → **1,35** → 1,28 → **1**.
+
+`transform-origin` đặt đúng **tâm tấm bảng "Đám cưới Doãn & Tiên"** — `83% 28,5%`,
+đo trên chính `gift-journey-scene.webp` (mặt giấy nằm trong x 76,5–89%, y 21–36%).
+Phóng quanh điểm đó thì tấm bảng đứng yên còn mọi thứ khác nở ra quanh nó, nên
+mắt bị kéo về đúng cái tên. Bản đầu đặt tâm ở giữa khúc đường (48% 62%) — chủ
+thiệp yêu cầu dời vào tấm bảng.
+
+Hệ quả đã kiểm và chấp nhận: biển "Nhà bạn" trôi ra ngoài khung (−15,6%) lúc đỉnh
+zoom rồi quay lại khi nhả — đúng ý, camera đang nhìn về phía cổng. Bé vào khung
+muộn hơn một nhịp (x = 0,5% ở mốc 22% thay vì 15,4%) vì tâm phóng nằm xa bên phải;
+đọc ra thành "chạy vào từ mép trái". Cả chín người vẫn trong khung.
+
+**Mốc 100% bắt buộc là scale(1)**: chỗ đặt mã QR và dải đường của chín người đều
+canh theo khung KHÔNG zoom. Giữ zoom lại lúc tới nơi là mã lệch khỏi khoảng trời
+trống và người bị tờ giấy che.
+
+Đỉnh 1,35 chọn theo độ nét: ảnh gốc rộng 1120px nên khung desktop 560px còn thu
+nhỏ được tới 2,0× — 1,35 **không mất một chút nét nào**.
+
+Về mép: ở 1,35 bốn mép rơi vào −29,1% / 106,0% / −10,0% / 125,0%, phủ kín. Thật ra
+**chỉ cần scale ≥ 1 là không thể hở**, vì đây là phép phóng thuần quanh một điểm
+nằm trong ảnh, không kèm translate. Vệt hở mép phải từng gặp ở bản dolly §14 là do
+translate kéo ảnh đi chứ không phải do scale — hai chuyện khác nhau, đừng nhầm.
+
+Đo thật lúc chạy: 1,224 (vào) → 1,346 (đỉnh) → `none` (tới nơi). Đúng đường cong.
+
+### c. Lỗi bắt được: chín người bị tờ giấy che
+
+Lần đặt dải đường đầu tiên (`t = 0,46 → 0,96`) tôi kiểm sai **hai chỗ**, mỗi chỗ
+đều cho kết quả "0 người bị che" trong khi thực tế có:
+
+1. Kiểm trên toạ độ gốc thay vì toạ độ **sau** `gift-crowd-walk`.
+2. Kiểm **tâm** người thay vì **mép trái** (tâm trừ nửa bề rộng).
+
+Đo lại bằng hộp thật của tờ giấy (trừ phần phồng do `rotate`, đo được 4–5px):
+ở 320px người #1 bị che **7/16px — gần nửa thân**. Ca xấu nhất là 320px vì sàn
+140px làm tờ giấy chiếm 50% bề ngang khung.
+
+Đã dời sang `t = 0,56 → 0,98`. Đo lại: **chồng lấn = 0** ở cả 320 và 390px. Giá
+phải trả: người gần nhất nhỏ đi từ 15,5% xuống 14,1% chiều cao khung.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px | +reduced motion |
+|---|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` | `arrived` |
+| Cỡ mã QR | 144px | 165px | 237px | 165px |
+| Mã trong khung tranh | ✅ | ✅ | ✅ | ✅ |
+| `mix-blend-mode` | multiply | multiply | multiply | multiply |
+| Người bị giấy che | **0** | **0** | **0** | **0** |
+| `filter` trên người | none | none | none | none |
+| Animation đang chạy | 12 | 12 | 12 | **0** |
+| Mã trong nhánh aria-hidden | không | không | không | không |
+| Vùng `aria-live` trong `#gift` | 1 | 1 | 1 | 1 |
+| Tràn ngang | 0 | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 | 0 |
+
+CSS mồ côi: 0. `script.js` vẫn chỉ đổi 2 dòng so với `main`.
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật** — vẫn là việc cần làm trước tiên. `multiply`
+  làm nền mã thành kem `#fffaf3` thay vì trắng; tương phản tính ra ~19:1 nhưng
+  chưa ai đưa điện thoại lên quét thử.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
+
+## 17. Vòng 12 — zoom vào bảng cổng, và cột biển QR mọc lên
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px + reduced motion
+
+### Đổi gì
+
+Chủ thiệp: *"zoom in vào bảng đám cưới Doãn Tiên, xong có 1 cái cột bảng QR mọc
+lên, làm animation đẹp tí nhé."*
+
+1. **Tâm zoom** dời vào tấm bảng cổng: `transform-origin: 83% 28.5%`. Phóng quanh
+   điểm đó thì tấm bảng đứng yên còn mọi thứ khác nở ra quanh nó.
+2. **Cột biển QR mọc lên khỏi mặt đất** thay cho tờ giấy dán lơ lửng. Bức tranh
+   vốn đã có hai biển gỗ cắm đất (biển chỉ đường và cổng cưới) nên cái thứ ba là
+   thứ thuộc về thế giới đó. Bỏ mẩu băng dính — đã có cột giữ, không cần cái cớ.
+3. Nhịp: cột mọc (`gift-sign-rise`, 0,82s, vọt 1,04 rồi lún về 1) → bảng lắc một
+   nhịp rồi đứng (`gift-board-settle`, kết thúc đúng −1,8° trùng rotate nghỉ) →
+   pháo hoa nổ (dời sang 780/950/1110ms để mừng lúc biển vừa dựng xong).
+4. Thêm **vệt bóng tiếp đất** ở chân cột — thiếu nó thì cột đứng lơ lửng trên mặt
+   đường.
+
+### Ba lỗi bắt được trong lúc dựng
+
+| Lỗi | Biểu hiện | Nguyên nhân |
+|---|---|---|
+| Mã QR nở thành 381px, tràn ngang 94px | ảnh về cỡ gốc | thay khối CSS đã **xoá nhầm** luật `.gift-qr-code` |
+| Cột cao 0px, biến mất | `height: 11%` | cha `.gift-qr-sign` cao `auto` nên `%` quy chiếu về 0. Đổi sang `calc(var(--board) * .16)` |
+| **Số cỡ mã QR các vòng trước đều SAI** | báo 144/165/237px | đó là bề rộng **tờ giấy**, không phải vùng mã. Đệm `.55rem` ăn mất ~20px mỗi chiều |
+
+Lỗi thứ ba đáng nhớ nhất: suốt §15–§16 tôi báo cáo cỡ mã bằng cách đo
+`getBoundingClientRect()` của tờ giấy. Mã thật ở 320px chỉ ~120px chứ không phải
+144px. Đã giảm đệm xuống `.35rem` (ảnh QR mang sẵn vùng lặng của nó, viền giấy
+không phải vùng lặng) và từ nay đo bằng `img.offsetWidth`.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px | +reduced motion |
+|---|---|---|---|---|
+| **Mã QR thật** (`img.offsetWidth`) | 127px | 147px | 217px | 147px |
+| Bề rộng tờ giấy | 140px | 160px | 230px | 160px |
+| Cột (rộng × cao) | 8×22 | 10×26 | 15×37 | 10×26 |
+| Chân cột | 88,0% | 88,0% | 88,0% | 88,0% |
+| Mép trên biển | 2,1% | 9,4% | 17,1% | 9,4% |
+| Biển nằm trọn trong khung | ✅ | ✅ | ✅ | ✅ |
+| Người bị biển che | **0/9** | **0/9** | **0/9** | **0/9** |
+| `camTransform` lúc `arrived` | none | none | none | none |
+| Biến hình của biển lúc nghỉ | identity | identity | identity | **none** |
+| Animation đang chạy | 0 | 0 | 0 | **0** |
+| Mã trong nhánh aria-hidden | không | không | không | không |
+| Vùng `aria-live` trong `#gift` | 1 | 1 | 1 | 1 |
+| Tràn ngang | 0 | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 | 0 |
+
+Reduced motion cho `transform: none` — biển hiện thẳng ở trạng thái cuối, cột
+không mọc, đúng như thiết kế (trạng thái nghỉ là "đã hiện đủ", phần ẩn nằm ở mốc
+0% của keyframes).
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật.** Ở 320px mã thật chỉ 127px (~22mm) và nền là
+  kem `#fffaf3` do `mix-blend-mode: multiply`. Vẫn là việc cần làm trước tiên.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.

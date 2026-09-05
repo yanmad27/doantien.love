@@ -250,12 +250,45 @@ Khi `prefers-reduced-motion: reduce`:
 
 ### Mừng cưới (QR)
 
-- QR **không bày sẵn**: nằm sau nút "Gửi lời chúc mừng từ xa" ở section `#gift`.
+- QR **không bày sẵn**: nằm sau nút "Gọi Bé Phong Bì" ở section `#gift`.
   Ai muốn mới mở, khách khác lướt qua.
-- Bấm nút → chạy 6 dòng trạng thái kèm thanh tiến trình **cố tình kẹt ở 99%**
-  (`GIFT_STEPS`, tổng ~5.3s) rồi QR mới hiện. Mỗi bước có thời lượng riêng nên
-  phải cộng dồn mốc thời gian, không nhân đều được.
-- Bật `prefers-reduced-motion` thì bỏ màn diễn, hiện QR luôn.
+- Bấm nút → Bé Phong Bì lên đường, bị một đoàn rước nhập hội, đi hết 4,8 giây
+  (`RIDE_MS` / `RIDE_STEPS` trong `script.js`, phải khớp `@keyframes gift-ride`)
+  rồi QR mới hiện.
+- **Đoàn đi trên đường: 9 người, nhỏ dần theo phối cảnh.** Một lớp `.gift-crowd`
+  duy nhất thay cho ba cụm rời của bản trước (6 xa + 3 sau + 3 trước).
+  - Toạ độ chân và chiều cao suy từ tâm đường đo ở `design-qa.md` §11 và công thức
+    `h = 0,49 × (chân y − 34)`, nên ai cũng đứng đúng mặt đường ở mọi bề rộng.
+    Cỡ giảm đều **1,00 → 0,31** từ người gần nhất tới người xa nhất.
+  - **Không còn lớp làm mềm / giảm bão hoà** nào. Bản trước phải `filter:
+    saturate(.78)` lớp xa để giả chiều sâu; giờ chiều sâu đến từ chính cỡ người.
+  - Ô sprite 250×500 nên rộng = nửa cao. Cao tính bằng `cqh`, rộng phải đổi sang
+    `cqw`: khung 3:2 nên `1cqh = 2/3 cqw`, thành ra `rộng = --h / 3 cqw`. Sai chỗ
+    này thì người bị bóp ngang ở mọi màn hình mà nhìn qua rất khó nhận ra.
+  - `gift-arrival-cheer` / `gift-victory-cheer` phải mở đầu bằng
+    `translateX(-50%) scaleX(var(--flip))` giống transform gốc — `transform` ghi
+    đè cả chuỗi, thiếu hai phép đó là cả chín người nhảy sang phải nửa thân đúng
+    lúc reo mừng.
+- **QR nằm TRONG tranh, ở khoảng trời trống góc trên–trái** — không còn đặt dưới
+  khung, và **không** dùng cú phóng cận cảnh (đã thử ở bản trước, xem §14).
+  - Pháo hoa nổ ở chính chỗ đó rồi mã QR hiện ra sau **0,34s**. Vùng ấy vốn trống
+    trơn: vừa là chỗ duy nhất đủ rộng để đặt mã, vừa cần một cái cớ để mắt nhìn sang.
+  - Ba chùm đặt ở **mép** mã nên tia toả ra ngoài. Mã có `z-index` cao hơn lớp
+    pháo hoa nên phần tia chạy vào giữa bị mã che — cố ý: hạt nằm trên mặt mã là
+    camera điện thoại đọc hụt.
+  - Ảnh QR (`.gift-qr-code`) là con của `.gift-frame`, **không** nằm trong
+    `.gift-scene`: scene mang `aria-hidden` nên để vào trong là trình đọc màn hình
+    mất sạch phần mừng cưới. Nhìn thì trong tranh, cấu trúc thì ngoài.
+  - Hiện/ẩn theo `data-phase` bằng CSS, không cần JS gắn/gỡ.
+  - Cỡ mã: `min(230px, max(140px, 41vw))`. Vùng trống thật sự (x 2–68%, y 3–40%)
+    chỉ cao 86px trên khung mobile 350×233 — nhét vừa khít vào đó thì mã còn ~80px
+    và không quét nổi. Nên mã lấn xuống phần đường nét đứt mờ: hộp dùng được là
+    **x 22–68%, y 3–70%**. `max(140px, …)` là sàn cho màn 320px. Quét được quan
+    trọng hơn bố cục đẹp.
+  - Lời chú vẫn ở **dưới** khung, trên nền giấy phẳng — chữ đè lên tranh màu nước
+    không bao giờ chứng minh nổi đủ tương phản (bài học vòng 7, design-qa §12).
+- Bật `prefers-reduced-motion` thì bỏ màn diễn, vào thẳng chặng `arrived` và hiện
+  QR luôn — đã đo `getAnimations()` trong `#gift` đếm 0 animation đang chạy.
 - Ảnh QR:
   - Thiệp chung dùng `assets/qr-mung-cuoi.png` — QR tĩnh, không mang mã ai cả.
   - Thiệp riêng `/t/<mã>` được app quanly thay bằng ảnh từ `qr.sepay.vn/img`,
