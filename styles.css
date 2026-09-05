@@ -1734,18 +1734,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   /* Hai lớp: mặt bảng gỗ nhạt chỉ phủ vùng nội dung, khung gỗ sẫm phủ cả phần
      đệm. Vân gỗ là mấy vạch dọc alpha rất thấp — đủ để mắt đọc ra thớ gỗ, chưa
      tới mức thành hoạ tiết kẻ sọc.
-     Tông gỗ KHÔNG tự chọn: lấy mẫu pixel từ chính gift-journey-scene.webp. Gỗ
-     trong tranh nhạt hơn nhiều so với gỗ "mặc định" trong đầu — mặt biển #fbf4e8,
-     cột #f4ddc0, chỗ sẫm nhất là hàng rào #d9b58f. Bản đầu tôi làm khung #8e6d40
-     và nó đọc ra thành vật liệu khác hẳn, dán lên tranh chứ không thuộc về tranh.
-     Mặt bảng #ecd9b9: ô mã là ĐEN TUYỀN nên tương phản vẫn 15,2:1, quét thoải
-     mái. Chính vì mã đen nên nền gỗ không đe doạ khả năng quét như nền màu thường. */
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 118, 74, .06) 0 2px, transparent 2px 7px) content-box,
-    linear-gradient(180deg, #f0dfc2, #e6d0ac) content-box,
-    repeating-linear-gradient(90deg, rgba(140, 104, 60, .1) 0 3px, transparent 3px 9px) padding-box,
-    linear-gradient(180deg, #d9b58f, #c69c6d) padding-box;
-  border: 1px solid rgba(150, 113, 66, .5);
+     Gỗ KHÔNG vẽ bằng gradient CSS: cắt thẳng từ ván biển "Nhà bạn" trong
+     gift-journey-scene.webp (vùng x 5–15%, y 55,5–63%) rồi kéo cho đầy tấm bảng.
+     Bản trước tôi lấy đúng MÀU gỗ bằng cách đọc pixel, nhưng vẫn là gradient
+     phẳng — đặt cạnh tranh màu nước là lộ ra hai chất liệu khác nhau. Bản này
+     dùng chính thớ gỗ ấy nên là cùng một loại gỗ, theo đúng nghĩa đen.
+
+     Cùng URL với ảnh nền nên trình duyệt KHÔNG tải thêm byte nào.
+
+     Không lấy tấm bảng cổng cưới: nó mang theo hoa và rèm, mà mã QR lại đứng
+     ngay cạnh chính cái cổng đó trong tranh — thành hai tấm bảng giống hệt nhau.
+     Ván biển "Nhà bạn" là mảng gỗ sạch duy nhất đủ rộng trong tranh.
+
+     Phóng 10×/13,3× nên thớ gỗ nhoè thành vệt loang — đúng chất màu nước, và
+     mặt ván vốn rất nhạt nên ô mã đen vẫn nổi rõ. */
+  background: url("./assets/gift-journey-scene.webp") 5.6% 60% / 1000% 1333% no-repeat;
+  border: 1px solid rgba(150, 113, 66, .38);
   border-radius: 4px;
   rotate: -1.8deg;
   isolation: isolate;

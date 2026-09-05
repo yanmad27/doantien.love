@@ -843,3 +843,61 @@ Chữ nằm trọn trong mặt biển ở mọi ca; 0 tràn ngang trang; 0 lỗi
 - Chưa xem trên thiệp riêng `/t/<mã>` thật (chưa dựng app quanly ở máy) — tên ở đó
   do server đổ vào `#gift-origin-sign`, cùng phần tử đã thử ở đây nên rủi ro thấp.
 - Chưa quét mã QR bằng camera thật.
+
+## 21. Vòng 16 — bảng QR dùng ĐÚNG loại gỗ trong tranh
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px
+
+Chủ thiệp: *"bảng gỗ phải chung loại gỗ vs hình nha."*
+
+Vòng 14 tôi đã lấy đúng **màu** gỗ bằng cách đọc pixel từ tranh, nhưng vẫn vẽ
+bằng gradient CSS phẳng. Đặt cạnh tranh màu nước là lộ ra **hai chất liệu khác
+nhau** — đúng màu mà sai chất.
+
+Bản này cắt thẳng thớ gỗ từ `gift-journey-scene.webp`, dùng chính kỹ thuật mà
+`.gift-origin-board-art` đang dùng.
+
+### Chọn vùng gỗ nào
+
+| Vùng thử | Kết quả |
+|---|---|
+| Cột cổng, phóng 500–800% | bắt cả hoa và cây, không ra gỗ |
+| Nguyên tấm bảng cổng | có khung + mặt đẹp, **nhưng mang theo hoa và rèm** — mà mã QR lại đứng ngay cạnh chính cái cổng đó, thành hai tấm bảng giống hệt nhau |
+| Đáy bảng cổng (dưới hoa) | khung hai bên ổn, trên/dưới cắt cụt |
+| Cột dọc cổng | lẫn cây cối |
+| **Ván biển "Nhà bạn"** (x 5–15%, y 55,5–63%) | **gỗ sạch, có mép khung mềm bao quanh, không hoa** — chọn cái này |
+
+`background: url(...) 5.6% 60% / 1000% 1333% no-repeat`. Cùng URL với ảnh nền nên
+**không tải thêm byte nào** — ngân sách ảnh không đổi.
+
+### Tương phản: gỗ thật còn SÁNG HƠN gradient tự vẽ
+
+| Nền dưới ô mã | Tương phản |
+|---|---:|
+| Trắng gốc của ảnh QR | 21,0:1 |
+| Giấy kem (vòng 12) | 20,2:1 |
+| Gỗ gradient CSS (vòng 14) | 15,2:1 |
+| **Gỗ thật, chỗ sáng** | **19,2:1** |
+| **Gỗ thật, chỗ sẫm nhất** | **14,9:1** |
+
+Nghe ngược nhưng đúng: ván biển trong tranh là gỗ bạc màu rất nhạt, sáng hơn tông
+gỗ "mặc định trong đầu" mà tôi tự chọn ở vòng 14.
+
+### Kết quả
+
+| | 320px | 390px | 1280px |
+|---|---|---|---|
+| Mã QR thật | 124px | 144px | 214px |
+| Mã nằm trọn trong bảng | ✅ | ✅ | ✅ |
+| `mix-blend-mode` | multiply | multiply | multiply |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+
+Ngân sách ảnh **không đổi** (1.206.543 byte) — CSS nay dùng lại ảnh tranh ở 5 chỗ.
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật.** Giờ nền mã là thớ gỗ có vệt loang chứ không
+  phải một màu phẳng — tương phản tính ra 14,9–19,2:1 nhưng vân không đều là biến
+  số mới mà phép tính không nói hết. Đây là lần đáng thử nhất từ trước tới giờ.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari: chưa.
