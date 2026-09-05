@@ -10,7 +10,9 @@
   --gold: #aa8356;
   /* biến thể đủ tương phản của peach-dark/gold cho chữ nhỏ (xem design-qa.md) */
   /* #bf504b chỉ đạt 4.46:1 cho .nav-rsvp khi section blush trôi dưới nav trong suốt */
-  --peach-ink: #bb4c47;
+  /* Tram bot cho bot gat: H giu nguyen, S 46% -> 36%. Do lai thi tuong phan
+     KHONG giam ma con tang tren moi nen (giay 4,77 -> 5,00:1; blush 3,86 -> 4,05:1). */
+  --peach-ink: #a95350;
   --gold-ink: #7d5b2c;
   --line: rgba(215, 117, 112, .55);
   /* trái tim dùng cho mark ngày cưới — mask nên co giãn theo ô, không cần kích thước cứng */
@@ -22,7 +24,13 @@
   --serif: "Cormorant Garamond", Georgia, serif;
   /* Great Vibes chỉ có MỘT weight 400 — mọi chỗ dùng --script phải bỏ
      font-weight 500/600, không thì trình duyệt bôi đậm giả và bệt hết nét thanh. */
-  --script: "Great Vibes", "Dancing Script", cursive;
+  /* Style Script: calligraphy CO KIEM SOAT — chu hoa bieu cam nhung khong swash
+     to, net deu, doc duoc, dau tieng Viet sach. Great Vibes cu swash rat manh,
+     doc ra kieu thiep ballroom; Dancing Script thi nay va moc.
+     Da kiem subset tieng Viet bang API Google Fonts (thieu dau la hong het ten).
+     Great Vibes va Dancing Script VAN phai nap: so loi chuc dung chung lam net
+     chu .wish--f1 / .wish--f3 va chu ky .wish--f0. */
+  --script: "Style Script", "Dancing Script", cursive;
   --sans: "Be Vietnam Pro", sans-serif;
   /* Lớp chữ hoa nhỏ: menu, "TRÂN TRỌNG KÍNH MỜI", nút. Montserrat có chân chữ
      hình học, tracking rộng ra vẫn đọc tốt và không đụng nhịp với serif/script. */
@@ -498,16 +506,19 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 .hero::before { inset: 5.5rem 2rem 2rem; border: 1px solid var(--line); border-radius: 10px; }
 .hero::after { inset: 6rem 2.5rem 2.5rem; border: 1px solid rgba(170, 131, 86, .2); border-radius: 6px; }
 .hero-frame { position: relative; z-index: 3; max-width: 760px; text-align: center; }
-.hero-copy, .honor { margin: 0 auto 2rem; color: var(--ink-soft); font-family: var(--serif); font-size: clamp(1.05rem, 2vw, 1.25rem); line-height: 1.55; }
+/* Gian dong rong hon va ha co mot nhip: hai doan nay phai lui lai phia sau ten,
+   khong tranh chap. Mau giu --ink-soft (#6f5d55) — nau xam am, da dat AA. */
+.hero-copy, .honor { margin: 0 auto 2.35rem; color: var(--ink-soft); font-family: var(--serif); font-size: clamp(1.02rem, 1.85vw, 1.18rem); line-height: 1.78; }
 .couple {
   margin: .25rem 0;
   color: var(--peach-ink);
   font-family: var(--script);
-  /* Great Vibes có x-height thấp hơn Dancing Script nhưng đuôi chữ dài hơn:
-     nới cỡ ~8% và line-height để dấu nặng/đuôi g không bị cắt. */
-  font-size: clamp(3.7rem, 8.6vw, 7.5rem);
+  /* Hạ cỡ ~10% so với bản Great Vibes: Style Script có x-height CAO hơn hẳn nên
+     cùng một font-size thì chữ trông to hơn, mà khối tên cần nhẹ bớt để có chỗ
+     thở. line-height vẫn phải chặt vừa đủ cho dấu nặng và đuôi g không bị cắt. */
+  font-size: clamp(3.33rem, 7.75vw, 6.75rem);
   /* BẮT BUỘC ghi rõ 400: đây là thẻ <h1>, mặc định của trình duyệt là bold 700.
-     Great Vibes không có bản đậm nên trình duyệt bôi đậm giả — nét bệt lại. Lúc
+     Style Script không có bản đậm nên trình duyệt bôi đậm giả — nét bệt lại. Lúc
      bìa còn mở thì thấy bản sao đang bay (weight 400, mảnh), animation xong mới
      bàn giao cho <h1> thật nên chữ "tự nhiên đậm lên" ở đúng khung hình cuối. */
   font-weight: 400;
@@ -527,19 +538,21 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
     linear-gradient(90deg, transparent, var(--line)) left center / calc(50% - 20px) 1px no-repeat,
     linear-gradient(90deg, var(--line), transparent) right center / calc(50% - 20px) 1px no-repeat;
 }
+/* Dấu ở giữa: một ô vuông nhỏ xoay 45° — hình học thuần, không phải trái tim.
+   Trái tim ở đây đọc ra ngay thành thiệp mẫu; một chấm trám thì chỉ làm nhiệm vụ
+   ngắt hai vạch, không phát biểu gì thêm. Cỡ 5px và để rỗng (viền 1px) cho nó
+   nhẹ hơn hẳn hai vạch, đúng vai trò dấu ngắt chứ không phải hoạ tiết.
+   Là ô vuông đối xứng nên căn -50% -50% đúng tâm, không phải bù lệch như trái tim. */
 .ornament::after {
   content: "";
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 15px;
-  aspect-ratio: 100 / 88;
-  /* -46% chứ không phải -50%: trái tim thắt nhọn ở đáy nên phần "nặng" nằm lệch
-     lên trên, căn theo tâm hình học sẽ trông thấp hơn hai vạch hai bên. */
-  translate: -50% -46%;
-  background: var(--peach-ink);
-  -webkit-mask: var(--heart-outline) center / contain no-repeat;
-  mask: var(--heart-outline) center / contain no-repeat;
+  width: 5px;
+  height: 5px;
+  translate: -50% -50%;
+  rotate: 45deg;
+  border: 1px solid var(--line);
 }
 
 /* Dấu "và" trên bìa: trái tim thay cho chữ "&" */
@@ -559,26 +572,22 @@ body.opened .nav { animation: nav-drop .8s var(--ease-out) .45s backwards; }
 
 /* Bóng đổ rất nhẹ dưới tên như mockup: đủ để chữ script nổi khỏi nền ivory,
    không đủ để thành hiệu ứng nổi khối. */
-.couple-name { display: block; text-shadow: 0 3px 10px rgba(155, 79, 74, .18); }
-.couple-family { display: block; margin-bottom: .45rem; color: var(--ink); font-family: var(--serif); font-size: .24em; font-weight: 500; letter-spacing: .09em; text-transform: uppercase; }
-.couple-name + .couple-family { margin-top: .1rem; }
-.couple-heart { display: block; margin: -.25rem 0; color: var(--peach); font-family: var(--serif); font-size: 2rem; line-height: 1.6; }
-.hero .honor { margin-top: 2.25rem; }
+/* Bỏ text-shadow. Bóng đổ dưới chữ là thứ "hiệu ứng" dễ nhận ra nhất của thiệp
+   mẫu, và ở cỡ chữ này nó làm nét calligraphy mờ chân thay vì sắc. Chữ nằm trên
+   nền giấy phẳng thì không cần bóng để tách khỏi nền. */
+.couple-name { display: block; }
+/* Ho va ten phai doc thanh MOT khoi: keo ho sat xuong ten (.45rem -> .16rem) va
+   gian chu rong hon (.09 -> .15em) cho ra chat serif editorial. */
+.couple-family { display: block; margin-bottom: .16rem; color: var(--ink); font-family: var(--serif); font-size: .215em; font-weight: 500; letter-spacing: .15em; text-transform: uppercase; }
+/* Khoang nghi giua khoi chu re va khoi co dau. Truoc day cho nay la trai tim;
+   bo trai tim roi thi chinh khoang trang lam nhiem vu ngan cach. */
+.couple-name + .couple-family { margin-top: 1.45rem; }
+.hero .honor { margin-top: 3rem; }
 .text-link { display: inline-flex; align-items: center; min-height: 44px; gap: .75rem; color: var(--peach-ink); font-family: var(--ui); font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-decoration: none; text-transform: uppercase; }
 .text-link span { font-size: 1.1rem; animation: arrow-bob 2.6s ease-in-out infinite; }
-/* Hai nhánh lá nhỏ hai bên CTA như mockup. Dùng lại đúng file hoa đang có nên
-   không thêm request ảnh nào; ::before lật ngang để hai bên đối xứng. */
-.text-link::before, .text-link::after {
-  content: "";
-  /* Ảnh riêng cho hoạ tiết này (nhánh lá 168x208 cắt rời) chứ không ép nhỏ
-     floral-branch.webp — file đó là một CÀNH DÀI, thu về cỡ này thì chỉ còn
-     vài vệt li ti không ra hình gì. */
-  width: 44px;
-  height: 54px;
-  background: url("./assets/sprig.webp") center / contain no-repeat;
-  opacity: .75;
-}
-.text-link::before { scale: -1 1; }
+/* Hai nhánh lá hai bên CTA đã bỏ. Chúng kéo mắt ra hai phía trong khi đây chỉ là
+   một dòng dẫn nhỏ, và là thứ "hoạ tiết cưới" rõ nhất còn sót trong khối lời mời.
+   Không thay bằng biểu tượng khác — để trống là đủ. */
 .text-link:hover span { animation: none; translate: 0 4px; }
 /* Ba mảnh trang trí rời. Bề rộng hiển thị KHÔNG được vượt kích thước thật của
    file (532 / 468 / 788px) — vượt là ảnh bị nội suy và nhòe, đúng lỗi của bản
@@ -1063,7 +1072,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .couple { font-size: clamp(2.1rem, 5.4vw, 3.1rem); }
   .couple-family { margin-bottom: .2rem; }
   .hero-copy, .honor { margin-bottom: .8rem; font-size: .98rem; }
-  .couple-heart { font-size: 1.5rem; margin: -.15rem 0; }
   .ornament { margin: .5rem auto .9rem; }
   .kicker, .section-label, .overline { margin: .7rem 0 .4rem; }
   .countdown, .details, .calendar-section, .rsvp { padding-block: 3.2rem; }
