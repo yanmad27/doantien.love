@@ -844,60 +844,52 @@ Chữ nằm trọn trong mặt biển ở mọi ca; 0 tràn ngang trang; 0 lỗi
   do server đổ vào `#gift-origin-sign`, cùng phần tử đã thử ở đây nên rủi ro thấp.
 - Chưa quét mã QR bằng camera thật.
 
-## 21. Vòng 16 — bảng QR dùng ĐÚNG loại gỗ trong tranh
+## 21. Vòng 16 — thử cắt thớ gỗ thật từ tranh, và vì sao PHẢI BỎ
 
-- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px
+- **Ngày:** 05.09.2026
 
 Chủ thiệp: *"bảng gỗ phải chung loại gỗ vs hình nha."*
 
-Vòng 14 tôi đã lấy đúng **màu** gỗ bằng cách đọc pixel từ tranh, nhưng vẫn vẽ
-bằng gradient CSS phẳng. Đặt cạnh tranh màu nước là lộ ra **hai chất liệu khác
-nhau** — đúng màu mà sai chất.
+Vòng 14 lấy đúng **màu** gỗ (đọc pixel từ tranh) nhưng vẽ bằng gradient CSS phẳng
+— đúng màu mà sai chất liệu. Vòng này thử cắt thẳng thớ gỗ từ
+`gift-journey-scene.webp`, dùng kỹ thuật của `.gift-origin-board-art`:
 
-Bản này cắt thẳng thớ gỗ từ `gift-journey-scene.webp`, dùng chính kỹ thuật mà
-`.gift-origin-board-art` đang dùng.
+```css
+background: url("./assets/gift-journey-scene.webp") 5.6% 60% / 1000% 1333% no-repeat;
+```
 
-### Chọn vùng gỗ nào
+**Kết quả: hỏng, đã revert.** Chủ thiệp xem xong nói gọn "xấu quá".
 
-| Vùng thử | Kết quả |
+### Vì sao hỏng — con số
+
+Vùng ván biển "Nhà bạn" trong ảnh gốc chỉ khoảng **112 × 56 pixel**. Kéo cho đầy
+tấm bảng phải phóng **10× ngang, 13,3× dọc**. Ở mức đó thớ gỗ tan thành mảng loang
+mờ, không còn ra vân gỗ.
+
+Đây là giới hạn của chính bức tranh, không phải lỗi tham số: **trong
+`gift-journey-scene.webp` không có mảng gỗ nào đủ lớn.** Đã thử năm vùng:
+
+| Vùng | Vì sao không dùng được |
 |---|---|
-| Cột cổng, phóng 500–800% | bắt cả hoa và cây, không ra gỗ |
-| Nguyên tấm bảng cổng | có khung + mặt đẹp, **nhưng mang theo hoa và rèm** — mà mã QR lại đứng ngay cạnh chính cái cổng đó, thành hai tấm bảng giống hệt nhau |
-| Đáy bảng cổng (dưới hoa) | khung hai bên ổn, trên/dưới cắt cụt |
+| Cột cổng (500%, 800%) | bắt cả hoa và cây |
+| Nguyên tấm bảng cổng | khung + mặt đẹp, nhưng **mang theo hoa và rèm** — mà mã QR đứng ngay cạnh chính cái cổng đó, thành hai tấm bảng giống hệt nhau |
+| Đáy bảng cổng | trên/dưới cắt cụt |
 | Cột dọc cổng | lẫn cây cối |
-| **Ván biển "Nhà bạn"** (x 5–15%, y 55,5–63%) | **gỗ sạch, có mép khung mềm bao quanh, không hoa** — chọn cái này |
+| Ván biển "Nhà bạn" | mảng gỗ sạch duy nhất, nhưng chỉ 112×56px → nhoè |
 
-`background: url(...) 5.6% 60% / 1000% 1333% no-repeat`. Cùng URL với ảnh nền nên
-**không tải thêm byte nào** — ngân sách ảnh không đổi.
+Điều đáng ghi: tương phản thì **không** phải vấn đề. Ô mã là đen tuyền nên trên gỗ
+thật vẫn đạt 14,9–19,2:1, còn tốt hơn gradient (15,2:1). Vấn đề thuần tuý là **độ
+phân giải nguồn**.
 
-### Tương phản: gỗ thật còn SÁNG HƠN gradient tự vẽ
+### Cách đúng, chưa làm được
 
-| Nền dưới ô mã | Tương phản |
-|---|---:|
-| Trắng gốc của ảnh QR | 21,0:1 |
-| Giấy kem (vòng 12) | 20,2:1 |
-| Gỗ gradient CSS (vòng 14) | 15,2:1 |
-| **Gỗ thật, chỗ sáng** | **19,2:1** |
-| **Gỗ thật, chỗ sẫm nhất** | **14,9:1** |
+Phải **vẽ riêng một asset tấm biển gỗ** (`assets/gift-qr-board.webp`, nền trong
+suốt, ~700×700, ≤25KB) cùng bút pháp màu nước với tranh. Đã giao cho một agent
+sinh ảnh, nhưng **bị chặn**: máy chưa có `OPENAI_API_KEY`, cũng không có CLI sinh
+ảnh nào. Đây là quyết định của chủ thiệp (dịch vụ ngoài, có tính phí), không phải
+việc kỹ thuật.
 
-Nghe ngược nhưng đúng: ván biển trong tranh là gỗ bạc màu rất nhạt, sáng hơn tông
-gỗ "mặc định trong đầu" mà tôi tự chọn ở vòng 14.
+Trong lúc chờ, giữ bản gỗ gradient của vòng 14: sạch, không nhoè, nhưng đúng là
+chưa cùng chất liệu với tranh.
 
-### Kết quả
-
-| | 320px | 390px | 1280px |
-|---|---|---|---|
-| Mã QR thật | 124px | 144px | 214px |
-| Mã nằm trọn trong bảng | ✅ | ✅ | ✅ |
-| `mix-blend-mode` | multiply | multiply | multiply |
-| Tràn ngang | 0 | 0 | 0 |
-| Lỗi JS | 0 | 0 | 0 |
-
-Ngân sách ảnh **không đổi** (1.206.543 byte) — CSS nay dùng lại ảnh tranh ở 5 chỗ.
-
-### Chưa kiểm được
-
-- **Chưa quét mã bằng camera thật.** Giờ nền mã là thớ gỗ có vệt loang chứ không
-  phải một màu phẳng — tương phản tính ra 14,9–19,2:1 nhưng vân không đều là biến
-  số mới mà phép tính không nói hết. Đây là lần đáng thử nhất từ trước tới giờ.
-- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari: chưa.
+**Đừng thử lại hướng cắt-phóng-to.** Đã đo, đã dựng, đã nhìn — nguồn không đủ pixel.
