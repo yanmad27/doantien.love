@@ -274,50 +274,59 @@
                  nằm trong tranh", còn cây trợ năng vẫn thấy đủ. -->
             <div class="gift-frame">
               <div class="gift-scene" aria-hidden="true">
-                <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
-                     loading="lazy" decoding="async" alt="">
-                <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
-                     cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
-                     thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
-                     duyệt chỉ tải gift-journey-scene.webp một lần. -->
-                <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
-                     loading="lazy" decoding="async" alt="">
-                <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
-                     aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
-                     Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
-                <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
-                <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
-                <div class="gift-road-magic">
-                  <i class="gift-road-heart"></i><i class="gift-road-note"></i>
-                  <i class="gift-road-heart"></i><i class="gift-road-note"></i>
-                  <i class="gift-road-heart"></i><i class="gift-road-note"></i>
-                </div>
-                <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
-  
-                <!-- Chín người đi trên đường, nhỏ dần theo phối cảnh — thay cho ba
-                     cụm rời (6 người xa + 3 sau + 3 trước) của bản trước. Bản cũ có
-                     một lớp bị làm mềm và giảm bão hoà để giả chiều sâu; bỏ hẳn,
-                     chiều sâu giờ đến từ chính cỡ người.
-                     Toạ độ chân và chiều cao suy từ tâm đường đo ở design-qa §11 và
-                     công thức h = 0,49×(chân y − 34), nên ai cũng đứng đúng mặt
-                     đường ở mọi bề rộng màn hình. Cỡ giảm đều 1,00 → 0,31.
-                     Vẫn một sprite sheet cắt ở 4 ô, đổi ô/lật/ngắt nhịp để không ai
-                     giống ai; tách thành nhiều file sẽ bắt 4G mở thêm kết nối. -->
-                <div class="gift-crowd">
-                  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-                </div>
-                <div class="gift-rider-track">
-                  <img class="gift-rider" src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                <!-- Máy quay. Chỉ để dấn tới một nhịp trong lúc Bé chạy vào rồi TRẢ VỀ
+                     nguyên khung khi tới nơi — chỗ đặt mã QR và vị trí chín người đều
+                     canh theo khung không zoom, giữ zoom lại là hỏng cả hai.
+                     container-type nằm ở .gift-scene chứ không phải lớp này, nên cqw/cqh
+                     vẫn quy chiếu về khung tranh và mọi toạ độ bên trong giữ nguyên.
+                     Pháo hoa và hoa giấy cố ý nằm NGOÀI lớp này: chúng là hiệu ứng trên
+                     ống kính, bị máy quay kéo theo là sai. -->
+                <div class="gift-camera">
+                  <img class="gift-scene-bg" src="./assets/gift-journey-scene.webp" width="1120" height="747"
                        loading="lazy" decoding="async" alt="">
+                  <!-- Cắt lại chính mặt biển màu nước rồi kéo rộng từ chỗ gắn vào
+                       cột: dùng một hộp CSS mới sẽ lộ chất UI, còn sửa tên vào ảnh
+                       thì thiệp riêng không thể thay chữ động. Cùng URL nên trình
+                       duyệt chỉ tải gift-journey-scene.webp một lần. -->
+                  <img class="gift-origin-board-art" src="./assets/gift-journey-scene.webp" width="1120" height="747"
+                       loading="lazy" decoding="async" alt="">
+                  <!-- Hai nhãn này chỉ là bản chữ bám theo tranh; .gift-scene đã
+                       aria-hidden để trình đọc màn hình không đọc lại cùng thông tin.
+                       Bản có nghĩa nằm ở .gift-route ngay dưới khung. -->
+                  <span class="gift-sign gift-sign--destination">Đám cưới<br>Doãn &amp; Tiên</span>
+                  <span class="gift-sign gift-sign--origin" id="gift-origin-sign">Nhà bạn</span>
+                  <div class="gift-road-magic">
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                    <i class="gift-road-heart"></i><i class="gift-road-note"></i>
+                  </div>
+                  <div class="gift-road-dust"><i></i><i></i><i></i><i></i></div>
+  
+                  <!-- Chín người đi trên đường, nhỏ dần theo phối cảnh — thay cho ba
+                       cụm rời (6 người xa + 3 sau + 3 trước) của bản trước. Bản cũ có
+                       một lớp bị làm mềm và giảm bão hoà để giả chiều sâu; bỏ hẳn,
+                       chiều sâu giờ đến từ chính cỡ người.
+                       Toạ độ chân và chiều cao suy từ tâm đường đo ở design-qa §11 và
+                       công thức h = 0,49×(chân y − 34), nên ai cũng đứng đúng mặt
+                       đường ở mọi bề rộng màn hình. Cỡ giảm đều 1,00 → 0,31.
+                       Vẫn một sprite sheet cắt ở 4 ô, đổi ô/lật/ngắt nhịp để không ai
+                       giống ai; tách thành nhiều file sẽ bắt 4G mở thêm kết nối. -->
+                  <div class="gift-crowd">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                  <div class="gift-rider-track">
+                    <img class="gift-rider" src="./assets/gift-be-phong-bi.webp" width="400" height="400"
+                         loading="lazy" decoding="async" alt="">
+                  </div>
+                  <div class="gift-foreground">
+                    <i></i><i></i><i></i>
+                  </div>
+                  <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
+                       sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
+                       /t/<mã>/ hâm nóng nhầm một trang HTML thay vì sprite. -->
+                  <img class="gift-procession-source" src="./assets/gift-procession-sprites.webp"
+                       width="1000" height="500" loading="lazy" decoding="async" alt="">
                 </div>
-                <div class="gift-foreground">
-                  <i></i><i></i><i></i>
-                </div>
-                <!-- Ảnh nguồn thật trong DOM để warmGiftArt lấy đúng URL đã được bộ
-                     sinh thiệp riêng phân giải. Viết lại đường dẫn trong JS sẽ làm
-                     /t/<mã>/ hâm nóng nhầm một trang HTML thay vì sprite. -->
-                <img class="gift-procession-source" src="./assets/gift-procession-sprites.webp"
-                     width="1000" height="500" loading="lazy" decoding="async" alt="">
 
                 <!-- Pháo hoa nổ ở khoảng trời trống góc trên–trái rồi mã QR hiện ra
                      từ chính chỗ đó: vùng ấy trong tranh vốn trống trơn, vừa là chỗ
@@ -346,9 +355,11 @@
                    section khi ảnh này bắn `load`, mà ảnh lazy nằm trong khối
                    display:none thì không bao giờ tải — thêm vào là mất sạch phần
                    mừng cưới trên bản chạy thật, không một lỗi nào trong console. -->
-              <img class="gift-qr-code" src="./assets/qr-mung-cuoi.png" width="370" height="370"
-                   alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img"
-                   aria-describedby="gift-qr-note">
+              <div class="gift-qr-paper">
+                <img class="gift-qr-code" src="./assets/qr-mung-cuoi.png" width="370" height="370"
+                     alt="Mã QR chuyển khoản mừng cưới" id="gift-qr-img"
+                     aria-describedby="gift-qr-note">
+              </div>
             </div>
 
             <!-- Trên điện thoại biển thật chỉ rộng 30–45px nên dòng này thay cho

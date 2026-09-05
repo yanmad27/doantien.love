@@ -515,3 +515,83 @@ nhưng vẫn hở mép trên.
 - **Chưa quét bằng camera thật.** Đây là việc cần làm trước tiên, nhất là ở 320px.
 - **Thiệp riêng `/t/<mã>`:** chưa dựng app quanly ở máy.
 - Chưa iOS Safari / Android thật, chưa Firefox/Safari, chưa Lighthouse, chưa đo lại fps.
+
+## 16. Vòng 11 — zoom lúc Bé chạy vào, và mã QR bớt rời rạc
+
+- **Ngày QA:** 05.09.2026 · Chrome headless (CDP) · 320 / 390 / 1280px + reduced motion
+
+### a. Mã QR không còn "rời rạc"
+
+Chủ thiệp: *"cái QR bị rời rạc quá."* Soi ở cỡ lớn thì thấy hai lỗi chồng nhau:
+
+1. Khối trắng tinh, bo 10px, đổ bóng nổi — đúng chất thẻ giao diện dán đè lên
+   tranh màu nước.
+2. **Ảnh `qr-mung-cuoi.png` mang sẵn nền TRẮNG của riêng nó**, nên bọc thêm một
+   lớp giấy kem quanh nó thành **hai hình chữ nhật lồng nhau**, thấy rõ đường
+   viền trắng bên trong kem. Đây mới là nguồn gốc chính của cảm giác rời rạc.
+
+Đã sửa: mượn nguyên ngôn ngữ mẩu giấy của sổ lời chúc (`.wish`) — giấy kem
+`--paper`, viền mực rất nhạt, bo 3px, nghiêng 1,8°, bóng hai lớp (quầng kem toả
+rộng cho mép tan vào nền trời + bóng tiếp đất bám sát). Ảnh mã đặt
+`mix-blend-mode: multiply` nên nền trắng của nó nhân với giấy kem thành kem, ô đen
+giữ nguyên — hết hẳn hình chữ nhật lồng nhau. Tương phản còn ~19:1.
+
+Thêm **mẩu băng dính** ở mép trên (dùng lại `.wish::before`): không có nó thì tờ
+giấy trôi lơ lửng, không có gì giữ.
+
+### b. Zoom khi Bé chạy vào
+
+Chủ thiệp: *"zoom in khi bé phong bì chạy vào đi."*
+
+Dựng lại `.gift-camera` bọc các lớp vẽ, `transform-origin: 48% 62%` (giữa khúc
+đường Bé đi qua) và `@keyframes gift-zoom-in`: 1 → 1,22 → **1,35** → 1,28 → **1**.
+
+**Mốc 100% bắt buộc là scale(1)**: chỗ đặt mã QR và dải đường của chín người đều
+canh theo khung KHÔNG zoom. Giữ zoom lại lúc tới nơi là mã lệch khỏi khoảng trời
+trống và người bị tờ giấy che.
+
+Đỉnh 1,35 chọn theo hai số đo: ảnh gốc rộng 1120px nên khung desktop 560px còn thu
+nhỏ được tới 2,0× — 1,35 **không mất một chút nét nào**; và ở 1,35 bốn mép ảnh rơi
+vào −16,8% / 118,2% / −21,7% / 113,3%, **phủ kín khung**, không hở.
+
+Đo thật lúc chạy: 1,22 (vào) → 1,345 (đỉnh) → `none` (tới nơi). Đúng đường cong.
+
+### c. Lỗi bắt được: chín người bị tờ giấy che
+
+Lần đặt dải đường đầu tiên (`t = 0,46 → 0,96`) tôi kiểm sai **hai chỗ**, mỗi chỗ
+đều cho kết quả "0 người bị che" trong khi thực tế có:
+
+1. Kiểm trên toạ độ gốc thay vì toạ độ **sau** `gift-crowd-walk`.
+2. Kiểm **tâm** người thay vì **mép trái** (tâm trừ nửa bề rộng).
+
+Đo lại bằng hộp thật của tờ giấy (trừ phần phồng do `rotate`, đo được 4–5px):
+ở 320px người #1 bị che **7/16px — gần nửa thân**. Ca xấu nhất là 320px vì sàn
+140px làm tờ giấy chiếm 50% bề ngang khung.
+
+Đã dời sang `t = 0,56 → 0,98`. Đo lại: **chồng lấn = 0** ở cả 320 và 390px. Giá
+phải trả: người gần nhất nhỏ đi từ 15,5% xuống 14,1% chiều cao khung.
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px | +reduced motion |
+|---|---|---|---|---|
+| Chặng cuối | `arrived` | `arrived` | `arrived` | `arrived` |
+| Cỡ mã QR | 144px | 165px | 237px | 165px |
+| Mã trong khung tranh | ✅ | ✅ | ✅ | ✅ |
+| `mix-blend-mode` | multiply | multiply | multiply | multiply |
+| Người bị giấy che | **0** | **0** | **0** | **0** |
+| `filter` trên người | none | none | none | none |
+| Animation đang chạy | 23 | 23 | 23 | **0** |
+| Mã trong nhánh aria-hidden | không | không | không | không |
+| Vùng `aria-live` trong `#gift` | 1 | 1 | 1 | 1 |
+| Tràn ngang | 0 | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 | 0 |
+
+CSS mồ côi: 0. `script.js` vẫn chỉ đổi 2 dòng so với `main`.
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật** — vẫn là việc cần làm trước tiên. `multiply`
+  làm nền mã thành kem `#fffaf3` thay vì trắng; tương phản tính ra ~19:1 nhưng
+  chưa ai đưa điện thoại lên quét thử.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
