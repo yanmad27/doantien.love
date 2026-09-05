@@ -252,6 +252,19 @@ Khi `prefers-reduced-motion: reduce`:
 
 - QR **không bày sẵn**: nằm sau nút "Gọi Bé Phong Bì" ở section `#gift`.
   Ai muốn mới mở, khách khác lướt qua.
+- **Chặng chờ: khung tranh bày sẵn, Bé đứng TRONG hình.** Bản trước để Bé cùng
+  người đánh trống, lá cờ và mấy nốt nhạc nổi trên nền giấy phẳng phía trên nút —
+  tức là ngoài hình. Nay `#gift-stage` không còn `hidden` từ đầu: khách thấy ngay
+  bức tranh với Bé đứng chờ bên biển "Nhà bạn".
+  - Vị trí đứng chờ phải **trùng khít** mốc `0%` của `@keyframes gift-ride`, không
+    thì vừa bấm là Bé giật một cái sang chỗ khác rồi mới chạy. Đo được: nhảy 0,5%.
+  - Nhịp thở đặt ở **ảnh** `.gift-rider`, không phải `.gift-rider-track` —
+    `gift-idle-breathe` ghi đè cả chuỗi `transform`, đặt lên track là mất vị trí.
+  - Đoàn rước, hạt tim/nhạc, bụi và tiền cảnh đều `opacity: 0` ở chặng chờ: cả câu
+    đùa là "Bé chỉ định đi một mình thôi", bày sẵn chín người là lộ hết.
+  - Khối nút nằm **dưới** bức tranh và phải tự khai `margin-top`: `.gift-route`
+    ngay trên nó mang margin âm (canh hồi còn là phần tử cuối trong lưới sân khấu),
+    không khai thì nút bị hút lên đè đúng dòng "Nhà bạn → Đám cưới Doãn & Tiên".
 - Bấm nút → Bé Phong Bì lên đường, bị một đoàn rước nhập hội, đi hết 4,8 giây
   (`RIDE_MS` / `RIDE_STEPS` trong `script.js`, phải khớp `@keyframes gift-ride`)
   rồi QR mới hiện.

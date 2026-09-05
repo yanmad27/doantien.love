@@ -672,3 +672,49 @@ không mọc, đúng như thiết kế (trạng thái nghỉ là "đã hiện đ
 - **Chưa quét mã bằng camera thật.** Ở 320px mã thật chỉ 127px (~22mm) và nền là
   kem `#fffaf3` do `mix-blend-mode: multiply`. Vẫn là việc cần làm trước tiên.
 - Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
+
+## 18. Vòng 13 — Bé Phong Bì đứng chờ trong hình
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px + reduced motion
+
+Chủ thiệp: *"bé phong bì hiện trong hình chứ ko phải ngoài hình."*
+
+Ở chặng chờ, Bé cùng người đánh trống, lá cờ và ba nốt nhạc nổi trên nền giấy
+phẳng phía trên nút — `#gift-stage` lúc đó còn `hidden`. Nay bỏ hẳn cụm ngoài
+hình đó, bày sẵn khung tranh, Bé đứng chờ bên biển "Nhà bạn" trong tranh.
+
+Đảo thứ tự: tranh trước, nút sau — thấy Bé rồi mới tới lời mời gọi.
+
+### Ba chỗ phải cẩn thận
+
+| Chỗ | Vì sao |
+|---|---|
+| Vị trí đứng chờ = mốc `0%` của `gift-ride` | lệch là vừa bấm Bé giật sang chỗ khác. Đo: **nhảy 0,5%** |
+| Nhịp thở đặt ở ảnh, không ở track | `gift-idle-breathe` ghi đè cả `transform`, đặt lên track là mất vị trí |
+| `.gift-action` phải tự khai `margin-top` | `.gift-route` trên nó mang margin **âm**; không khai thì nút đè lên đúng dòng chữ. Đã thấy bằng ảnh chụp, không phải suy đoán |
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Bé nằm trong khung tranh ở chặng chờ | ✅ | ✅ | ✅ |
+| Bé hiện (opacity) | 1 | 1 | 1 |
+| Chiều cao Bé | 59px | 74px | 116px |
+| Nút đè lên dòng hành trình | không | không | không |
+| Đoàn rước ở chặng chờ | ẩn (0) | ẩn (0) | ẩn (0) |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+
+Chuyến đi sau khi bấm không đổi: tới `arrived`, cột biển QR mọc lên, mã thật
+147px, biển nằm trọn trong khung, 9 người, 1 vùng `aria-live`, 0 tràn ngang.
+
+**Reduced motion:** vẫn 0 animation đang chạy. Lưu ý cách đo: lấy mẫu ở 400ms sau
+khi bấm sẽ thấy 27 animation "đang chạy" — đó là ba chùm pháo hoa còn đợi hết
+`animation-delay` (780–1110ms). Khối reduced-motion ép `transition-delay: 0` chứ
+KHÔNG ép `animation-delay`, nhưng bản thân animation đã rút còn 0,01ms nên không
+có chuyển động nào. Đo ở 1500ms cho đúng 0.
+
+### Chưa kiểm được
+
+- Chưa quét mã bằng camera thật (vẫn là việc cần làm trước tiên).
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse: chưa.
