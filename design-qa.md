@@ -785,3 +785,61 @@ chín người.
 - **Chưa quét mã bằng camera thật.** Giờ mã còn nằm trên nền GỖ chứ không phải
   trắng — tương phản tính ra 15,2:1 nhưng đó vẫn là phép tính, không phải phép thử.
 - Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari: chưa.
+
+## 20. Vòng 15 — biển "Nhà bạn" lệch khỏi cột
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 600 / 900 / 1280px (biển chỉ hiện từ 600px)
+
+Chủ thiệp: *"cái cột nhà bạn bị lệch."*
+
+### Nguyên nhân
+
+Mặt biển được cắt từ chính `gift-journey-scene.webp` rồi kéo ngang để chứa tên
+khách. Nhưng **cái cột nằm trong ảnh nền, không giãn theo**:
+
+| | Cũ | Mới |
+|---|---|---|
+| Gốc phóng | `4.8% 59%` (mép trái biển) | **`10% 59%` (chính cái cột)** |
+| Scale | `2.2, 1.35` | `1.68, 1.5` |
+| Biển trải | 4,1% → 32,7% | 0,8% → 22,6% |
+| Tâm biển | 18,4% | 11,7% |
+| **Lệch khỏi cột** | **8,4%** | **1,7%** |
+
+Phóng quanh mép trái thì biển chỉ nở về một phía, chạy tới 32,7% trong khi cột
+đứng yên ở ~10% — nửa phải tấm biển treo lơ lửng không có gì đỡ. Phóng quanh
+chính cái cột thì biển nở đều hai bên. Chút lệch còn lại (1,7%) là đúng với bức
+tranh gốc: đây là biển mũi tên, cột vốn nằm hơi lệch trái.
+
+### Sửa kèm một lỗi CÓ SẴN trên main
+
+Tên khách dài nhất trong danh sách thử (44 ký tự, "Gia đình Ông Bà Nguyễn Hoàng
+Phương Thảo Anh") **tràn khỏi mặt gỗ** — dòng cuối rơi xuống mặt đường.
+
+| | main | sau khi thu biển | sau khi sửa |
+|---|---:|---:|---:|
+| Chữ cần | 39px | 52px | 43px |
+| Hộp có | 32px | 39px | **43px** |
+| Thiếu | **7px** | **13px** | **0** |
+
+Lỗi này **đã có trên main**, không phải do vòng này gây ra — thu bề ngang biển chỉ
+làm nó nặng thêm. Đã nới cả bề ngang (`18.2cqw`) lẫn chiều cao (`scaleY 1.5`, hộp
+`11.6cqh`) nên giờ cả ba tên thử đều vừa khít, `thiếu = 0`.
+
+`guests.csv` chỉ là dữ liệu mồi (3 khách, dài nhất 14 ký tự) — danh sách thật nằm
+trong Docker volume nên vẫn phải chịu được tên dài.
+
+### Kết quả
+
+| Tên thử | 600px | 900px | 1280px |
+|---|---|---|---|
+| "Nhà bạn" | vừa | vừa | vừa |
+| "Gia đình cô Lê Thị Lan" (22) | vừa | vừa | vừa |
+| 44 ký tự | vừa | vừa | vừa |
+
+Chữ nằm trọn trong mặt biển ở mọi ca; 0 tràn ngang trang; 0 lỗi JS.
+
+### Chưa kiểm được
+
+- Chưa xem trên thiệp riêng `/t/<mã>` thật (chưa dựng app quanly ở máy) — tên ở đó
+  do server đổ vào `#gift-origin-sign`, cùng phần tử đã thử ở đây nên rủi ro thấp.
+- Chưa quét mã QR bằng camera thật.

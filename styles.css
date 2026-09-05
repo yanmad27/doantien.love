@@ -1342,12 +1342,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     height: 13cqh;
     padding: 2px 3px;
   }
+  /* Cao 10,6cqh chứ không phải 8,5: sau khi thu bề ngang biển về cho khớp cột,
+     tên khách dài nhất trong danh sách thử (44 ký tự) phải xuống BA dòng và hộp
+     cũ chỉ chứa nổi hai — dòng thứ ba tràn xuống khỏi mặt gỗ, rơi ra mặt đường.
+     Mặt biển sau khi kéo trải 53,3% → 65,1%, nên hộp 53,9 → 64,5 vẫn nằm trọn
+     trong gỗ. Đổi scale của .gift-origin-board-art thì phải tính lại chỗ này. */
   .gift-sign--origin {
-    left: 6cqw;
-    top: 54.8cqh;
-    width: 24cqw;
-    height: 8.5cqh;
-    padding: 2px 7px;
+    left: 2.2cqw;
+    top: 53.2cqh;
+    width: 18.2cqw;
+    height: 11.6cqh;
+    padding: 2px 5px;
   }
   .gift-origin-board-art {
     position: absolute;
@@ -1358,8 +1363,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     height: 100%;
     object-fit: cover;
     clip-path: polygon(4.5% 54.8%, 17.5% 54.8%, 17.5% 63.5%, 4.5% 63.5%);
-    transform: scale(2.2, 1.35);
-    transform-origin: 4.8% 59%;
+    /* Phóng quanh CHÍNH CÁI CỘT (10% 59%), không phải quanh mép trái tấm biển.
+       Bản cũ lấy gốc 4.8% và kéo 2,2 lần: mặt biển chạy tới 32,7% trong khi cột
+       sơn trong tranh đứng yên ở ~10%, nên tâm biển lệch khỏi cột 8,4% bề ngang
+       khung — nhìn ra ngay là tấm biển treo lơ lửng, phần phải không có gì đỡ.
+       Phóng quanh cột thì biển nở đều hai bên: 1,2% → 22,0%, tâm 11,6%, chỉ còn
+       lệch 1,6%. Cột sơn vốn nằm hơi lệch trái so với tấm biển mũi tên nên chút
+       lệch còn lại là đúng với bức tranh gốc.
+       Đổi scale ở đây thì phải đổi .gift-sign--origin bên trên cho khớp bề rộng. */
+    transform: scale(1.68, 1.5);
+    transform-origin: 10% 59%;
   }
   /* Trên desktop chữ đã nằm trong tranh. Vẫn giữ đúng một bản trong cây trợ
      năng, nhưng giấu thị giác dòng lặp để không thành ba nhãn cạnh nhau. */
