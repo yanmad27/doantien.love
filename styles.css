@@ -1324,14 +1324,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* Máy quay: dấn tới một nhịp trong lúc Bé chạy vào rồi trả về nguyên khung.
-   transform-origin đặt ở giữa khúc đường Bé đi qua (48% 62%) nên cú zoom bám theo
-   hành động chứ không phóng từ tâm khung.
+   transform-origin đặt đúng tâm tấm bảng "Đám cưới Doãn & Tiên" trên cổng —
+   (83%, 28,5%), đo trên chính gift-journey-scene.webp: mặt giấy nằm trong khoảng
+   x 76,5–89%, y 21–36%. Phóng quanh điểm đó thì tấm bảng đứng yên tại chỗ còn
+   mọi thứ khác nở ra quanh nó, nên mắt bị kéo về đúng cái tên.
+
+   Biển "Nhà bạn" trôi ra ngoài khung (−15,6%) lúc đỉnh zoom rồi quay lại khi
+   nhả — đúng ý: camera đang nhìn về phía cổng, không phải phía nhà khách.
+   Bé vào khung muộn hơn một nhịp (x = 0,5% ở mốc 22% thay vì 15,4%) vì tâm phóng
+   nằm xa bên phải; đọc ra thành "chạy vào từ mép trái", vẫn hợp.
 
    Đỉnh 1.35 chọn theo hai ràng buộc đã tính:
    - Nét: ảnh gốc rộng 1120px, khung desktop 560px, nên còn thu nhỏ tới 2.0×.
      1.35 vẫn nằm trong vùng thu nhỏ -> không mất một chút nét nào.
-   - Không hở mép: ở 1.35 bốn mép ảnh rơi vào -16.8% / 118.2% / -21.7% / 113.3%,
-     phủ kín khung.
+   - Không hở mép: ở 1.35 bốn mép ảnh rơi vào -29.1% / 106.0% / -10.0% / 125.0%.
+     Thật ra CHỈ CẦN scale >= 1 là không thể hở, vì đây là phép phóng thuần quanh
+     một điểm NẰM TRONG ảnh, không kèm translate. Vệt hở mép phải từng gặp ở bản
+     dolly cũ là do translate kéo ảnh đi, không phải do scale — đừng nhầm hai
+     chuyện đó khi chỉnh lại con số.
 
    Mốc 100% BẮT BUỘC là scale(1). Chỗ đặt mã QR (x 23-68%, y 5-73%) và dải đường
    của chín người đều canh theo khung KHÔNG zoom; giữ zoom lại lúc tới nơi là mã
@@ -1339,7 +1349,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .gift-camera {
   position: absolute;
   inset: 0;
-  transform-origin: 48% 62%;
+  transform-origin: 83% 28.5%;
 }
 .gift-scene-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 

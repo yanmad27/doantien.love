@@ -543,18 +543,33 @@ giấy trôi lơ lửng, không có gì giữ.
 
 Chủ thiệp: *"zoom in khi bé phong bì chạy vào đi."*
 
-Dựng lại `.gift-camera` bọc các lớp vẽ, `transform-origin: 48% 62%` (giữa khúc
-đường Bé đi qua) và `@keyframes gift-zoom-in`: 1 → 1,22 → **1,35** → 1,28 → **1**.
+Dựng lại `.gift-camera` bọc các lớp vẽ và `@keyframes gift-zoom-in`:
+1 → 1,22 → **1,35** → 1,28 → **1**.
+
+`transform-origin` đặt đúng **tâm tấm bảng "Đám cưới Doãn & Tiên"** — `83% 28,5%`,
+đo trên chính `gift-journey-scene.webp` (mặt giấy nằm trong x 76,5–89%, y 21–36%).
+Phóng quanh điểm đó thì tấm bảng đứng yên còn mọi thứ khác nở ra quanh nó, nên
+mắt bị kéo về đúng cái tên. Bản đầu đặt tâm ở giữa khúc đường (48% 62%) — chủ
+thiệp yêu cầu dời vào tấm bảng.
+
+Hệ quả đã kiểm và chấp nhận: biển "Nhà bạn" trôi ra ngoài khung (−15,6%) lúc đỉnh
+zoom rồi quay lại khi nhả — đúng ý, camera đang nhìn về phía cổng. Bé vào khung
+muộn hơn một nhịp (x = 0,5% ở mốc 22% thay vì 15,4%) vì tâm phóng nằm xa bên phải;
+đọc ra thành "chạy vào từ mép trái". Cả chín người vẫn trong khung.
 
 **Mốc 100% bắt buộc là scale(1)**: chỗ đặt mã QR và dải đường của chín người đều
 canh theo khung KHÔNG zoom. Giữ zoom lại lúc tới nơi là mã lệch khỏi khoảng trời
 trống và người bị tờ giấy che.
 
-Đỉnh 1,35 chọn theo hai số đo: ảnh gốc rộng 1120px nên khung desktop 560px còn thu
-nhỏ được tới 2,0× — 1,35 **không mất một chút nét nào**; và ở 1,35 bốn mép ảnh rơi
-vào −16,8% / 118,2% / −21,7% / 113,3%, **phủ kín khung**, không hở.
+Đỉnh 1,35 chọn theo độ nét: ảnh gốc rộng 1120px nên khung desktop 560px còn thu
+nhỏ được tới 2,0× — 1,35 **không mất một chút nét nào**.
 
-Đo thật lúc chạy: 1,22 (vào) → 1,345 (đỉnh) → `none` (tới nơi). Đúng đường cong.
+Về mép: ở 1,35 bốn mép rơi vào −29,1% / 106,0% / −10,0% / 125,0%, phủ kín. Thật ra
+**chỉ cần scale ≥ 1 là không thể hở**, vì đây là phép phóng thuần quanh một điểm
+nằm trong ảnh, không kèm translate. Vệt hở mép phải từng gặp ở bản dolly §14 là do
+translate kéo ảnh đi chứ không phải do scale — hai chuyện khác nhau, đừng nhầm.
+
+Đo thật lúc chạy: 1,224 (vào) → 1,346 (đỉnh) → `none` (tới nơi). Đúng đường cong.
 
 ### c. Lỗi bắt được: chín người bị tờ giấy che
 
@@ -581,7 +596,7 @@ phải trả: người gần nhất nhỏ đi từ 15,5% xuống 14,1% chiều c
 | `mix-blend-mode` | multiply | multiply | multiply | multiply |
 | Người bị giấy che | **0** | **0** | **0** | **0** |
 | `filter` trên người | none | none | none | none |
-| Animation đang chạy | 23 | 23 | 23 | **0** |
+| Animation đang chạy | 12 | 12 | 12 | **0** |
 | Mã trong nhánh aria-hidden | không | không | không | không |
 | Vùng `aria-live` trong `#gift` | 1 | 1 | 1 | 1 |
 | Tràn ngang | 0 | 0 | 0 | 0 |
