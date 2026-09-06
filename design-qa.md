@@ -672,3 +672,224 @@ không mọc, đúng như thiết kế (trạng thái nghỉ là "đã hiện đ
 - **Chưa quét mã bằng camera thật.** Ở 320px mã thật chỉ 127px (~22mm) và nền là
   kem `#fffaf3` do `mix-blend-mode: multiply`. Vẫn là việc cần làm trước tiên.
 - Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse, fps: chưa.
+
+## 18. Vòng 13 — Bé Phong Bì đứng chờ trong hình
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px + reduced motion
+
+Chủ thiệp: *"bé phong bì hiện trong hình chứ ko phải ngoài hình."*
+
+Ở chặng chờ, Bé cùng người đánh trống, lá cờ và ba nốt nhạc nổi trên nền giấy
+phẳng phía trên nút — `#gift-stage` lúc đó còn `hidden`. Nay bỏ hẳn cụm ngoài
+hình đó, bày sẵn khung tranh, Bé đứng chờ bên biển "Nhà bạn" trong tranh.
+
+Đảo thứ tự: tranh trước, nút sau — thấy Bé rồi mới tới lời mời gọi.
+
+### Ba chỗ phải cẩn thận
+
+| Chỗ | Vì sao |
+|---|---|
+| Vị trí đứng chờ = mốc `0%` của `gift-ride` | lệch là vừa bấm Bé giật sang chỗ khác. Đo: **nhảy 0,5%** |
+| Nhịp thở đặt ở ảnh, không ở track | `gift-idle-breathe` ghi đè cả `transform`, đặt lên track là mất vị trí |
+| `.gift-action` phải tự khai `margin-top` | `.gift-route` trên nó mang margin **âm**; không khai thì nút đè lên đúng dòng chữ. Đã thấy bằng ảnh chụp, không phải suy đoán |
+
+### Kết quả
+
+| Kiểm | 320px | 390px | 1280px |
+|---|---|---|---|
+| Bé nằm trong khung tranh ở chặng chờ | ✅ | ✅ | ✅ |
+| Bé hiện (opacity) | 1 | 1 | 1 |
+| Chiều cao Bé | 59px | 74px | 116px |
+| Nút đè lên dòng hành trình | không | không | không |
+| Đoàn rước ở chặng chờ | ẩn (0) | ẩn (0) | ẩn (0) |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+
+Chuyến đi sau khi bấm không đổi: tới `arrived`, cột biển QR mọc lên, mã thật
+147px, biển nằm trọn trong khung, 9 người, 1 vùng `aria-live`, 0 tràn ngang.
+
+**Reduced motion:** vẫn 0 animation đang chạy. Lưu ý cách đo: lấy mẫu ở 400ms sau
+khi bấm sẽ thấy 27 animation "đang chạy" — đó là ba chùm pháo hoa còn đợi hết
+`animation-delay` (780–1110ms). Khối reduced-motion ép `transition-delay: 0` chứ
+KHÔNG ép `animation-delay`, nhưng bản thân animation đã rút còn 0,01ms nên không
+có chuyển động nào. Đo ở 1500ms cho đúng 0.
+
+### Chưa kiểm được
+
+- Chưa quét mã bằng camera thật (vẫn là việc cần làm trước tiên).
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari, Lighthouse: chưa.
+
+## 19. Vòng 14 — bảng QR thành biển gỗ
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 320 / 390 / 1280px
+
+Chủ thiệp: *"QR có viền gỗ background màu gỗ luôn được không."*
+
+Đổi mặt giấy kem thành **mặt gỗ nhạt + khung gỗ**, cho khớp với hai cái biển gỗ
+vốn có trong tranh.
+
+### Nền gỗ không đe doạ khả năng quét
+
+Nghe thì ngược, nhưng ô mã là **đen tuyền** nên tương phản với gỗ vẫn rất cao:
+
+| Mặt bảng | Tương phản với ô đen |
+|---|---:|
+| `#f2e2c8` | 16,5:1 |
+| **`#ecd9b9`** (đang dùng, giữa dải gradient) | **15,2:1** |
+| `#e6d0ac` | 14,0:1 |
+
+Khác hẳn nền màu thường: nếu ô mã là màu thì nền gỗ mới thành vấn đề.
+
+### Tông gỗ lấy mẫu từ chính bức tranh, không tự chọn
+
+Bản đầu tôi chọn khung `#a9855a → #8e6d40` theo cảm nhận "màu gỗ". Dựng ra thì nó
+đọc thành **vật liệu khác hẳn**, dán lên tranh chứ không thuộc về tranh.
+
+Đọc pixel thật từ `gift-journey-scene.webp`:
+
+| Chỗ lấy mẫu | Màu |
+|---|---|
+| Mặt biển "Nhà bạn" | `#fbf4e8` |
+| Cột biển | `#ffe9d1` |
+| Cột trái cổng cưới | `#f4ddc0` |
+| Hàng rào gỗ (chỗ sẫm nhất tìm được) | `#d9b58f` |
+
+Gỗ trong tranh **nhạt hơn nhiều** so với "màu gỗ" mặc định trong đầu. Đã đổi khung
+sang `#d9b58f → #c69c6d` và mặt bảng `#f0dfc2 → #e6d0ac`.
+
+### Khung ăn vào trong, không nở ra ngoài
+
+Nở ra ngoài thì đụng đoàn người: ở 320px mép phải bảng ở 70%, mép trái người gần
+nhất ở 71,6% — chỉ hở **4,5px**. Nên đệm khung ăn vào trong, mã hẹp lại ~7px mỗi
+bên.
+
+### Kết quả
+
+| | 320px | 390px | 1280px |
+|---|---|---|---|
+| Mã QR thật | 124px | 144px | 214px |
+| Bề rộng bảng | 140px | 160px | 230px |
+| Người bị biển che | **0** | **0** | **0** |
+| `mix-blend-mode` | multiply | multiply | multiply |
+| Biển trọn trong khung | ✅ | ✅ | ✅ |
+| Tràn ngang | 0 | 0 | 0 |
+| Lỗi JS | 0 | 0 | 0 |
+
+Mã ở 320px xuống còn **124px** (trước khi có khung gỗ là 127px). Đây là lần thứ
+hai cỡ mã bị bào mỏng vì lý do thẩm mỹ — nếu lần quét thử bằng camera thật không
+ăn, chỗ cần nới đầu tiên là `--board`, và nới thì phải tính lại dải đường của
+chín người.
+
+### Chưa kiểm được
+
+- **Chưa quét mã bằng camera thật.** Giờ mã còn nằm trên nền GỖ chứ không phải
+  trắng — tương phản tính ra 15,2:1 nhưng đó vẫn là phép tính, không phải phép thử.
+- Thiệp riêng `/t/<mã>`, iOS/Android thật, Firefox/Safari: chưa.
+
+## 20. Vòng 15 — biển "Nhà bạn" lệch khỏi cột
+
+- **Ngày QA:** 05.09.2026 · Chrome headless · 600 / 900 / 1280px (biển chỉ hiện từ 600px)
+
+Chủ thiệp: *"cái cột nhà bạn bị lệch."*
+
+### Nguyên nhân
+
+Mặt biển được cắt từ chính `gift-journey-scene.webp` rồi kéo ngang để chứa tên
+khách. Nhưng **cái cột nằm trong ảnh nền, không giãn theo**:
+
+| | Cũ | Mới |
+|---|---|---|
+| Gốc phóng | `4.8% 59%` (mép trái biển) | **`10% 59%` (chính cái cột)** |
+| Scale | `2.2, 1.35` | `1.68, 1.5` |
+| Biển trải | 4,1% → 32,7% | 0,8% → 22,6% |
+| Tâm biển | 18,4% | 11,7% |
+| **Lệch khỏi cột** | **8,4%** | **1,7%** |
+
+Phóng quanh mép trái thì biển chỉ nở về một phía, chạy tới 32,7% trong khi cột
+đứng yên ở ~10% — nửa phải tấm biển treo lơ lửng không có gì đỡ. Phóng quanh
+chính cái cột thì biển nở đều hai bên. Chút lệch còn lại (1,7%) là đúng với bức
+tranh gốc: đây là biển mũi tên, cột vốn nằm hơi lệch trái.
+
+### Sửa kèm một lỗi CÓ SẴN trên main
+
+Tên khách dài nhất trong danh sách thử (44 ký tự, "Gia đình Ông Bà Nguyễn Hoàng
+Phương Thảo Anh") **tràn khỏi mặt gỗ** — dòng cuối rơi xuống mặt đường.
+
+| | main | sau khi thu biển | sau khi sửa |
+|---|---:|---:|---:|
+| Chữ cần | 39px | 52px | 43px |
+| Hộp có | 32px | 39px | **43px** |
+| Thiếu | **7px** | **13px** | **0** |
+
+Lỗi này **đã có trên main**, không phải do vòng này gây ra — thu bề ngang biển chỉ
+làm nó nặng thêm. Đã nới cả bề ngang (`18.2cqw`) lẫn chiều cao (`scaleY 1.5`, hộp
+`11.6cqh`) nên giờ cả ba tên thử đều vừa khít, `thiếu = 0`.
+
+`guests.csv` chỉ là dữ liệu mồi (3 khách, dài nhất 14 ký tự) — danh sách thật nằm
+trong Docker volume nên vẫn phải chịu được tên dài.
+
+### Kết quả
+
+| Tên thử | 600px | 900px | 1280px |
+|---|---|---|---|
+| "Nhà bạn" | vừa | vừa | vừa |
+| "Gia đình cô Lê Thị Lan" (22) | vừa | vừa | vừa |
+| 44 ký tự | vừa | vừa | vừa |
+
+Chữ nằm trọn trong mặt biển ở mọi ca; 0 tràn ngang trang; 0 lỗi JS.
+
+### Chưa kiểm được
+
+- Chưa xem trên thiệp riêng `/t/<mã>` thật (chưa dựng app quanly ở máy) — tên ở đó
+  do server đổ vào `#gift-origin-sign`, cùng phần tử đã thử ở đây nên rủi ro thấp.
+- Chưa quét mã QR bằng camera thật.
+
+## 21. Vòng 16 — thử cắt thớ gỗ thật từ tranh, và vì sao PHẢI BỎ
+
+- **Ngày:** 05.09.2026
+
+Chủ thiệp: *"bảng gỗ phải chung loại gỗ vs hình nha."*
+
+Vòng 14 lấy đúng **màu** gỗ (đọc pixel từ tranh) nhưng vẽ bằng gradient CSS phẳng
+— đúng màu mà sai chất liệu. Vòng này thử cắt thẳng thớ gỗ từ
+`gift-journey-scene.webp`, dùng kỹ thuật của `.gift-origin-board-art`:
+
+```css
+background: url("./assets/gift-journey-scene.webp") 5.6% 60% / 1000% 1333% no-repeat;
+```
+
+**Kết quả: hỏng, đã revert.** Chủ thiệp xem xong nói gọn "xấu quá".
+
+### Vì sao hỏng — con số
+
+Vùng ván biển "Nhà bạn" trong ảnh gốc chỉ khoảng **112 × 56 pixel**. Kéo cho đầy
+tấm bảng phải phóng **10× ngang, 13,3× dọc**. Ở mức đó thớ gỗ tan thành mảng loang
+mờ, không còn ra vân gỗ.
+
+Đây là giới hạn của chính bức tranh, không phải lỗi tham số: **trong
+`gift-journey-scene.webp` không có mảng gỗ nào đủ lớn.** Đã thử năm vùng:
+
+| Vùng | Vì sao không dùng được |
+|---|---|
+| Cột cổng (500%, 800%) | bắt cả hoa và cây |
+| Nguyên tấm bảng cổng | khung + mặt đẹp, nhưng **mang theo hoa và rèm** — mà mã QR đứng ngay cạnh chính cái cổng đó, thành hai tấm bảng giống hệt nhau |
+| Đáy bảng cổng | trên/dưới cắt cụt |
+| Cột dọc cổng | lẫn cây cối |
+| Ván biển "Nhà bạn" | mảng gỗ sạch duy nhất, nhưng chỉ 112×56px → nhoè |
+
+Điều đáng ghi: tương phản thì **không** phải vấn đề. Ô mã là đen tuyền nên trên gỗ
+thật vẫn đạt 14,9–19,2:1, còn tốt hơn gradient (15,2:1). Vấn đề thuần tuý là **độ
+phân giải nguồn**.
+
+### Cách đúng, chưa làm được
+
+Phải **vẽ riêng một asset tấm biển gỗ** (`assets/gift-qr-board.webp`, nền trong
+suốt, ~700×700, ≤25KB) cùng bút pháp màu nước với tranh. Đã giao cho một agent
+sinh ảnh, nhưng **bị chặn**: máy chưa có `OPENAI_API_KEY`, cũng không có CLI sinh
+ảnh nào. Đây là quyết định của chủ thiệp (dịch vụ ngoài, có tính phí), không phải
+việc kỹ thuật.
+
+Trong lúc chờ, giữ bản gỗ gradient của vòng 14: sạch, không nhoè, nhưng đúng là
+chưa cùng chất liệu với tranh.
+
+**Đừng thử lại hướng cắt-phóng-to.** Đã đo, đã dựng, đã nhìn — nguồn không đủ pixel.

@@ -247,26 +247,11 @@
           <p class="gift-copy">Có mặt là quý nhất rồi. Còn nếu bạn ở xa mà vẫn muốn góp một lời chúc,
             tụi mình để cái nút này ở đây.</p>
 
-          <!-- Ẩn cả khối chứ không riêng cái nút: dòng giới thiệu Bé nằm ngay dưới
-               nút, để lại một mình nó sau khi bấm thì thành câu nói trống không. -->
-          <div class="gift-action" id="gift-action">
-            <div class="gift-idle-party" aria-hidden="true">
-              <span class="gift-idle-drummer"></span>
-              <span class="gift-idle-rider">
-                <img src="./assets/gift-be-phong-bi.webp" width="400" height="400"
-                     loading="lazy" decoding="async" alt="">
-              </span>
-              <span class="gift-idle-flag"></span>
-              <span class="gift-idle-notes"><i></i><i></i><i></i></span>
-            </div>
-            <button class="button gift-open" id="gift-open" type="button">Gọi Bé Phong Bì</button>
-            <p class="gift-microcopy">Bé chỉ định đi một mình thôi. Ít nhất Bé nghĩ vậy.</p>
-          </div>
 
           <!-- tabindex="-1": bấm xong #gift-action biến mất, focus rơi về <body> và
                phím Tab kế tiếp quay lại đầu thiệp. JS dời focus vào đây, giống cách
                .nav và #wish-thanks đang làm. -->
-          <div class="gift-stage" id="gift-stage" tabindex="-1" hidden>
+          <div class="gift-stage" id="gift-stage" tabindex="-1">
             <!-- Hộp định vị chung cho tranh và mã QR. Mã QR phải nằm NGOÀI
                  .gift-scene: scene mang aria-hidden nên đặt mã vào trong là trình
                  đọc màn hình mất sạch phần mừng cưới. Ở đây thì nhìn vẫn là "QR
@@ -409,6 +394,13 @@
                    vẫn phải lấy lại được QR. -->
               <button class="button button--outline gift-more" id="gift-more" type="button">Mừng thêm lần nữa</button>
             </div>
+          </div>
+
+          <!-- Ẩn cả khối chứ không riêng cái nút: dòng giới thiệu Bé nằm ngay dưới
+               nút, để lại một mình nó sau khi bấm thì thành câu nói trống không. -->
+          <div class="gift-action" id="gift-action">
+            <button class="button gift-open" id="gift-open" type="button">Gọi Bé Phong Bì</button>
+            <p class="gift-microcopy">Bé chỉ định đi một mình thôi. Ít nhất Bé nghĩ vậy.</p>
           </div>
 
           <!-- Vừa là lời thoại nhìn thấy được của chuyến đi, vừa là vùng aria-live
