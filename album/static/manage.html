@@ -50,22 +50,15 @@ async function refreshStats() {
     const d = await (await fetch("api/stats")).json();
     maxMB = d.max_upload_mb;
     $("disk").textContent = `Ổ đĩa: còn trống ${(d.disk_free / 2**30).toFixed(1)} GB / ${(d.disk_total / 2**30).toFixed(1)} GB`;
-    maxMB = d.max_upload_mb;
     $("stats").textContent = `${d.originals} ảnh gốc · ${d.photos} đã xử lý · ${d.pending} chờ xử lý · ${d.faces} khuôn mặt`;
   } catch (e) {}
 }
 
 // ---- tải lên: từng file một request, 3 request song song, có tiến độ byte ----
 let queue = [], active = 0, total = 0, sent = 0, doneN = 0, failN = 0, dupN = 0;
-let maxMB = 80;
 let maxMB = 60;
 function addFiles(list) {
   for (const f of list) {
-    if (f.size > maxMB * 1048576) {  // báo ngay ở trình duyệt, khỏi gửi rồi mới bị đóng kết nối
-      const bad = document.createElement("li"); bad.innerHTML = "<span></span><span class='err'></span>";
-      bad.firstChild.textContent = f.name; bad.lastChild.textContent = `✗ quá lớn (tối đa ${maxMB} MB)`;
-      $("files").prepend(bad); failN++; continue;
-    }
     if (f.size > maxMB * 1048576) {  // báo ngay ở trình duyệt, khỏi gửi rồi mới bị đóng kết nối
       const bad = document.createElement("li"); bad.innerHTML = "<span></span><span class='err'></span>";
       bad.firstChild.textContent = f.name; bad.lastChild.textContent = `✗ quá lớn (tối đa ${maxMB} MB)`;
