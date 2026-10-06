@@ -662,6 +662,65 @@ class GateTests(unittest.TestCase):
             _, h2, b2, _ = call(app, "POST", "/api/process", headers=dict(hd, **{"X-Forwarded-For": "30.0.0.5"}))
             self.assertNotIn("test-token", json.dumps(h2) + b2.decode())
 
+    def test_valid_session_exempt_from_caps_and_secret_file(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d, admin_token="test-token")
+        ck = {"Cookie": self.session_cookie(app, "40.0.0.1")}
+        # chạm trần toàn cục bằng 40 IP dò sai
+        bad = json.dumps({"token": "nope"}).encode()
+        codes = [call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": f"41.0.0.{i}"}, body=bad)[0] for i in range(40)]
+        self.assertEqual(set(codes[30:]), {429})
+        # cookie phiên đúng vẫn qua (cả trần toàn cục lẫn trần theo IP), header và đăng nhập thì vẫn 429
+        for ip in ("40.0.0.1", "41.0.0.1", "99.9.9.9"):
+            h = dict(ck, **{"X-Forwarded-For": ip})
+            self.assertEqual(call(app, "GET", "/manage", headers=h)[0], 200)
+            self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers=h, body=b"x" * 20)[0], 400)  # qua cổng token → lỗi định dạng
+            self.assertEqual(call(app, "POST", "/api/process", headers=h)[0], 200)
+            app.state.job.thread.join(60)
+        self.assertEqual(call(app, "POST", "/api/process", headers={"X-Album-Token": "test-token", "X-Forwarded-For": "98.9.9.9"})[0], 429)
+        self.assertEqual(self.login(app, "97.9.9.9")[0], 429)
+        # cookie sai vẫn bị tính/chặn
+        self.assertEqual(call(app, "GET", "/manage", headers={"Cookie": "album_session=guess", "X-Forwarded-For": "96.9.9.9"})[0], 429)
+        # trần theo IP: 10 lượt sai từ một IP rồi cookie đúng từ chính IP đó vẫn vào
+        app2 = app_with(d, admin_token="test-token")
+        for _ in range(10):
+            call(app2, "POST", "/api/process", headers={"X-Album-Token": "guess", "X-Forwarded-For": "50.0.0.1"})
+        self.assertEqual(call(app2, "POST", "/api/process", headers={"X-Album-Token": "test-token", "X-Forwarded-For": "50.0.0.1"})[0], 429)
+        self.assertEqual(call(app2, "GET", "/manage", headers=dict(ck, **{"X-Forwarded-For": "50.0.0.1"}))[0], 200)
+        # bí mật phiên: 0600, 32 byte, ổn định qua restart, không phát ra qua route nào
+        sp = os.path.join(d, ".session_secret")
+        self.assertEqual(oct(os.stat(sp).st_mode & 0o777), "0o600")
+        secret = open(sp, "rb").read()
+        self.assertEqual(len(secret), 32)
+        app3 = app_with(d, admin_token="test-token")
+        self.assertEqual(open(sp, "rb").read(), secret)
+        self.assertEqual(call(app3, "GET", "/manage", headers=dict(ck, **{"X-Forwarded-For": "51.0.0.1"}))[0], 200)
+        for path in ("/.session_secret", "/static/../.session_secret", "/static/.session_secret", "/originals/.session_secret",
+                     "/i/.session_secret", "/thumbs/.session_secret", "/data/.session_secret", "/../.session_secret"):
+            for host in ("localhost", "cdn.example.test"):
+                st, h, body, _ = call(app3, "GET", path, host=host)
+                self.assertEqual(st, 404, path)
+                self.assertNotIn(secret, body)
+        # cookie tạo bằng bí mật khác (data dir khác, cùng mã) bị từ chối; xoá file → phiên cũ vô hiệu
+        d2 = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d2, True)
+        other = app_with(d2, admin_token="test-token")
+        self.assertNotEqual(open(os.path.join(d2, ".session_secret"), "rb").read(), secret)
+        self.assertEqual(call(other, "GET", "/manage", headers=dict(ck, **{"X-Forwarded-For": "52.0.0.1"}))[0], 401)
+        os.remove(sp)
+        app4 = app_with(d, admin_token="test-token")
+        self.assertEqual(call(app4, "GET", "/manage", headers=dict(ck, **{"X-Forwarded-For": "53.0.0.1"}))[0], 401)
+        # file hỏng (sai độ dài) → tạo lại
+        open(sp, "wb").write(b"short")
+        app_with(d, admin_token="test-token")
+        self.assertEqual(len(open(sp, "rb").read()), 32)
+        # token chưa đặt: không tạo file
+        d3 = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d3, True)
+        app_with(d3)
+        self.assertFalse(os.path.exists(os.path.join(d3, ".session_secret")))
+
     def test_admin_login_cookie_and_throttle(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)

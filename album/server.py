@@ -196,6 +196,33 @@ def safe_name(raw):
     return stem.rstrip(" .") + ext
 
 
+def load_session_secret(data_dir):
+    """32 byte ngẫu nhiên, lưu ở DATA_DIR/.session_secret (0600). Tạo nguyên tử (ghi file tạm rồi link) nên hai process/khởi động
+    chồng nhau cùng thấy một giá trị; file hỏng/sai độ dài thì tạo lại (mọi phiên cũ hết hiệu lực). Không bao giờ log hay phát ra."""
+    path = os.path.join(data_dir, ".session_secret")
+    for _ in range(3):
+        try:
+            with open(path, "rb") as fh:
+                v = fh.read()
+            if len(v) == 32:
+                return v
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        tmp = f"{path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(os.urandom(32))
+            try:
+                os.link(tmp, path)  # chỉ một bên thắng; bên thua đọc lại file của bên thắng
+            except FileExistsError:
+                pass
+        finally:
+            os.remove(tmp)
+    raise RuntimeError("không tạo được .session_secret")
+
+
 def cpu_budget():
     """Số lõi THỰC được dùng: min(affinity, hạn mức cgroup CPU). os.cpu_count() trong container trả số lõi của máy chủ, nên
     đặt số luồng theo nó sẽ vượt hạn mức CPU và bị throttle (cả process đứng từng đợt)."""
@@ -523,8 +550,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
 
-    # Cookie phiên KHÔNG chứa mã: HMAC-SHA256(khoá = mã chủ nhà, nhãn cố định) — ổn định qua restart, không suy ngược ra mã.
-    session_value = hmac.new(token.encode(), b"album-session-v1", hashlib.sha256).hexdigest() if token else ""
+    # Cookie phiên KHÔNG chứa mã: HMAC-SHA256(khoá = bí mật ngẫu nhiên 32 byte của server + mã chủ nhà, nhãn cố định). Bí mật nằm ở
+    # DATA_DIR/.session_secret (0600, tạo nguyên tử một lần, không route nào phát ra DATA_DIR) nên có cookie cũng không dò ngược ra mã
+    # offline; ổn định qua restart (cùng file), đổi mã hoặc xoá file → cookie cũ vô hiệu.
+    session_value = hmac.new(load_session_secret(data_dir) + b"\0" + token.encode(), b"album-session-v1", hashlib.sha256).hexdigest() if token else ""
 
     def admin_state(request: Request, header=True):
         """'ok' | 'none' (không đưa thông tin xác thực → KHÔNG tính lượt thử) | 'bad' (đưa sai, đã tính) | 'limited' (quá ngưỡng).
@@ -532,11 +561,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         đặt chỗ lượt thử trước khi so, đúng thì hoàn lại. Cookie album_token (mã thô, bản cũ) không còn được chấp nhận."""
         if not token:
             return "ok"
+        cookie = request.cookies.get("album_session")
+        if cookie and hmac.compare_digest(cookie.encode(), session_value.encode()):
+            return "ok"  # cookie phiên đúng = HMAC 256-bit, người giữ hợp lệ chứ không phải đoán mò: miễn mọi ngưỡng, không đặt chỗ
         got = []
         if header and request.headers.get("x-album-token"):
             got.append((request.headers["x-album-token"], token))
-        if request.cookies.get("album_session"):
-            got.append((request.cookies["album_session"], session_value))
+        if cookie:
+            got.append((cookie, session_value))  # cookie sai vẫn tính lượt thử
         if not got:
             return "none"
         ip = client_ip(request)
