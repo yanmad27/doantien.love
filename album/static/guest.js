@@ -37,7 +37,7 @@ function reset() {
 }
 
 function choose(f) {
-  if (!f.type.startsWith("image/") && f.type !== "") { showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
+  if (!f.type.startsWith("image/") && f.type !== "") { runId++; if (ctl) ctl.abort(); clearResults(); showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
   clearResults();
   if (selfieUrl) URL.revokeObjectURL(selfieUrl);
   file = f; selfieUrl = URL.createObjectURL(f);
@@ -92,10 +92,10 @@ async function search() {
     }
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
-      if (r.status === 503) showError("Máy chủ đang bận", e.detail || "Có nhiều người đang tìm ảnh cùng lúc. Hãy thử lại sau ít giây.", [], true);
+      if (r.status === 503) showError("Đang đông khách quá", "Nhiều người đang tìm ảnh cùng lúc. Bạn thử lại sau ít giây nhé.", [], true);
       else if (r.status === 413) showError("Ảnh quá lớn", e.detail || "Hãy chọn một ảnh nhỏ hơn.", []);
       else if (r.status === 400) showError("Không đọc được ảnh", e.detail || "Hãy thử một file JPG hoặc PNG khác.", []);
-      else showError("Có lỗi xảy ra", e.detail || "Máy chủ gặp lỗi. Vui lòng thử lại sau.", [], true);
+      else showError("Có chút trục trặc", "Chưa tìm được ảnh lúc này. Bạn thử lại sau ít phút nhé.", [], true);
       return;
     }
     data = await r.json();
@@ -103,7 +103,7 @@ async function search() {
     showResults();
   } catch (err) {
     if (err.name === "AbortError" || my !== runId) return;
-    showError("Không kết nối được", "Có vẻ mạng đang gián đoạn. Kiểm tra kết nối rồi thử lại nhé.", [], true);
+    showError("Chưa kết nối được", "Có vẻ mạng đang gián đoạn. Bạn kiểm tra kết nối rồi thử lại nhé.", [], true);
   }
 }
 
@@ -142,12 +142,13 @@ function showResults() {
   $("s-tips").hidden = true;
   const total = data.results.filter(x => x.score >= MAYBE_CUT).length;
   const none = !TUNE && total === 0;
-  $("s-title").textContent = none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
-  if (data.indexed_photos === 0) $("s-text").textContent = "Album đang được cập nhật, bạn quay lại sau nhé.";
+  const empty = data.indexed_photos === 0;
+  $("s-title").textContent = empty ? "Album đang được cập nhật" : none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
+  if (empty) $("s-text").textContent = "Ảnh cưới chưa được đưa lên đầy đủ. Bạn quay lại sau ít phút nhé.";
   else if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
   else $("s-text").textContent = "Dưới đây là những khoảnh khắc có bạn.";
   if (q.n_faces > 1) {
-    $("s-multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Chúng tôi dùng khuôn mặt to và rõ nhất (khung hồng). ` +
+    $("s-multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Chúng tôi dùng khuôn mặt to và rõ nhất (khung bao quanh mặt). ` +
       "Nếu chưa đúng người, hãy thử ảnh chỉ có một mình bạn.";
     $("s-multi").hidden = false;
   } else $("s-multi").hidden = true;
@@ -182,7 +183,7 @@ function tile(x, list, i, kind) {
   const img = document.createElement("img");
   img.src = "/" + x.thumb; img.loading = "lazy"; img.decoding = "async"; img.alt = `Ảnh cưới có bạn, số ${i + 1}`;
   const on = () => img.classList.add("on");
-  img.onload = on; if (img.complete && img.naturalWidth) on();
+  img.onload = on; img.onerror = () => inn.classList.add("bad"); if (img.complete && img.naturalWidth) on();
   inn.append(img);
   if (TUNE) {
     const box = document.createElement("i"); box.className = "box"; placeBox(box, x.bbox, x.width, x.height); inn.append(box);
@@ -209,7 +210,7 @@ function renderResults() {
   $("g-main").hidden = !lists.main.length && !lists.maybe.length;
   const noMain = !lists.main.length;
   $("g-main-empty").hidden = !noMain;
-  $("g-main-empty").textContent = "Chưa có ảnh nào chắc chắn là bạn, nhưng có vài ảnh có thể là bạn bên dưới.";
+  $("g-main-empty").textContent = "Chưa có ảnh nào thật chắc chắn, nhưng có vài ảnh có thể là bạn ở bên dưới.";
   $("g-main-t").hidden = noMain; $("g-main-n").hidden = noMain;
   fill($("grid-main"), lists.main, "main");
   const hasMaybe = lists.maybe.length > 0;
@@ -221,7 +222,7 @@ function renderResults() {
   }
   const cut = data.truncated && res.length && res[res.length - 1].score >= MAYBE_CUT;
   $("trunc").hidden = !cut;
-  if (cut) $("trunc").textContent = `Có ${data.total_matches} ảnh khớp, chúng tôi chỉ hiển thị ${res.length} ảnh giống nhất.`;
+  if (cut) $("trunc").textContent = `Đang hiển thị ${lists.main.length + lists.maybe.length} ảnh giống nhất.`;
 }
 
 function setMaybe(open) {
@@ -256,25 +257,26 @@ function renderTune() {
 $("th").value = String(CONFIDENT_CUT);
 $("th").oninput = () => data && renderTune();
 
+
 // ---------- lightbox ----------
 const lb = $("lb"), lbImg = $("lb-img"), stageEl = $("lb-stage");
 let cur = { list: [], i: 0, opener: null }, lbOpen = false;
-const canShareFiles = (() => {
-  try { return matchMedia("(pointer: coarse)").matches && !!navigator.canShare && navigator.canShare({ files: [new File(["x"], "a.jpg", { type: "image/jpeg" })] }); }
-  catch (e) { return false; }
-})();
+const ZOOM_TAP = 2.5, ZOOM_MAX = 5;
+// chia sẻ file chỉ hợp với điện thoại (cảm ứng); máy tính dùng nút Lưu ảnh
+const shareApi = matchMedia("(pointer: coarse)").matches && !!navigator.canShare && !!navigator.share;
 
 function openLb(list, i, opener) {
   cur = { list, i, opener };
   lbOpen = true; lb.hidden = false; document.body.classList.add("lb-open");
   history.pushState({ lb: 1 }, "");
-  show(0, true);
+  show(0);
   $("lb-close").focus({ preventScroll: true });
 }
 function closeLb(silent) {
   if (!lbOpen) return;
   lbOpen = false; lb.hidden = true; document.body.classList.remove("lb-open");
-  lbImg.removeAttribute("src"); lbImg.style.transform = ""; lb.style.background = "";
+  lbImg.removeAttribute("src"); lbImg.style.opacity = ""; resetZoom();
+  clearTimeout(shareTimer); for (const e of blobs.values()) if (e.ctl) e.ctl.abort(); blobs.clear(); lastId = null;
   if (history.state && history.state.lb && !silent) history.back();
   else if (history.state && history.state.lb) history.replaceState(null, "");
   if (cur.opener && cur.opener.isConnected) cur.opener.focus({ preventScroll: true });
@@ -282,23 +284,24 @@ function closeLb(silent) {
 const requestClose = () => closeLb(false);
 addEventListener("popstate", () => { if (lbOpen) closeLb(true); });
 
-function show(dir, first) {
+function show(dir) {
   const x = cur.list[cur.i], n = cur.list.length;
+  resetZoom();
   $("lb-count").textContent = `${cur.i + 1} / ${n}`;
   $("lb-prev").hidden = $("lb-next").hidden = n < 2;
   lbImg.alt = `Ảnh cưới có bạn, số ${cur.i + 1} trên ${n}`;
   $("lb-save").href = "/originals/" + x.id;
-  $("lb-share").hidden = !canShareFiles;
   const spin = $("lb-spin");
-  lbImg.style.transform = "";
+  lbImg.style.opacity = "";
   lbImg.src = "/" + x.thumb;  // thumb đã có sẵn trong cache của lưới: hiện ngay, rồi thay bằng bản 2000 px
   spin.classList.add("on");
   const full = new Image();
   full.onload = () => { if (cur.list[cur.i] === x) { lbImg.src = full.src; spin.classList.remove("on"); } };
-  full.onerror = () => spin.classList.remove("on");
+  full.onerror = () => { if (cur.list[cur.i] === x) spin.classList.remove("on"); };  // lỗi của ảnh cũ không được tắt vòng xoay của ảnh mới
   full.src = "/" + x.preview;
   if (dir && !reduced) lbImg.animate([{ opacity: 0, transform: `translateX(${dir * 36}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
   for (const k of [cur.i - 1, cur.i + 1]) if (cur.list[k]) new Image().src = "/" + cur.list[k].preview;
+  prepareShare(x);
 }
 function go(d) {
   const n = cur.list.length, j = cur.i + d;
@@ -321,56 +324,187 @@ addEventListener("keydown", e => {
     else if (!lb.contains(a)) { e.preventDefault(); first.focus(); }
   }
 });
-// bấm vùng tối quanh ảnh để đóng
-stageEl.addEventListener("click", e => { if (e.target === stageEl && !moved) requestClose(); });
 
-// vuốt: ngang = đổi ảnh, vuốt xuống = đóng
-let ptr = null, moved = false;
+// ---------- zoom: chụm hai ngón / chạm đúp (nhấp đúp) / lăn chuột; kéo để di chuyển khi đã phóng ----------
+let z = { s: 1, x: 0, y: 0 };
+function applyZoom() {
+  lbImg.style.transform = z.s === 1 && !z.x && !z.y ? "" : `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
+  lb.dataset.zoom = z.s.toFixed(2);
+}
+function resetZoom() { z = { s: 1, x: 0, y: 0 }; lbImg.style.transition = ""; applyZoom(); }
+// vùng chứa ảnh (hộp của #lb-stage trừ padding) và phần ảnh thật sự hiển thị trong đó (object-fit: contain), toạ độ màn hình, lúc chưa zoom
+function contentRect() {
+  const r = stageEl.getBoundingClientRect(), cs = getComputedStyle(stageEl);
+  const l = r.left + parseFloat(cs.paddingLeft), t = r.top + parseFloat(cs.paddingTop);
+  const bw = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), bh = r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const nw = lbImg.naturalWidth || 1, nh = lbImg.naturalHeight || 1, k = Math.min(bw / nw, bh / nh), w = nw * k, h = nh * k;
+  return { l: l + (bw - w) / 2, t: t + (bh - h) / 2, w, h, cx: l + bw / 2, cy: t + bh / 2, bw, bh };
+}
+function clampZoom() {
+  const c = contentRect(), mx = Math.max(0, (c.w * z.s - c.bw) / 2), my = Math.max(0, (c.h * z.s - c.bh) / 2);
+  z.x = Math.min(mx, Math.max(-mx, z.x)); z.y = Math.min(my, Math.max(-my, z.y));
+}
+function zoomAt(s, px, py) {  // giữ điểm (px, py) trên màn hình đứng yên
+  const c = contentRect(), ox = px - c.cx, oy = py - c.cy, k = s / z.s;
+  z.x = ox - (ox - z.x) * k; z.y = oy - (oy - z.y) * k; z.s = s;
+  if (s <= 1.01) z = { s: 1, x: 0, y: 0 }; else clampZoom();
+  applyZoom();
+}
+function smooth(fn) {
+  if (!reduced) { lbImg.style.transition = "transform .25s cubic-bezier(.2,.8,.2,1)"; setTimeout(() => { lbImg.style.transition = ""; }, 280); }
+  fn();
+}
+
+const ptrs = new Map();
+let g = null, lastTap = { t: 0, x: 0, y: 0 };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+function tap(e) {
+  const now = performance.now(), c = contentRect();
+  const inside = e.clientX >= c.l && e.clientX <= c.l + c.w && e.clientY >= c.t && e.clientY <= c.t + c.h;
+  const dbl = now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
+  lastTap = dbl ? { t: 0, x: 0, y: 0 } : { t: now, x: e.clientX, y: e.clientY };
+  if (dbl) { smooth(() => (z.s > 1 ? resetZoom() : zoomAt(ZOOM_TAP, e.clientX, e.clientY))); return; }
+  if (!inside && z.s === 1) requestClose();  // chạm vào vùng tối quanh ảnh: đóng (không đóng khi đang phóng)
+}
+
 stageEl.addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" && e.button !== 0) return;
-  ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), axis: null, dx: 0, dy: 0 }; moved = false;
+  stageEl.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    lbImg.style.opacity = ""; applyZoom();  // bỏ dở cú vuốt đang kéo
+    g = { mode: "pinch", d0: dist(a, b), s0: z.s, x0: z.x, y0: z.y, m0: mid(a, b) };
+  } else if (ptrs.size === 1) {
+    g = { mode: "one", x: e.clientX, y: e.clientY, t: performance.now(), axis: null, dx: 0, dy: 0, zx: z.x, zy: z.y, moved: false };
+  }
 });
 stageEl.addEventListener("pointermove", e => {
-  if (!ptr || e.pointerId !== ptr.id) return;
-  ptr.dx = e.clientX - ptr.x; ptr.dy = e.clientY - ptr.y;
-  if (!ptr.axis && Math.hypot(ptr.dx, ptr.dy) > 8) { ptr.axis = Math.abs(ptr.dx) > Math.abs(ptr.dy) ? "x" : "y"; stageEl.setPointerCapture(e.pointerId); }
-  if (!ptr.axis) return;
-  moved = true;
-  if (ptr.axis === "x") lbImg.style.transform = `translateX(${ptr.dx}px)`;
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!g) return;
+  if (g.mode === "pinch") {
+    if (ptrs.size < 2) return;
+    const [a, b] = [...ptrs.values()], m = mid(a, b), c = contentRect();
+    const s = Math.min(ZOOM_MAX, Math.max(1, g.s0 * dist(a, b) / g.d0));
+    const qx = (g.m0.x - c.cx - g.x0) / g.s0, qy = (g.m0.y - c.cy - g.y0) / g.s0;  // điểm ảnh nằm dưới trung điểm lúc bắt đầu
+    z.s = s; z.x = (m.x - c.cx) - s * qx; z.y = (m.y - c.cy) - s * qy; clampZoom(); applyZoom();
+    return;
+  }
+  const dx = e.clientX - g.x, dy = e.clientY - g.y; g.dx = dx; g.dy = dy;
+  if (z.s > 1) {  // đang phóng: chỉ di chuyển ảnh, không đổi ảnh / không đóng
+    if (Math.hypot(dx, dy) > 4) g.moved = true;
+    z.x = g.zx + dx; z.y = g.zy + dy; clampZoom(); applyZoom();
+    return;
+  }
+  if (!g.axis && Math.hypot(dx, dy) > 8) g.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+  if (!g.axis) return;
+  g.moved = true;
+  if (g.axis === "x") lbImg.style.transform = `translateX(${dx}px)`;
   else {
-    const dy = Math.max(ptr.dy, 0);
-    lbImg.style.transform = `translateY(${dy}px) scale(${1 - Math.min(dy / 900, .15)})`;
-    lb.style.background = `rgba(38,28,24,${.95 * (1 - Math.min(dy / 420, 1))})`;
+    const d = Math.max(dy, 0);
+    lbImg.style.transform = `translateY(${d}px) scale(${1 - Math.min(d / 900, .15)})`;
+    lbImg.style.opacity = String(1 - Math.min(d / 500, .6));
   }
 });
 function endPtr(e) {
-  if (!ptr || e.pointerId !== ptr.id) return;
-  const p = ptr; ptr = null;
-  lb.style.background = "";
-  if (!p.axis) { setTimeout(() => moved = false); return; }
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (g && g.mode === "pinch") {
+    if (ptrs.size < 2) {
+      if (z.s < 1.05) resetZoom();
+      g = null;
+      if (ptrs.size === 1) { const [p] = [...ptrs.values()]; g = { mode: "one", x: p.x, y: p.y, t: performance.now(), axis: null, dx: 0, dy: 0, zx: z.x, zy: z.y, moved: true }; }
+    }
+    return;
+  }
+  if (!g) return;
+  const p = g; g = null;
+  lbImg.style.opacity = "";
+  if (z.s > 1) { if (!p.moved && e.type === "pointerup") tap(e); return; }
+  if (!p.axis) { if (e.type === "pointerup" && Math.hypot(p.dx, p.dy) < 10 && performance.now() - p.t < 500) tap(e); return; }
   const v = Math.abs(p.dx) / Math.max(performance.now() - p.t, 1);
   if (p.axis === "y" && p.dy > 90) { requestClose(); }
   else if (p.axis === "x" && (Math.abs(p.dx) > 60 || v > .5)) { lbImg.style.transform = ""; go(p.dx < 0 ? 1 : -1); }
   else {
-    if (!reduced) lbImg.animate([{ transform: lbImg.style.transform }, { transform: "none" }], { duration: 220, easing: "ease-out" });
+    if (!reduced) lbImg.animate([{ transform: lbImg.style.transform, opacity: lbImg.style.opacity || 1 }, { transform: "none", opacity: 1 }], { duration: 220, easing: "ease-out" });
     lbImg.style.transform = "";
   }
-  setTimeout(() => moved = false);
 }
 stageEl.addEventListener("pointerup", endPtr);
 stageEl.addEventListener("pointercancel", endPtr);
+stageEl.addEventListener("wheel", e => {  // máy tính: lăn chuột để phóng/thu
+  e.preventDefault();
+  zoomAt(Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-e.deltaY * 0.002))), e.clientX, e.clientY);
+}, { passive: false });
 
-// lưu ảnh: link tải ảnh gốc (Content-Disposition: attachment); trên điện thoại có thêm "Chia sẻ" để lưu vào Ảnh
+// ---------- lưu / chia sẻ ----------
+// Lưu ảnh: link tải ảnh gốc (Content-Disposition: attachment).
+// Chia sẻ (điện thoại): navigator.share phải được gọi ngay trong cú bấm — nên tải sẵn ảnh gốc của ảnh đang xem
+// (chỉ ảnh hiện tại + ảnh liền trước; dừng tải khi rời ảnh) và chỉ gọi share khi đã có file.
 let toastT = 0;
 function toast(t) { const el = $("lb-toast"); el.textContent = t; el.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("on"), 2600); }
 $("lb-save").addEventListener("click", () => toast("Đang tải ảnh gốc…"));
-$("lb-share").onclick = async () => {
-  const x = cur.list[cur.i];
+
+const blobs = new Map();  // id -> { state: loading|ready|error, pct, ctl, file, denied }
+let shareTimer = 0, lastId = null, sharing = false;
+
+function prepareShare(x) {
+  clearTimeout(shareTimer);
+  if (!shareApi) { $("lb-share").hidden = true; return; }
+  const prev = lastId;
+  for (const [id, e] of blobs) if (id !== x.id && id !== prev) { if (e.ctl) e.ctl.abort(); blobs.delete(id); }
+  const left = prev && prev !== x.id && blobs.get(prev);
+  if (left && left.state === "loading") { left.ctl.abort(); blobs.delete(prev); }
+  lastId = x.id;
+  paintShare();
+  if (!blobs.has(x.id)) shareTimer = setTimeout(() => fetchBlob(x), 400);  // lướt nhanh qua nhiều ảnh thì không tải ảnh nào
+}
+async function fetchBlob(x) {
+  const e = { state: "loading", pct: 0, ctl: new AbortController(), file: null, denied: false };
+  blobs.set(x.id, e); paintShare();
   try {
-    toast("Đang chuẩn bị ảnh…");
-    const b = await (await fetch("/originals/" + x.id)).blob();
-    const f = new File([b], x.name, { type: b.type || "image/jpeg" });
-    if (navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); }
-    else location.href = "/originals/" + x.id;
-  } catch (e) { if (e.name !== "AbortError") toast("Không chia sẻ được, hãy dùng nút Lưu ảnh."); }
+    const r = await fetch("/originals/" + x.id, { signal: e.ctl.signal });
+    if (!r.ok) throw new Error("http " + r.status);
+    const total = +r.headers.get("content-length") || 0, rd = r.body && r.body.getReader(), parts = [];
+    if (rd) {
+      for (let got = 0; ;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        parts.push(value); got += value.length;
+        if (total) { e.pct = Math.round(got / total * 100); if (cur.list[cur.i] === x) paintShare(); }
+      }
+    } else parts.push(new Uint8Array(await r.arrayBuffer()));
+    const type = (r.headers.get("content-type") || "image/jpeg").split(";")[0];
+    e.file = new File(parts, x.name, { type });
+    if (!navigator.canShare({ files: [e.file] })) throw new Error("không chia sẻ được file này");
+    e.state = "ready";
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    e.state = "error";
+  }
+  if (lbOpen && cur.list[cur.i] === x) paintShare();
+}
+function paintShare() {
+  const btn = $("lb-share");
+  if (!shareApi) { btn.hidden = true; return; }
+  const x = cur.list[cur.i], e = x && blobs.get(x.id);
+  btn.hidden = !!e && e.state === "error";  // không chia sẻ được thì chỉ còn nút Lưu ảnh
+  const busy = !e || e.state === "loading";
+  btn.toggleAttribute("aria-busy", busy);
+  $("lb-share-t").textContent = busy ? (e && e.pct ? `Đang chuẩn bị ${e.pct}%` : "Đang chuẩn bị…") : e.denied ? "Bấm lần nữa để chia sẻ" : "Chia sẻ";
+}
+$("lb-share").onclick = () => {
+  const x = cur.list[cur.i], e = blobs.get(x.id);
+  if (!e || e.state !== "ready") { toast("Ảnh đang được chuẩn bị, vài giây nữa bạn bấm lại nhé."); return; }
+  if (sharing) return;  // chống bấm đúp
+  sharing = true; e.denied = false; paintShare();
+  let p;
+  try { p = navigator.share({ files: [e.file] }); } catch (err) { p = Promise.reject(err); }  // gọi đồng bộ trong cú bấm
+  p.then(() => {}, err => {
+    if (err && err.name === "AbortError") return;  // người dùng tự đóng bảng chia sẻ
+    if (err && err.name === "NotAllowedError") { e.denied = true; paintShare(); return; }  // giữ file, bấm lần nữa là chia sẻ ngay
+    toast("Không chia sẻ được, bạn hãy dùng nút Lưu ảnh nhé.");
+  }).finally(() => { sharing = false; });
 };

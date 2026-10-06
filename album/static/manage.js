@@ -1,11 +1,18 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const fmt = n => n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GB" : n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
-const dur = s => s >= 60 ? Math.floor(s / 60) + " phút " + Math.round(s % 60) + " giây" : s.toFixed(0) + " giây";
+const dur = s => { s = Math.round(s); return s >= 60 ? Math.floor(s / 60) + " phút " + (s % 60) + " giây" : s + " giây"; };
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 let maxMB = 60;
-async function refreshStats() {
+// gọi thoải mái từ mọi nơi nhưng gửi tối đa ~1 request/giây (có lượt cuối để số liệu luôn đúng)
+let statsAt = 0, statsTimer = 0;
+function refreshStats() {
+  const wait = statsAt + 1000 - Date.now();
+  if (wait > 0) { if (!statsTimer) statsTimer = setTimeout(() => { statsTimer = 0; refreshStats(); }, wait); return; }
+  statsAt = Date.now(); loadStats();
+}
+async function loadStats() {
   try {
     const d = await (await fetch("/api/stats")).json();
     maxMB = d.max_upload_mb;
@@ -22,7 +29,7 @@ async function refreshStats() {
 }
 
 // ---- tải lên: mỗi file một request, 3 request song song, có tiến độ byte ----
-let queue = [], active = 0, total = 0, sent = 0, doneN = 0, failN = 0, dupN = 0;
+let chipsKey = "", queue = [], active = 0, total = 0, sent = 0, doneN = 0, failN = 0, dupN = 0;
 function addFiles(list) {
   for (const f of list) {
     const li = el("li"), name = el("span", "f-name", f.name), st = el("span", "f-st", "chờ…");
@@ -42,6 +49,9 @@ function pump() {
   $("upsum").textContent = `Đã gửi ${fmt(sent)} / ${fmt(total)}` + (busy ? "…" : ". Hoàn tất.");
   const pct = total ? Math.min(100, sent / total * 100) : 100;
   $("upbar").style.width = pct + "%"; $("upbar-wrap").setAttribute("aria-valuenow", Math.round(pct));
+  const key = doneN + "/" + dupN + "/" + failN;
+  if (key === chipsKey) return;  // số đếm không đổi thì không dựng lại
+  chipsKey = key;
   const c = $("upchips"); c.textContent = "";
   if (doneN) c.append(el("span", "chip ok", `${doneN} ảnh xong`));
   if (dupN) c.append(el("span", "chip dup", `${dupN} trùng`));

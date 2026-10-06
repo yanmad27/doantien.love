@@ -19,7 +19,7 @@ import uuid
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
@@ -47,14 +47,38 @@ INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải
 
 
 class CachedStatic(StaticFiles):
-    """File tĩnh của giao diện. Font/ảnh đổi tên khi đổi nội dung nên cache lâu; CSS/JS không có hash
-    trong tên nên chỉ cache ngắn (sửa giao diện là khách thấy trong vài phút)."""
+    """File tĩnh của giao diện, cache dài: HTML gắn ?v=<mã nội dung> (xem static_version) nên URL đổi khi nội dung đổi;
+    font đặt tên theo kiểu chữ + subset (đổi font thì đổi tên file)."""
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         resp = super().file_response(full_path, stat_result, scope, status_code)
-        long = str(full_path).lower().endswith((".woff2", ".webp", ".svg"))
-        resp.headers["Cache-Control"] = "public, max-age=2592000" if long else "public, max-age=300"
+        resp.headers["Cache-Control"] = "public, max-age=2592000"
         return resp
+
+
+_ver = {"sig": None, "v": ""}
+
+
+def static_version():
+    """Mã nội dung của cả thư mục static/: gắn vào URL (?v=) trong HTML để deploy mới không bao giờ ghép HTML mới với JS/CSS/ảnh cũ
+    (HTML no-store; file tĩnh cache dài vì URL đổi theo nội dung). Font đặt tên theo kiểu chữ + subset, đổi font thì đổi tên file."""
+    root = os.path.join(HERE, "static")
+    files = sorted(os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs)
+    sig = tuple((p, os.stat(p).st_mtime_ns, os.stat(p).st_size) for p in files)
+    if sig != _ver["sig"]:
+        h = hashlib.sha1()
+        for p in files:
+            h.update(os.path.relpath(p, root).encode())
+            with open(p, "rb") as fh:
+                h.update(fh.read())
+        _ver.update(sig=sig, v=h.hexdigest()[:10])
+    return _ver["v"]
+
+
+def static_page(name):
+    with open(os.path.join(HERE, "static", name), encoding="utf-8") as fh:
+        html = fh.read().replace("__V__", static_version())
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 class NoIndexMiddleware:
@@ -430,11 +454,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     @app.get("/")
     def home():
-        return FileResponse(os.path.join(HERE, "static", "index.html"), headers={"Cache-Control": "no-store"})
+        return static_page("index.html")
 
     @app.get("/manage")
     def manage():
-        return FileResponse(os.path.join(HERE, "static", "manage.html"), headers={"Cache-Control": "no-store"})
+        return static_page("manage.html")
 
     # CSS/JS/font/hoạ tiết của giao diện: chỉ file tĩnh cục bộ, không nạp gì từ ngoài
     app.mount("/static", CachedStatic(directory=os.path.join(HERE, "static")), name="static")

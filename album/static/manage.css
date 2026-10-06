@@ -4,7 +4,7 @@
 .logo { display: block; width: 84px; height: auto; margin: 0 auto .5rem; }
 .title { font-size: clamp(2.3rem, 9vw, 3.4rem); }
 .back { margin: .8rem 0 0; }
-.back a { display: inline-flex; align-items: center; min-height: 44px; font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; text-decoration: none; }
+.back a { font-family: var(--ui); display: inline-flex; align-items: center; min-height: 44px; font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; text-decoration: none; }
 .back a:hover { text-decoration: underline; }
 
 .panel { margin-top: 1.4rem; padding: 1.3rem 1.2rem 1.4rem; }
@@ -16,7 +16,7 @@
 @media (min-width: 560px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
 .stat { padding: .7rem .5rem; text-align: center; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(245, 211, 199, .16); }
 .stat b { display: block; font-family: var(--serif); font-size: 1.9rem; font-weight: 600; line-height: 1.1; color: var(--peach-ink); }
-.stat span { font-size: .7rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+.stat span { font-family: var(--ui); font-size: .68rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
 .stat.warn b { color: var(--warn); } .stat.bad b { color: #a23a36; }
 .tiles--sm { margin-top: 1rem; }
 
@@ -45,9 +45,10 @@
 .files { list-style: none; margin: 1rem 0 0; padding: 0; max-height: 340px; overflow: auto; border-radius: 10px; }
 .files:empty { display: none; }
 .files li { display: grid; grid-template-columns: 1fr auto; gap: .1rem .8rem; align-items: center; padding: .55rem .2rem; border-bottom: 1px solid var(--line-soft); font-size: .86rem; animation: rise .35s var(--ease-out); }
-.f-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f-name { min-width: 0; overflow-wrap: anywhere; }
 .f-st { font-weight: 600; max-width: 60vw; overflow-wrap: anywhere; color: var(--ink-soft); text-align: right; }
 .f-st.ok { color: var(--ok); } .f-st.dup { color: var(--warn); } .f-st.err { color: #a23a36; }
+@media (max-width: 480px) { .files li { grid-template-columns: 1fr; } .f-st { text-align: left; max-width: none; } }
 .f-bar { grid-column: 1 / -1; height: 4px; border-radius: 4px; background: rgba(215, 117, 112, .14); overflow: hidden; }
 .f-bar i { display: block; height: 100%; width: 0; background: var(--peach); transition: width .2s linear; }
 .files li.done .f-bar { display: none; }

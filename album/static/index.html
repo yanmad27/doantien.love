@@ -6,26 +6,26 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#fffaf3">
 <title>Tìm ảnh của bạn · Album cưới Khắc Doãn &amp; Đông Tiên</title>
-<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/fonts.css">
-<link rel="stylesheet" href="/static/album.css">
-<link rel="stylesheet" href="/static/guest.css">
+<link rel="icon" href="/static/img/favicon.svg?v=__V__" type="image/svg+xml">
+<link rel="stylesheet" href="/static/fonts.css?v=__V__">
+<link rel="stylesheet" href="/static/album.css?v=__V__">
+<link rel="stylesheet" href="/static/guest.css?v=__V__">
 </head>
 <body>
 <div class="frame" aria-hidden="true"></div>
-<img class="flower flower--tl" src="/static/img/bloom-corner.webp" width="400" height="451" alt="" aria-hidden="true">
-<img class="flower flower--br" src="/static/img/bloom-side.webp" width="300" height="541" alt="" aria-hidden="true">
+<img class="flower flower--tl" src="/static/img/bloom-corner.webp?v=__V__" width="400" height="451" alt="" aria-hidden="true">
+<img class="flower flower--br" src="/static/img/bloom-side.webp?v=__V__" width="300" height="541" alt="" aria-hidden="true">
 
 <main class="page" id="main">
   <header class="intro">
-    <img class="logo rise" src="/static/img/heart-logo.webp" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
+    <img class="logo rise" src="/static/img/heart-logo.webp?v=__V__" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
     <p class="eyebrow rise" style="animation-delay:.1s">Album cưới</p>
     <h1 class="title rise" style="animation-delay:.18s">Tìm ảnh của bạn</h1>
     <i class="ornament rise" style="animation-delay:.26s" aria-hidden="true"></i>
     <p class="lead rise" style="animation-delay:.32s">Chỉ cần một tấm selfie, chúng tôi sẽ tìm những khoảnh khắc có bạn trong ngày cưới của Khắc Doãn &amp; Đông Tiên.</p>
   </header>
 
-  <section class="card stage rise" id="stage" style="animation-delay:.4s" aria-live="polite">
+  <section class="card stage rise" id="stage" style="animation-delay:.4s">
     <!-- 1. mở đầu: chọn ảnh -->
     <div id="st-idle" class="idle">
       <div class="actions touch-only">
@@ -39,7 +39,7 @@
         <span class="btn btn--solid">Chọn ảnh từ máy</span>
         <input class="sr" type="file" id="in-lib" accept="image/*">
       </label>
-      <p class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><span>Ảnh selfie của bạn chỉ được xử lý trong bộ nhớ để so khớp và <b>không bao giờ được lưu lại</b>.</span></p>
+      <p class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><span>Ảnh selfie chỉ dùng để so khớp ngay lúc này và <b>không bao giờ được lưu lại</b>.</span></p>
     </div>
 
     <!-- 2. đã chọn ảnh: xem trước + trạng thái -->
@@ -47,7 +47,7 @@
       <figure class="selfie" id="selfie-fig">
         <div class="selfie-in"><img id="selfie" alt="Ảnh selfie bạn vừa chọn"><i class="box" id="selfie-box" hidden></i><i class="scan" aria-hidden="true"></i></div>
       </figure>
-      <div class="status" id="status" tabindex="-1">
+      <div class="status" id="status" tabindex="-1" aria-live="polite">
         <div id="s-loading" class="s-loading" hidden>
           <p class="s-title script">Đang tìm bạn trong album…</p>
           <p class="s-text">Chỉ mất vài giây thôi.</p>
@@ -96,13 +96,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
       </button>
       <div id="maybe-body" hidden>
-        <p class="hint">Những ảnh này giống bạn ở mức vừa phải nên có thể có ảnh của người khác.</p>
+        <p class="hint">Những ảnh này chỉ giống bạn ở mức vừa phải, nên có thể lẫn ảnh của người khác.</p>
         <div class="grid" id="grid-maybe"></div>
       </div>
     </div>
   </section>
 
-  <footer class="foot"><i class="ornament" aria-hidden="true"></i><p>Khắc Doãn &amp; Đông Tiên · 04 · 10 · 2026</p></footer>
+  <footer class="foot"><i class="ornament" aria-hidden="true"></i><p><span>Khắc Doãn &amp; Đông Tiên</span><span class="dot"> · </span><span class="date">04 · 10 · 2026</span></p></footer>
 </main>
 
 <!-- khung xem ảnh toàn màn hình -->
@@ -119,10 +119,10 @@
   <button type="button" class="lb-btn lb-nav lb-next" id="lb-next" aria-label="Ảnh sau"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
   <div class="lb-bar">
     <a class="btn btn--solid" id="lb-save" href="#" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg>Lưu ảnh</a>
-    <button type="button" class="btn lb-share" id="lb-share" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M6 11H5.5A1.5 1.5 0 0 0 4 12.5v6A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5H18"/></svg>Chia sẻ</button>
+    <button type="button" class="btn lb-share" id="lb-share" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M6 11H5.5A1.5 1.5 0 0 0 4 12.5v6A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5H18"/></svg><span id="lb-share-t">Chia sẻ</span></button>
   </div>
   <p class="lb-toast" id="lb-toast" role="status"></p>
 </div>
-<script src="/static/guest.js"></script>
+<script src="/static/guest.js?v=__V__"></script>
 </body>
 </html>
