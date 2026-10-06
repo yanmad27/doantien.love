@@ -20,7 +20,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--url", default="http://localhost:8820")
 ap.add_argument("--selfie", required=True)
 ap.add_argument("--out", required=True)
-ap.add_argument("--photos", nargs="*", help="tải lên + Xử lý trước (backend thật, thư mục dữ liệu trống)")
+ap.add_argument("--photos", nargs="*", help="tải lên + Xử lý trước (backend thật, thư mục dữ liệu trống); nếu máy chủ có khoá thì đăng nhập bằng --manage-token")
+ap.add_argument("--setup-only", action="store_true", help="chỉ tải lên + Xử lý (--photos) rồi thoát")
+ap.add_argument("--test-throttle", action="store_true", help="thử chặn đăng nhập sai quá nhiều lần (429) — chỉ nên chạy một lần: máy chủ thật sẽ khoá đăng nhập một lúc")
 ap.add_argument("--mock", action="store_true", help="đang chạy dev/mock_gallery.py: kiểm thêm log của 'CDN', đường lùi và /manage có mã")
 ap.add_argument("--manage-token", default="", help="máy chủ (--url) chạy với token này: thử trang đăng nhập /manage (dùng mã giả, vd. test-token)")
 ap.add_argument("--big-url", default="", help="máy chủ giả chạy với --search-n lớn (~1900): thử 'ảnh của bạn' có hàng nghìn kết quả")
@@ -156,6 +158,7 @@ def collect_ids(pg, root, label, reverse=False, stats=None):
         snap3 = pg.evaluate("r => [...document.querySelectorAll(r + ' .tile')].map(b => [+b.dataset.i, b.dataset.id, +((b.querySelector('.stack') || {}).textContent || '+0').slice(1)])", root)
         snap = [x[:2] for x in snap3]
         ids = [x[1] for x in snap]
+        check([x[0] for x in snap] == sorted(x[0] for x in snap), f"{label}: thứ tự DOM của các ô phải đúng thứ tự hiển thị (Tab/trình đọc màn hình)")
         if stats is not None:
             stats["dom"] = max(stats.get("dom", 0), len(snap))
             for i, _pid, nstack in snap3:
@@ -220,13 +223,18 @@ with sync_playwright() as p:
         watch(ctx)
         pg = ctx.new_page()
         pg.goto(a.url + "/manage")
-        pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+        if pg.locator("#login-form").count():  # máy chủ có khoá: đăng nhập như chủ nhà
+            check(a.manage_token, "máy chủ đòi mã chủ nhà: cần --manage-token")
+            pg.fill("#token-in", a.manage_token); pg.click("#login-btn")
+        pg.wait_for_function("document.getElementById('disk') && document.getElementById('disk').textContent.includes('GB')", timeout=30000)
         pg.set_input_files("#pick", a.photos)
         pg.wait_for_function("document.getElementById('upsum').textContent.includes('Hoàn tất')", timeout=300000)
         pg.click("#proc")
         pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Hoàn tất')", timeout=900000)
-        print("đã tải lên + xử lý:", pg.inner_text("#ptiles").replace("\n", " "))
+        print("đã tải lên + xử lý:", pg.inner_text("#ptiles").replace("\n", " "), "|", pg.inner_text("#upchips").replace("\n", ", "))
         ctx.close()
+        if a.setup_only:
+            b.close(); sys.exit(0)
 
     # ---------- khách (điện thoại) ----------
     ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True,
@@ -298,6 +306,7 @@ with sync_playwright() as p:
           return { s, dom: document.querySelectorAll('#vg-all .tile').length, img: document.querySelectorAll('#vg-all .tile img[src]').length,
                    ids: [...document.querySelectorAll('#vg-all .tile')].map(b => [+b.dataset.i, b.dataset.id, +((b.querySelector('.stack') || {}).textContent || '+0').slice(1)]) }; }""")
         ids = [x[1] for x in r["ids"]]
+        check([x[0] for x in r["ids"]] == sorted(x[0] for x in r["ids"]), "cuộn: thứ tự DOM của các ô phải đúng thứ tự hiển thị")
         for i, pid, ns in r["ids"]:
             tstats[i] = 1 + ns
         check(len(ids) == len(set(ids)), "cuộn: có ảnh xuất hiện 2 lần trong DOM")
@@ -488,6 +497,7 @@ with sync_playwright() as p:
     log_posts = [u for m, u in reqs if m == "POST"]
     check(all(urlparse(u).netloc == APP.netloc and urlparse(u).path == "/api/search" for u in log_posts), "mọi POST của khách chỉ tới /api/search cùng nguồn gốc: %s" % log_posts)
     check(selfie_posts and all(u == APP_ORIGIN + "/api/search" for u in selfie_posts), "selfie phải được gửi tới /api/search cùng nguồn gốc: %s" % selfie_posts)
+    print(f"selfie: {len(selfie_posts)} POST /api/search, tất cả tới {sorted(set(selfie_posts))}; mọi request có thân đều tới {APP_ORIGIN}")
     if a.mock:
         lg = mock_log()
         check(all(m == "GET" and path.startswith("/i/") for m, path in lg["cdn"]), "'CDN' chỉ được thấy GET /i/*: %s" % [x for x in lg["cdn"] if not (x[0] == "GET" and x[1].startswith("/i/"))][:5])
@@ -701,13 +711,14 @@ with sync_playwright() as p:
         shot(pg, "9b-manage-login-wrong.png")
         pg.fill("#token-in", a.manage_token); pg.click("#login-btn")
         pg.wait_for_function("document.getElementById('disk') && document.getElementById('disk').textContent.includes('GB')", timeout=15000)
-        ck = [c for c in ctx.cookies() if c["name"] == "album_token"]
-        check(ck and ck[0]["httpOnly"] and ck[0]["sameSite"] == "Strict" and ck[0]["path"] == "/", "cookie album_token: HttpOnly, SameSite=Strict, Path=/: %s" % ck)
-        check("album_token" not in pg.evaluate("document.cookie") and pg.evaluate("localStorage.length") == 0, "mã không được lộ cho JS / lưu ở localStorage")
+        ck = [c for c in ctx.cookies() if c["name"] in ("album_token", "album_session")]  # backend thật dùng album_session (HMAC, không chứa mã)
+        check(ck and all(c["httpOnly"] and c["sameSite"] == "Strict" and c["path"] == "/" for c in ck), "cookie đăng nhập: HttpOnly, SameSite=Strict, Path=/: %s" % [(c["name"], c["httpOnly"]) for c in ck])
+        check(not any(c["name"] in pg.evaluate("document.cookie") for c in ck) and pg.evaluate("localStorage.length") == 0, "cookie/mã không được lộ cho JS, không lưu ở localStorage")
+        check(a.manage_token not in (ck[0]["value"] or ""), "cookie không chứa mã chủ nhà")
         check("hạn mức" not in pg.inner_text("#disk"), "max_total_bytes null: không hiện hạn mức: " + pg.inner_text("#disk"))
         print("/manage (có khoá): 401 + trang đăng nhập → mã sai báo lỗi → mã đúng vào trang; cookie HttpOnly; không hạn mức:", pg.inner_text("#disk")[:90])
         pg.set_input_files("#pick", a.selfie)
-        pg.wait_for_function("document.getElementById('upchips').textContent.includes('xong')", timeout=15000)
+        pg.wait_for_function("/xong|trùng/.test(document.getElementById('upchips').textContent)", timeout=15000)
         pg.wait_for_timeout(300)
         shot(pg, "9c-manage-after-login.png")
         ctx.clear_cookies()  # cookie hết hạn giữa chừng: tải lên bị 401 → quay lại trang đăng nhập
@@ -718,12 +729,13 @@ with sync_playwright() as p:
         ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm)
         pg = ctx.new_page(); pg.goto(a.url + "/manage"); pg.wait_for_selector("#login-form"); pg.wait_for_timeout(500)
         shot(pg, "d9-manage-login.png")
-        for _ in range(10):  # 10 lần sai/phút: lần kế tiếp bị chặn (429)
+        for _ in range(10 if (a.mock or a.test_throttle) else 0):  # 10 lần sai/phút: lần kế tiếp bị chặn (429)
             pg.fill("#token-in", "sai"); pg.click("#login-btn")
             pg.wait_for_function("!document.getElementById('login-btn').disabled")
-        pg.fill("#token-in", "sai"); pg.click("#login-btn")
-        pg.wait_for_function("document.getElementById('login-msg').textContent.includes('đợi')", timeout=10000)
-        print("đăng nhập sai quá nhiều lần: báo chờ (429)")
+        if a.mock or a.test_throttle:
+            pg.fill("#token-in", "sai"); pg.click("#login-btn")
+            pg.wait_for_function("document.getElementById('login-msg').textContent.includes('đợi')", timeout=10000)
+            print("đăng nhập sai quá nhiều lần: báo chờ (429)")
         ctx.close()
         if a.mock:
             urllib.request.urlopen(urllib.request.Request(a.url + "/__mock/reset", method="POST", data=b""))
@@ -734,7 +746,7 @@ with sync_playwright() as p:
         check(resp.status == 200, "token không đặt: /manage phải mở thẳng, đang là %s" % resp.status)
         pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
         pg.set_input_files("#pick", a.selfie)
-        pg.wait_for_function("document.getElementById('upchips').textContent.includes('xong')", timeout=15000)
+        pg.wait_for_function("/xong|trùng/.test(document.getElementById('upchips').textContent)", timeout=15000)
         pg.wait_for_timeout(300)
         shot(pg, "9d-manage-open.png")
         print("/manage (không khoá): mở thẳng, tải lên chạy không cần mã")

@@ -160,9 +160,15 @@ class VGallery {
     let b = a;
     while (b + 1 < this.rows.length && this.rows[b + 1].top <= hiY) b++;
     for (const [ri, r] of this.mounted) if ((ri < a || ri > b) && ri !== keep) { r.el.remove(); this.mounted.delete(ri); }
-    const frag = document.createDocumentFragment();
-    for (let ri = a; ri <= b; ri++) if (!this.mounted.has(ri)) { const r = this.mountRow(ri); frag.append(r.el); this.mounted.set(ri, r); }
-    this.root.append(frag);
+    // DOM luôn theo đúng thứ tự hàng (Tab và trình đọc màn hình đi theo thứ tự DOM): hàng mới chèn trước hàng đã dựng có chỉ số lớn hơn gần nhất
+    for (let ri = a; ri <= b; ri++) {
+      if (this.mounted.has(ri)) continue;
+      let next = null;
+      for (const [k, r] of this.mounted) if (k > ri && (!next || k < next.k)) next = { k, el: r.el };
+      const r = this.mountRow(ri);
+      this.root.insertBefore(r.el, next ? next.el : null);
+      this.mounted.set(ri, r);
+    }
     // nạp / bỏ ảnh theo khoảng cách tới vùng nhìn thấy
     const L = this.warm ? LOAD_VH : 0.2;
     const lo1 = y - L * vh, hi1 = y + vh + L * vh, lo2 = y - DROP_VH * vh, hi2 = y + vh + DROP_VH * vh;
