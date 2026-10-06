@@ -39,6 +39,33 @@
     </div>
   </section>
 
+  <section class="card panel" id="vis" aria-labelledby="h-vis">
+    <h2 class="h" id="h-vis">Ẩn / hiện ảnh</h2>
+    <p class="note">Chọn ảnh rồi bấm <b>Ẩn</b>: khách không còn thấy ảnh đó trong thư viện. Bấm <b>Hiện</b> để đưa ảnh trở lại bất cứ lúc nào.</p>
+    <div class="setting">
+      <label class="switch">
+        <input type="checkbox" role="switch" id="set-incl" class="sr" disabled>
+        <i class="knob" aria-hidden="true"></i>
+        <span class="switch-t">Ảnh đã ẩn vẫn có thể hiện khi khách tìm bằng selfie</span>
+      </label>
+      <p class="set-note" id="set-note"></p>
+    </div>
+    <div class="vbar">
+      <div class="filters" role="group" aria-label="Lọc ảnh">
+        <button type="button" class="fchip" data-f="all" aria-pressed="true">Tất cả <b id="c-all">–</b></button>
+        <button type="button" class="fchip" data-f="shown" aria-pressed="false">Đang hiện <b id="c-shown">–</b></button>
+        <button type="button" class="fchip" data-f="hidden" aria-pressed="false">Đang ẩn <b id="c-hidden">–</b></button>
+      </div>
+      <div class="vtools">
+        <button type="button" class="btn btn--quiet btn--sm" id="v-mode" aria-pressed="false">Chọn</button>
+        <button type="button" class="btn btn--quiet btn--sm" id="v-all" hidden>Chọn tất cả (theo bộ lọc)</button>
+      </div>
+    </div>
+    <p class="vhelp" id="v-help" hidden>Chạm ảnh để chọn. Muốn chọn cả đoạn: chạm ảnh đầu, bấm “Chọn đến đây”, rồi chạm ảnh cuối (máy tính: giữ Shift). “Mở chuỗi” để chọn từng khung của chuỗi chụp liên tiếp.</p>
+    <p class="vstate" id="v-state" role="status">Đang tải danh sách ảnh…</p>
+    <div class="vgrid" id="vgrid"></div>
+  </section>
+
   <section class="card panel" aria-labelledby="h-up">
     <h2 class="h" id="h-up"><span class="num">1</span>Tải ảnh gốc lên</h2>
     <label class="drop" id="drop">
@@ -75,6 +102,32 @@
     <div id="errors" class="errors" hidden></div>
   </section>
 </main>
+<div class="abar" id="abar" hidden role="region" aria-label="Thao tác với ảnh đã chọn">
+  <div class="abar-top">
+    <span class="abar-n" id="abar-n" aria-live="polite" aria-atomic="true">0 ảnh đã chọn</span>
+    <button type="button" class="abar-clear" id="a-clear">Bỏ chọn</button>
+  </div>
+  <div class="abar-btns">
+    <button type="button" class="btn btn--quiet" id="a-range" aria-pressed="false">Chọn đến đây</button>
+    <button type="button" class="btn btn--solid" id="a-hide">Ẩn</button>
+    <button type="button" class="btn" id="a-show">Hiện</button>
+  </div>
+</div>
+<div class="toast" id="toast" hidden role="status" aria-live="polite"><span id="toast-t"></span><button type="button" id="toast-undo" hidden>Hoàn tác</button></div>
+<dialog class="dlg" id="pv" aria-label="Xem ảnh">
+  <div class="pv-img"><img id="pv-img" alt=""></div>
+  <p class="pv-cap" id="pv-cap"></p>
+  <div class="pv-btns">
+    <button type="button" class="btn btn--quiet" id="pv-prev" aria-label="Ảnh trước">‹</button>
+    <button type="button" class="btn btn--quiet" id="pv-tog"></button>
+    <button type="button" class="btn btn--quiet" id="pv-next" aria-label="Ảnh sau">›</button>
+    <button type="button" class="btn" id="pv-close">Đóng</button>
+  </div>
+</dialog>
+<dialog class="dlg dlg--sm" id="cf" aria-labelledby="cf-t">
+  <p class="cf-t" id="cf-t"></p>
+  <div class="pv-btns"><button type="button" class="btn btn--quiet" id="cf-no">Huỷ</button><button type="button" class="btn btn--solid" id="cf-yes">Đồng ý</button></div>
+</dialog>
 <script src="/static/manage.js?v=__V__"></script>
 </body>
 </html>

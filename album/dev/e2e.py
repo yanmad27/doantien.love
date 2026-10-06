@@ -5,6 +5,7 @@ tìm bằng selfie → quay lại tất cả → Lưu ảnh), chụp màn hình 
   python dev/e2e.py --url http://localhost:8820 --selfie /tmp/album-test/photos/wedding_couple.jpg --out /tmp/album-e/shots --mock --manage-token test-token --open-url http://localhost:8822
   # với backend thật (đã có ảnh được xử lý): bỏ --mock; thêm --photos f1.jpg ... nếu muốn tải lên + Xử lý trước
 
+--visibility: chỉ chạy bộ thử Ẩn / hiện ảnh (hợp đồng F), mỗi trình duyệt một lần, máy tính + điện thoại.
 --browser chromium|webkit (zoom bằng hai ngón chỉ chạy ở chromium). Thoát mã ≠ 0 nếu một bước hỏng. Ảnh chụp có thể chứa ảnh khách: .gitignore đã loại *.png.
 """
 import argparse
@@ -28,6 +29,7 @@ ap.add_argument("--manage-token", default="", help="máy chủ (--url) chạy v�
 ap.add_argument("--big-url", default="", help="máy chủ giả chạy với --search-n lớn (~1900): thử 'ảnh của bạn' có hàng nghìn kết quả")
 ap.add_argument("--open-url", default="", help="máy chủ KHÔNG đặt token: thử /manage mở thẳng")
 ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit"])
+ap.add_argument("--visibility", action="store_true", help="chỉ chạy bộ thử Ẩn / hiện ảnh trong /manage (cần --manage-token nếu máy chủ có khoá; mock: --search-n lớn để ảnh ẩn chắc chắn nằm trong kết quả); trả ảnh về trạng thái hiện hết khi xong")
 ap.add_argument("--reduced-motion", action="store_true")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
@@ -201,7 +203,7 @@ def collect_ids(pg, root, label, reverse=False, stats=None):
     return [seen[i] for i in sorted(seen)]
 
 
-WALK = """n => { const cur = () => document.getElementById('lb-save').getAttribute('href').split('/').pop();
+WALK = """n => { const cur = () => document.getElementById('lb-save').getAttribute('href').split('/').pop().split('?')[0];
   const key = k => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
   const fwd = [cur()]; for (let i = 0; i < n - 1; i++) { key('ArrowRight'); fwd.push(cur()); }
   const countAtEnd = document.getElementById('lb-count').textContent; key('ArrowRight'); const afterEnd = cur();
@@ -215,7 +217,7 @@ def walk_check(pg, expected, label):
     for pat in ("**/*-2000.webp", "**/previews/*"):  # chặn tải ảnh 2000 px trong lúc bấm liên tục (abort: không để lại bản giả trong cache trình duyệt)
         pg.route(pat, lambda r, _b=None: r.abort())
     n = len(expected)
-    check(pg.evaluate("document.getElementById('lb-save').getAttribute('href').split('/').pop()") == expected[0], f"{label}: phải bắt đầu ở ảnh đầu")
+    check(pg.evaluate("document.getElementById('lb-save').getAttribute('href').split('/').pop().split('?')[0]") == expected[0], f"{label}: phải bắt đầu ở ảnh đầu")
     w = pg.evaluate(WALK, n)
     pg.unroute("**/*-2000.webp"); pg.unroute("**/previews/*")
     check(len(w["fwd"]) == n and len(set(w["fwd"])) == n, f"{label}: {n - 1} lần Tiếp phải qua {n} id khác nhau, được {len(set(w['fwd']))}")
@@ -235,6 +237,374 @@ SHARE_STUB = """
     if (window.__deny > 0) { window.__deny--; return Promise.reject(new DOMException('x', 'NotAllowedError')); }
     return new Promise(r => setTimeout(r, 400)); } });
 """
+
+# ---------- Ẩn / hiện ảnh (hợp đồng F): chạy riêng bằng --visibility, trên Chromium / WebKit, máy tính + điện thoại ----------
+def vis_suite():
+    selfie_bytes = open(a.selfie, "rb").read()
+    num = lambda s: int("".join(ch for ch in s if ch.isdigit()) or 0)
+    JS_API = """async ([p, b]) => { const r = await fetch(p, b ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) } : {}); let d = null; try { d = await r.json(); } catch (e) {} return [r.status, d]; }"""
+
+    def api(pg, path, body=None):
+        return pg.evaluate(JS_API, [path, body])
+
+    def admin(pg):
+        st, d = api(pg, "/api/admin/photos")
+        check(st == 200, f"GET /api/admin/photos phải 200, được {st}")
+        return d
+
+    def hidden_ids(pg):
+        return {p[0] for p in admin(pg)["photos"] if p[8]}
+
+    def login(pg):
+        pg.goto(a.url + "/manage")
+        if pg.locator("#login-form").count():
+            check(a.manage_token, "máy chủ đòi mã chủ nhà: cần --manage-token")
+            pg.fill("#token-in", a.manage_token); pg.click("#login-btn")
+        pg.wait_for_selector("#vgrid .cell", timeout=30000)
+
+    def reset(pg):
+        d = admin(pg)
+        ids = [p[0] for p in d["photos"]]
+        for i in range(0, len(ids), 5000):
+            check(api(pg, "/api/admin/visibility", {"ids": ids[i:i + 5000], "hidden": False})[0] == 200, "reset: hiện tất cả")
+        check(api(pg, "/api/admin/settings", {"search_includes_hidden": True})[0] == 200, "reset: bật cài đặt tìm")
+        pg.reload(); pg.wait_for_selector("#vgrid .cell", timeout=30000)
+
+    def at(pg, k):
+        pg.evaluate("k => document.querySelector('.cell[data-k=\"' + k + '\"]').scrollIntoView({ block: 'center' })", k)
+
+    def tap(pg, k, **kw):
+        at(pg, k)
+        pg.locator(f'.cell[data-k="{k}"] .tile').click(**kw)
+
+    def sel_n(pg):
+        return num(pg.inner_text("#abar-n")) if "Chưa" not in pg.inner_text("#abar-n") else 0
+
+    def selected(pg, bursts, only=None):
+        keys = pg.evaluate("[...document.querySelectorAll('.cell')].filter(c => c.dataset.sel === 'all').map(c => c.dataset.k)")
+        out = set()
+        for k in keys:
+            out.update(bursts[k[1:]] if k[0] == "b" and k[1:] in bursts else [k])
+        return out & only if only is not None else out  # `only`: bộ lọc đang áp (ô chuỗi chỉ gồm các khung khớp bộ lọc)
+
+    def act(pg, btn, path="/api/admin/visibility"):
+        with pg.expect_response(lambda r: r.url.endswith(path) and r.request.method == "POST") as ri:
+            pg.click(btn)
+        check(ri.value.status == 200, f"{btn}: POST {path} phải 200, được {ri.value.status}")
+        pg.wait_for_timeout(120)
+
+    def chips(pg):
+        return [num(pg.inner_text(f"#c-{k}")) for k in ("all", "shown", "hidden")]
+
+    def public_rows():
+        rows, uniq = load_rows(a.url)
+        check(len(rows) == len(uniq), "thư viện công khai: không id nào xuất hiện hai lần")
+        return rows
+
+    def guest_walk(bt, rows, label):
+        ctx = bt.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)  # không cookie chủ nhà
+        pg = ctx.new_page(); pg.goto(a.url + "/")
+        pg.wait_for_selector("#vg-all .tile", timeout=30000)
+        tiles, _ = group_tiles(rows)
+        st = {}
+        ids = collect_ids(pg, "#vg-all", label, stats=st)
+        check(ids == [t[0] for t in tiles], f"{label}: ô theo đúng manifest công khai ({len(ids)} vs {len(tiles)})")
+        check([st["frames"][i] for i in range(len(tiles))] == [len(t) for t in tiles], f"{label}: huy hiệu +N khớp số khung còn hiện")
+        pg.evaluate("scrollTo(0, 0)"); pg.wait_for_selector("#vg-all .tile"); pg.locator("#vg-all .tile").first.click(); pg.wait_for_selector("#lb:not([hidden])")
+        check("?" not in pg.get_attribute("#lb-save", "href"), f"{label}: ảnh trong thư viện (không phải kết quả tìm) không dùng ?t=")
+        ctx.close()
+        return len(tiles)
+
+    def run(bt, label, kw):
+        ctx = bt.new_context(**kw); pg = ctx.new_page()
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        login(pg); reset(pg)
+        D = admin(pg); R = D["photos"]
+        ids_all = [p[0] for p in R]
+        rows0 = public_rows()
+        check([r[0] for r in rows0] == ids_all, f"{label}: bắt đầu: thư viện công khai = toàn bộ ảnh")
+        check(chips(pg) == [len(R), len(R), 0] and D["counts"] == {"all": len(R), "shown": len(R), "hidden": 0}, f"{label}: số đếm bộ lọc {chips(pg)} vs {D['counts']}")
+        bursts = {}
+        for p in R:
+            if p[7]:
+                bursts.setdefault(p[7], []).append(p[0])
+        big = [b for b, f in bursts.items() if len(f) >= 3]
+        B1, B2 = big[0], [b for b, f in bursts.items() if b != big[0] and len(f) >= 2][-1]
+        pos = {p[0]: i for i, p in enumerate(R)}
+        singles = [p[0] for p in R if not p[7]]
+        s0, s1 = singles[3], singles[4]
+        later = [s for s in singles if pos[s] >= 600]
+        sa = later[0]; sb = next(s for s in later if pos[s] >= pos[sa] + 15)
+        sc = next(s for s in later if pos[s] >= pos[sb] + 5); sd = next(s for s in later if pos[s] >= pos[sc] + 12)
+        pg.locator("#vis").scroll_into_view_if_needed(); pg.evaluate("document.getElementById('vis').scrollIntoView()")
+        pg.wait_for_function("[...document.querySelectorAll('#vgrid .tile img')].slice(0, 6).every(i => i.complete && i.naturalWidth > 0)", timeout=30000)
+        shot(pg, f"{label}-1-overview.png")
+        print(f"{label}: đăng nhập, mục Ẩn/hiện: {chips(pg)} (tất cả/đang hiện/đang ẩn) = máy chủ {D['counts']}; {len(bursts)} chuỗi")
+
+        # --- chế độ thường: chạm = xem ảnh ---
+        at(pg, s0); pg.locator(f'.cell[data-k="{s0}"] .tile').click()
+        pg.wait_for_selector("#pv[open]")
+        check(R[pos[s0]][6] in pg.inner_text("#pv-cap") and pg.is_hidden("#abar"), f"{label}: chạm ảnh ở chế độ thường mở xem ảnh, không chọn")
+        pg.click("#pv-close"); pg.wait_for_selector("#pv", state="hidden")
+        # nhấn giữ = vào chế độ chọn + chọn ô đó (và cú nhả không bị tính là chạm)
+        at(pg, s0); box = pg.locator(f'.cell[data-k="{s0}"] .tile').bounding_box()
+        pg.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2); pg.mouse.down(); pg.wait_for_timeout(650); pg.mouse.up(); pg.wait_for_timeout(450)  # cú nhả ngay sau nhấn giữ bị nuốt trong 350 ms
+        pg.wait_for_selector("#abar:not([hidden])")
+        check(sel_n(pg) == 1 and pg.get_attribute(f'.cell[data-k="{s0}"]', "data-sel") == "all" and not pg.locator("#pv[open]").count(), f"{label}: nhấn giữ → chế độ chọn, chọn 1 ảnh, không mở xem")
+        pg.click("#a-clear"); check(sel_n(pg) == 0, f"{label}: Bỏ chọn")
+
+        # --- một ảnh: ẩn (lạc quan) → ngoài thư viện khách → Hoàn tác ---
+        tap(pg, s0); check(sel_n(pg) == 1 and "1 ảnh đã chọn" in pg.inner_text("#abar-n"), f"{label}: chọn một ảnh")
+        with pg.expect_response(lambda r: r.url.endswith("/api/admin/visibility")) as ri:
+            c = pg.evaluate("document.getElementById('a-hide').click(); document.getElementById('c-hidden').textContent")
+            check(num(c) == 1, f"{label}: cập nhật lạc quan: số 'Đang ẩn' đổi ngay trước khi máy chủ trả lời ({c})")
+        check(ri.value.status == 200, "ẩn một ảnh: 200")
+        pg.wait_for_timeout(150)
+        check(hidden_ids(pg) == {s0} and "Đã ẩn 1 ảnh" in pg.inner_text("#toast"), f"{label}: ẩn 1 ảnh: máy chủ có đúng 1 ảnh ẩn, toast: {pg.inner_text('#toast')}")
+        check(s0 not in {r[0] for r in public_rows()}, f"{label}: ảnh đã ẩn không còn trong thư viện khách")
+        shot(pg, f"{label}-5-actionbar-toast.png")
+        with pg.expect_response(lambda r: r.url.endswith("/api/admin/visibility")):
+            pg.click("#toast-undo")
+        pg.wait_for_timeout(150)
+        check(hidden_ids(pg) == set() and chips(pg) == [len(R), len(R), 0], f"{label}: Hoàn tác đưa ảnh trở lại")
+        print(f"{label}: chọn 1 ảnh → Ẩn (số đếm đổi ngay) → khách không thấy → Hoàn tác → trở lại")
+
+        # --- lỗi mạng: quay lại như cũ + báo ---
+        pg.route("**/api/admin/visibility", lambda r: r.fulfill(status=500, content_type="application/json", body="{}"))
+        tap(pg, s1); pg.click("#a-hide"); pg.wait_for_function("document.getElementById('toast-t').textContent.includes('Chưa lưu được')", timeout=10000)
+        check(chips(pg)[2] == 0 and pg.get_attribute(f'.cell[data-k="{s1}"]', "class").find("is-hidden") < 0, f"{label}: lỗi 500 → ảnh quay lại trạng thái cũ")
+        pg.unroute("**/api/admin/visibility")
+        pg.click("#a-clear")
+        print(f"{label}: lỗi máy chủ → hoàn lại trạng thái cũ + thông báo")
+
+        # --- chuỗi: chọn cả chuỗi, mở chuỗi, chọn một phần ---
+        f1 = bursts[B1]
+        tap(pg, "b" + B1)
+        check(sel_n(pg) == len(f1) and pg.get_attribute(f'.cell[data-k="b{B1}"]', "data-sel") == "all", f"{label}: chạm ô chuỗi chọn đủ {len(f1)} khung")
+        pg.click(f'.cell[data-k="b{B1}"] .bopen-btn')
+        pg.wait_for_selector(".bopen")
+        check(pg.locator(".bopen .cell").count() == len(f1) and sel_n(pg) == len(f1), f"{label}: 'Mở chuỗi' hiện {len(f1)} ô khung, giữ nguyên lựa chọn")
+        tap(pg, f1[0]); check(sel_n(pg) == len(f1) - 1, f"{label}: bỏ chọn một khung")
+        pg.evaluate("document.getElementById('toast').hidden = true")
+        shot(pg, f"{label}-3-expanded-burst.png")
+        pg.click(".bopen-x"); pg.wait_for_selector(".bopen", state="detached")
+        check(pg.get_attribute(f'.cell[data-k="b{B1}"]', "data-sel") == "part", f"{label}: chuỗi chọn một phần → trạng thái 'part' (dấu –)")
+        tap(pg, s0)
+        pg.evaluate("document.getElementById('toast').hidden = true")
+        shot(pg, f"{label}-2-select-mixed.png")
+        pg.click("#a-clear")
+        # chỉ ẩn khung thứ hai của B1
+        pg.click(f'.cell[data-k="b{B1}"] .bopen-btn'); pg.wait_for_selector(".bopen")
+        tap(pg, f1[1]); check(sel_n(pg) == 1, "chọn đúng một khung")
+        act(pg, "#a-hide")
+        check(hidden_ids(pg) == {f1[1]}, f"{label}: chỉ khung {f1[1]} bị ẩn")
+        pg.click(".bopen-x"); pg.wait_for_selector(".bopen", state="detached")
+        tags = pg.inner_text(f'.cell[data-k="b{B1}"] .tags')
+        check(f"1/{len(f1)} ẩn" in tags, f"{label}: huy hiệu chuỗi hỗn hợp: {tags}")
+        # chuỗi B2: ẩn cả chuỗi bằng một chạm
+        f2 = bursts[B2]
+        tap(pg, "b" + B2); check(sel_n(pg) == len(f2), f"{label}: chọn cả chuỗi B2")
+        act(pg, "#a-hide")
+        check(hidden_ids(pg) == {f1[1], *f2}, f"{label}: ẩn cả chuỗi B2 ({len(f2)} khung)")
+        print(f"{label}: chuỗi — chạm ô = chọn cả {len(f1)} khung; mở chuỗi; chọn một phần = 'part'; ẩn 1 khung → huy hiệu '1/{len(f1)} ẩn'; ẩn cả chuỗi {len(f2)} khung")
+
+        # --- dải: neo + "Chọn đến đây"; Shift-click ---
+        tap(pg, sa)
+        pg.click("#a-range"); check(pg.get_attribute("#a-range", "aria-pressed") == "true", f"{label}: 'Chọn đến đây' đã bật")
+        tap(pg, sb)
+        exp = set(ids_all[pos[sa]:pos[sb] + 1])
+        got = selected(pg, bursts)
+        check(got == exp and sel_n(pg) == len(exp), f"{label}: dải neo→ô cuối: {len(got)} ảnh, cần {len(exp)}")
+        act(pg, "#a-hide")
+        hid = {f1[1], *f2, *exp}
+        check(hidden_ids(pg) == hid, f"{label}: ẩn dải: máy chủ có đúng {len(hid)} ảnh ẩn")
+        tap(pg, sc); tap(pg, sd, modifiers=["Shift"])
+        exp2 = set(ids_all[pos[sc]:pos[sd] + 1]); got2 = selected(pg, bursts)
+        check(got2 == exp2, f"{label}: Shift-click chọn dải: {len(got2)} vs {len(exp2)}")
+        act(pg, "#a-hide"); hid |= exp2
+        check(hidden_ids(pg) == hid, f"{label}: ẩn dải Shift")
+        print(f"{label}: dải bằng 'Chọn đến đây' ({len(exp)} ảnh) + Shift-click ({len(exp2)} ảnh) đúng thứ tự khung; đang ẩn {len(hid)}")
+
+        # --- bộ lọc theo khung ---
+        c = chips(pg)
+        check(c == [len(R), len(R) - len(hid), len(hid)], f"{label}: số đếm bộ lọc {c}")
+        pg.click('.fchip[data-f="hidden"]'); pg.wait_for_function("document.querySelector('.fchip[data-f=hidden]').getAttribute('aria-pressed') === 'true'")
+        pg.click("#v-all")
+        check(selected(pg, bursts, hid) == hid and sel_n(pg) == len(hid), f"{label}: lọc 'Đang ẩn' + Chọn tất cả = đúng {len(hid)} khung đang ẩn")
+        pg.click("#a-clear")
+        check(not pg.locator(".cell:not(.is-hidden)").count(), f"{label}: lọc 'Đang ẩn' chỉ còn ô ẩn")
+        pg.evaluate("document.getElementById('vis').scrollIntoView()"); pg.click("#v-mode")  # thoát chế độ chọn cho ảnh chụp
+        pg.evaluate("document.querySelector('.vbar').scrollIntoView()"); pg.evaluate("document.getElementById('toast').hidden = true"); shot(pg, f"{label}-4-filter-hidden.png")
+        pg.click('.fchip[data-f="shown"]'); pg.click("#v-mode"); pg.click("#v-all")
+        check(sel_n(pg) == len(R) - len(hid) and pg.locator(".cell.is-hidden").count() == 0, f"{label}: lọc 'Đang hiện' = {len(R) - len(hid)} khung, không ô ẩn")
+        pg.click("#v-mode"); pg.click('.fchip[data-f="all"]')
+        print(f"{label}: bộ lọc theo khung: {c}; 'Đang ẩn' + chọn tất cả = {len(hid)}")
+
+        # --- khách: thư viện công khai ---
+        rows = public_rows()
+        vis_ids = [r[0] for r in rows]
+        check(vis_ids == [i for i in ids_all if i not in hid], f"{label}: thư viện khách = toàn bộ trừ ảnh ẩn, giữ thứ tự")
+        remain = [i for i in f1 if i != f1[1]]
+        bb = {r[0]: r[7] for r in rows}
+        check(all(bb[i] == remain[0] for i in remain) if len(remain) >= 2 else all(bb[i] is None for i in remain), f"{label}: chuỗi còn {len(remain)} khung: b = khung đầu còn hiện")
+        check(not set(f2) & set(vis_ids), f"{label}: chuỗi ẩn hết không còn ô")
+        n_tiles = guest_walk(bt, rows, f"{label}: thư viện khách (đã ẩn)")
+        print(f"{label}: khách thấy {len(vis_ids)}/{len(R)} ảnh, {n_tiles} ô; chuỗi {len(f1)} khung ẩn 1 → '+{len(remain) - 1}', chuỗi {len(f2)} khung ẩn hết → không ô; không id trùng")
+
+        # --- tìm selfie: cài đặt BẬT ---
+        def search(c2):
+            r = c2.request.post(a.url + "/api/search", data=selfie_bytes, headers={"Content-Type": "application/octet-stream"})
+            check(r.status == 200, f"/api/search: {r.status}")
+            return r.json()
+        gctx = bt.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        gctx.add_init_script(SHARE_STUB)
+        def ui_search(c2):
+            pg.goto("about:blank")  # WebKit: trang chủ nhà đang giữ ~1.900 ảnh nhỏ làm canvas mã hoá lại selfie ra rỗng (no_face) → giải phóng trước
+            for attempt in range(3):  # WebKit thỉnh thoảng mã hoá lại selfie thành thân rỗng (mock trả no_face) khi máy bận: thử lại
+                gp = c2.new_page(); gp.route("**/*-2000.webp", lambda r: r.abort())
+                gp.goto(a.url + "/"); gp.wait_for_selector("#vg-all .tile")
+                got, stop = capture_search(gp)
+                gp.set_input_files("#in-file", a.selfie)
+                try:
+                    gp.wait_for_selector("#results:not([hidden])", timeout=20000 if attempt < 2 else 60000)
+                except Exception:
+                    stop(); gp.close()
+                    check(attempt < 2 and webkit, "tìm selfie không ra kết quả")
+                    print("  (WebKit: selfie không mã hoá được lần này, thử lại)", got[:1])
+                    continue
+                gp.wait_for_selector("#vg-main .tile img.on", timeout=30000)
+                stop()
+                return gp, got[0]
+
+        gp, j0 = ui_search(gctx)
+        pg.goto(a.url + "/manage"); pg.wait_for_selector("#vgrid .cell", timeout=30000)  # selfie qua giao diện (trình duyệt mã hoá lại ảnh → kết quả khác đường API thô): lấy các hit đầu bảng của CHÍNH lượt này
+        top = [x["id"] for x in sorted(j0["results"], key=lambda x: -x["score"])[:4]]
+        gp.close()
+        tgt = [i for i in top if i not in hid][:2]
+        check(api(pg, "/api/admin/visibility", {"ids": tgt, "hidden": True})[0] == 200, "ẩn 2 ảnh đầu bảng kết quả")
+        hid |= set(tgt)
+        j1 = search(gctx)
+        rid = [x["id"] for x in j1["results"]]
+        check(len(rid) == len(set(rid)), f"{label}: tìm (BẬT): không id nào hai lần")
+        check(set(tgt) <= set(rid), f"{label}: tìm (BẬT): ảnh ẩn vẫn có trong kết quả")
+        check(all(x.get("t") for x in j1["results"]), f"{label}: tìm: mọi hit (cả hiện lẫn ẩn) đều có t")
+        check("indexed_photos" not in j1 and "indexed_faces" not in j1, f"{label}: /api/search không còn indexed_*")
+        pubb = {r[0]: r[7] for r in public_rows()}
+        for x in j1["results"]:
+            if x["id"] not in hid:
+                check(x["b"] == pubb.get(x["id"]) or (x["b"] is None and pubb.get(x["id"]) is None) or a.mock is False, f"{label}: hit hiện có b khớp thư viện khách: {x['id']}")
+            else:
+                check(x["b"] is None or x["b"] in set(rid), f"{label}: hit ẩn: b phải null hoặc là id nằm trong kết quả: {x['b']}")
+        for i in tgt:
+            r = gctx.request.get(a.url + f"/originals/{i}"); check(r.status == 404, f"{label}: ảnh ẩn không có t → 404 ({r.status})")
+            r2 = gctx.request.get(a.url + f"/originals/0000000000000000"); check(r.text() == r2.text(), f"{label}: 404 ảnh ẩn giống 404 id lạ")
+            t = next(x["t"] for x in j1["results"] if x["id"] == i)
+            check(gctx.request.get(a.url + f"/originals/{i}?t={t}").status == 200 and gctx.request.get(a.url + f"/previews/{i}.jpg?t={t}").status == 200, f"{label}: có t → ảnh gốc/xem trước 200")
+        # giao diện khách: Lưu / Chia sẻ / đường lùi dùng ?t=
+        gp, jU = ui_search(gctx)
+        pg.goto(a.url + "/manage"); pg.wait_for_selector("#vgrid .cell", timeout=30000)
+        check(set(tgt) <= {x["id"] for x in jU["results"]}, f"{label}: giao diện (BẬT): ảnh ẩn vẫn nằm trong kết quả")
+        dom_ids = collect_ids(gp, "#vg-main", f"{label}: kết quả (BẬT)")
+        if a.mock:  # chuỗi chỉ có khung KHÔNG phải khung đầu khớp: hit mang b = id khung đầu (không nằm trong kết quả) → một ô, không trùng, lightbox đủ khung từ manifest
+            with urllib.request.urlopen(a.url + "/__mock/dups") as f:
+                nh = json.load(f)["bursts"].get("nonhead")
+            if nh:
+                check(nh["b"] in dom_ids and nh["matched"][0] not in dom_ids, f"{label}: nonhead: một ô ở khung đầu {nh['b']}, khung khớp không thành ô riêng")
+                gp.evaluate("document.getElementById('vg-main').scrollIntoView()")
+                for _ in range(80):
+                    if gp.locator(f'#vg-main .tile[data-id="{nh["b"]}"]').count():
+                        break
+                    gp.evaluate("scrollBy(0, 500)"); gp.wait_for_timeout(40)
+                check(gp.locator(f'#vg-main .tile[data-id="{nh["b"]}"]').count() == 1, f"{label}: nonhead: đúng một ô")
+                gp.evaluate("id => document.querySelector('#vg-main .tile[data-id=\"' + id + '\"]').click()", nh["b"])
+                gp.wait_for_selector("#lb:not([hidden])")
+                check(f"/{len(nh['frames'])}" in gp.inner_text("#lb-burst"), f"{label}: nonhead: lightbox đủ {len(nh['frames'])} khung: {gp.inner_text('#lb-burst')}")
+                gp.keyboard.press("Escape"); gp.wait_for_selector("#lb", state="hidden")
+                print(f"{label}: chuỗi chỉ khớp khung giữa (b = khung đầu không có trong kết quả): một ô, không trùng, lightbox {len(nh['frames'])} khung")
+        gp.evaluate("document.getElementById('vg-main').scrollIntoView()")
+        gp.wait_for_function("ids => [...document.querySelectorAll('#vg-main .tile')].some(b => ids.includes(b.dataset.id))", arg=tgt, timeout=15000)
+        pick = gp.evaluate("ids => [...document.querySelectorAll('#vg-main .tile')].map(b => b.dataset.id).find(i => ids.includes(i))", tgt)
+        check(pick in tgt, f"{label}: ảnh ẩn nằm trong kết quả hiển thị")
+        with gp.expect_request(lambda r: f"/originals/{pick}?t=" in r.url, timeout=20000):  # Chia sẻ chuẩn bị sẵn ảnh gốc bằng ?t=
+            gp.evaluate("id => document.querySelector('#vg-main .tile[data-id=\"' + id + '\"]').click()", pick)
+            gp.wait_for_selector("#lb:not([hidden])")
+        href = gp.get_attribute("#lb-save", "href")
+        check(href.startswith(f"/originals/{pick}?t="), f"{label}: Lưu ảnh dùng ?t=: {href}")
+        gp.wait_for_function("id => document.getElementById('lb-img').currentSrc.includes('/previews/' + id + '.jpg?t=')", arg=pick, timeout=20000)
+        print(f"{label}: tìm (BẬT): {len(rid)} hit, ảnh ẩn có mặt, mọi hit có t, không id trùng; Lưu ảnh = {href[:40]}…; đường lùi /previews/…?t=; ảnh ẩn không t → 404 như id lạ")
+        gp.close()
+
+        # --- cài đặt TẮT ---
+        pg.evaluate("document.getElementById('set-note').scrollIntoView({ block: 'center' })")
+        pg.click(".switch")
+        pg.wait_for_function("document.getElementById('set-note').textContent.includes('Đang tắt')", timeout=10000)
+        check(admin(pg)["settings"]["search_includes_hidden"] is False, f"{label}: cài đặt đã lưu ở máy chủ")
+        shot(pg, f"{label}-6-setting-toggle.png")
+        j2 = search(gctx)
+        rid2 = [x["id"] for x in j2["results"]]
+        check(not set(rid2) & hid and len(rid2) == len(set(rid2)), f"{label}: tìm (TẮT): không ảnh ẩn nào, không id trùng ({len(set(rid2) & hid)} ảnh ẩn)")
+        gp, jO = ui_search(gctx)
+        pg.goto(a.url + "/manage"); pg.wait_for_selector("#vgrid .cell", timeout=30000)
+        check(not {x["id"] for x in jO["results"]} & hid, f"{label}: giao diện (TẮT): phản hồi không có ảnh ẩn")
+        dom2 = collect_ids(gp, "#vg-main", f"{label}: kết quả (TẮT)")
+        check(not set(dom2) & hid, f"{label}: giao diện kết quả (TẮT) không có ảnh ẩn")
+        gp.close()
+        print(f"{label}: tìm (TẮT): {len(rid2)} hit, không ảnh ẩn nào (BẬT có {len(rid)})")
+        pg.click(".switch"); pg.wait_for_function("document.getElementById('set-note').textContent.includes('Đang bật')", timeout=10000)
+        gctx.close()
+
+        # --- hiện lại tất cả: thư viện khách trở về y nguyên ---
+        pg.reload(); pg.wait_for_selector("#vgrid .cell", timeout=30000)  # 2 ảnh ẩn ở trên đi qua API thẳng: tải lại như mở trang mới
+        check(chips(pg)[2] == len(hid), f"{label}: tải lại trang: số 'Đang ẩn' = {len(hid)} (được {chips(pg)})")
+        pg.click('.fchip[data-f="hidden"]'); pg.click("#v-mode"); pg.click("#v-all")
+        check(sel_n(pg) == len(hid), f"{label}: chọn tất cả đang ẩn = {len(hid)}")
+        act(pg, "#a-show")
+        check(hidden_ids(pg) == set() and chips(pg) == [len(R), len(R), 0], f"{label}: hiện lại tất cả")
+        rows2 = public_rows()
+        check(rows2 == rows0, f"{label}: thư viện khách trở về y nguyên (cùng tập id, cùng b, cùng thứ tự): {len(rows2)} vs {len(rows0)}")
+        pg.click("#v-mode"); pg.click('.fchip[data-f="all"]')
+        print(f"{label}: hiện lại tất cả → thư viện khách = bản đầu ({len(rows2)} ảnh, cùng id/b/thứ tự)")
+
+        # --- hàng loạt >200: hỏi xác nhận; Hoàn tác cả loạt ---
+        pg.click("#v-mode"); pg.click("#v-all")
+        pg.click("#a-hide"); pg.wait_for_selector("#cf[open]")
+        check(f"{len(R):,}".replace(",", ".") in pg.inner_text("#cf-t"), f"{label}: hộp xác nhận nêu số ảnh: {pg.inner_text('#cf-t')}")
+        pg.click("#cf-no"); pg.wait_for_selector("#cf", state="hidden")
+        check(hidden_ids(pg) == set(), f"{label}: Huỷ xác nhận → không ẩn gì")
+        with pg.expect_response(lambda r: r.url.endswith("/api/admin/visibility")):
+            pg.click("#a-hide"); pg.wait_for_selector("#cf[open]"); pg.click("#cf-yes")
+        pg.wait_for_timeout(200)
+        check(len(hidden_ids(pg)) == len(R) and public_rows() == [], f"{label}: xác nhận → ẩn cả {len(R)} ảnh, thư viện khách trống")
+        with pg.expect_response(lambda r: r.url.endswith("/api/admin/visibility")):
+            pg.click("#toast-undo")
+        pg.wait_for_timeout(200)
+        check(hidden_ids(pg) == set() and public_rows() == rows0, f"{label}: Hoàn tác cả loạt → trở về y nguyên")
+        print(f"{label}: {len(R)} ảnh: hỏi xác nhận (>200), Huỷ không đổi gì, Đồng ý ẩn hết, Hoàn tác đưa về y nguyên")
+
+        # --- 401 → trang đăng nhập ---
+        ctx.clear_cookies()
+        if pg.get_attribute("#v-mode", "aria-pressed") != "true":
+            pg.click("#v-mode")
+        tap(pg, s0); pg.click("#a-hide")
+        pg.wait_for_selector("#login-form", timeout=15000)
+        print(f"{label}: cookie hết hạn → bấm Ẩn nhận 401 → quay về trang đăng nhập")
+        check(not errs, f"{label}: lỗi JS trên trang: {errs}")
+        ctx.close()
+
+    bt = None
+    with sync_playwright() as pw:
+        bt = getattr(pw, a.browser).launch()
+        rm_ = "reduce" if a.reduced_motion else "no-preference"
+        run(bt, "desktop", dict(viewport={"width": 1280, "height": 800}, reduced_motion=rm_))
+        run(bt, "phone", dict(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm_))
+        bt.close()
+    print("E2E (ẩn/hiện) OK")
+
+
+if a.visibility:
+    vis_suite()
+    sys.exit(0)
 
 with sync_playwright() as p:
     b = getattr(p, a.browser).launch()
@@ -627,7 +997,7 @@ with sync_playwright() as p:
         settle(pg); shot(pg, pre + "10-burst-tile.png")
         pg.evaluate("document.querySelector('#vg-all .tile.stacked').click()")
         pg.wait_for_selector("#lb:not([hidden])")
-        cid = lambda: pg.evaluate("document.getElementById('lb-save').getAttribute('href').split('/').pop()")
+        cid = lambda: pg.evaluate("document.getElementById('lb-save').getAttribute('href').split('/').pop().split('?')[0]")
         check(cid() == tiles[ti][0], "chạm ô gộp: lightbox mở ở khung đầu")
         check(pg.text_content("#lb-count").replace(".", "").startswith(f"{at[ti] + 1} /"), "đếm theo khung: " + pg.text_content("#lb-count"))
         for k in range(1, len(tiles[ti])):  # lướt qua từng khung của chuỗi

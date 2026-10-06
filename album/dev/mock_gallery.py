@@ -16,6 +16,7 @@ import colorsys
 import glob
 import gzip
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -53,6 +54,7 @@ ap.add_argument("--admin-token", default="", help="bật chặn POST /api/upload
 ap.add_argument("--quota-gb", type=float, default=0, help="0 = không có hạn mức tổng (max_total_bytes: null)")
 ap.add_argument("--dup", action="store_true", help="cố ý đưa dòng trùng vào manifest và vào kết quả /api/search (client phải chỉ hiện mỗi ảnh một lần)")
 ap.add_argument("--search-n", type=int, default=70, help="số ảnh /api/search trả về (tới cả album; hợp đồng §10: trần >= 3000)")
+ap.add_argument("--admin-delay", type=float, default=0, help="giây trễ thêm cho POST /api/admin/visibility (thử cập nhật lạc quan)")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -158,10 +160,51 @@ if a.dup and len(ROWS) > 800:  # dòng trùng: kề nhau, ở xa, và một bả
     ROWS[200][1] = ROWS[200][2] = 0           # w/h = 0: client phải chặn tỉ lệ khung hình
     ROWS[201][1], ROWS[201][2] = 9000, 100    # panorama cực đoan
 FAIL = {r[0] for r in ROWS if int(hashlib.sha1(r[0].encode()).hexdigest()[:6], 16) / 0xFFFFFF < a.cdn_fail}
-MANIFEST = json.dumps(dict(mv=hashlib.sha1(json.dumps(ROWS).encode()).hexdigest()[:10], cdn=CDN, dv=DV,
-                           photos=[r[:7] + [r[8]] for r in ROWS]), separators=(",", ":")).encode()
-MGZ = gzip.compress(MANIFEST, 6)
-META_ETAG = '"' + hashlib.sha1(MANIFEST).hexdigest()[:16] + '"'
+STATE_LOCK = threading.RLock()
+HIDDEN = set()                      # id ảnh đang ẩn (hợp đồng F.1; mặc định không ẩn gì)
+SETTINGS = {"search_includes_hidden": True}
+SECRET = os.urandom(32)
+PUB = {}                            # manifest công khai (chỉ ảnh đang hiện) + b đã dồn lại (hợp đồng F.3)
+
+
+def rebuild_public():
+    """Chỉ ảnh đang hiện; b = khung hiện đầu tiên của chuỗi gốc, chuỗi <2 khung hiện thì null. Một hàm dùng chung cho gallery và search."""
+    with STATE_LOCK:
+        vis = [r for r in ROWS if r[0] not in HIDDEN]
+        groups = {}
+        for r in vis:
+            if r[8]:
+                groups.setdefault(r[8], []).append(r[0])
+        pub_b = {}
+        for g in groups.values():
+            for i in g:
+                pub_b[i] = g[0] if len(g) >= 2 else None
+        rows = [r[:7] + [pub_b.get(r[0])] for r in vis]
+        body = json.dumps(dict(mv=hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:10], cdn=CDN, dv=DV, photos=rows), separators=(",", ":")).encode()
+        PUB.update(pub_b=pub_b, body=body, gz=gzip.compress(body, 6), etag='"' + hashlib.sha1(body).hexdigest()[:16] + '"')
+
+
+rebuild_public()
+
+
+def counts():
+    with STATE_LOCK:
+        seen = {r[0] for r in ROWS}
+        h = len(HIDDEN & seen)
+        return {"all": len(seen), "shown": len(seen) - h, "hidden": h}
+
+
+def make_token(pid, ttl=86400):
+    exp = int(time.time()) + ttl
+    return f"{exp}.{hmac.new(SECRET, f'{pid}.{exp}'.encode(), hashlib.sha256).hexdigest()[:24]}"
+
+
+def token_ok(pid, tok):
+    try:
+        exp, sig = tok.split(".")
+        return int(exp) > time.time() and hmac.compare_digest(sig, hmac.new(SECRET, f"{pid}.{exp}".encode(), hashlib.sha256).hexdigest()[:24])
+    except Exception:
+        return False
 
 
 def static_version():
@@ -222,7 +265,10 @@ def search_payload(body):
         w, h = Image.open(io.BytesIO(body)).size
     except Exception:
         w, h = 640, 480
-    pool = rnd.sample(UNIQ, min(len(UNIQ), a.search_n)) if UNIQ else []
+    with STATE_LOCK:
+        hidden, incl, pub_b = set(HIDDEN), SETTINGS["search_includes_hidden"], dict(PUB["pub_b"])
+    elig = [r for r in UNIQ if incl or r[0] not in hidden]  # tắt: bỏ ảnh ẩn TRƯỚC khi xếp hạng/cắt
+    pool = rnd.sample(elig, min(len(elig), a.search_n)) if elig else []
     res = []
     N, MAIN = len(pool), round(len(pool) * 40 / 70)
     for j, r in enumerate(pool):
@@ -230,7 +276,7 @@ def search_payload(body):
         res.append(dict(id=r[0], b=r[8], name=r[6], score=round(score, 4), thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg",
                         width=r[1], height=r[2], v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
     # các chuỗi liên thanh có chủ đích (hợp đồng §11): khung điểm cao + khung điểm thấp (một ô, ở nhóm cao), tất cả khung khớp, chỉ 1 khung khớp, chỉ khung điểm thấp
-    groups = [g for g in BURSTS if all(r[0] in BY_ID for r in g)]
+    groups = [g for g in BURSTS if all(r[0] in BY_ID and (incl or r[0] not in hidden) for r in g)]
     plan = [(0, [.62, .33]), (1, [.71, .52]), (2, [.45]), (3, [.31]), (4, [.55, .5])]
     SCEN.clear()
     for gi, scores in plan:
@@ -240,14 +286,37 @@ def search_payload(body):
             res = [x for x in res if x["id"] not in ids]
             for ki, (r, s) in enumerate(zip(g, scores)):
                 # gi == 4 ("stale"): kết quả tìm kiếm lệch với manifest — khung đầu b:null dù manifest có b (ảnh phải vẫn chỉ hiện một lần)
-                res.append(dict(id=r[0], b=(None if (gi == 4 and ki == 0) else r[8]), name=r[6], score=s, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
+                res.append(dict(id=r[0], _stale=(gi == 4 and ki == 0), b=(None if (gi == 4 and ki == 0) else r[8]), name=r[6], score=s, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
                                 v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
             SCEN[["split", "all_main", "partial", "maybe_only", "stale"][gi]] = dict(b=g[0][8], frames=[r[0] for r in g], matched=[r[0] for r in g[:len(scores)]])
+    # chuỗi mà CHỈ một khung không phải khung đầu khớp: b (đã dồn) = id khung đầu, khung đầu không nằm trong kết quả (guest.js phải gom theo giá trị b)
+    ng = [g for g in groups[5:] if len(g) >= 3 and not any(r[0] in hidden for r in g)]
+    if ng:
+        g = ng[0]; r = g[1]
+        res = [x for x in res if x["id"] not in {q[0] for q in g}]
+        res.append(dict(id=r[0], b=r[8], name=r[6], score=0.6, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
+                        v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
+        SCEN["nonhead"] = dict(b=g[0][8], frames=[q[0] for q in g], matched=[r[0]])
     if a.dup and len(res) > 46:  # cùng một ảnh hai lần: bản điểm thấp của ảnh đầu bảng, và bản điểm cao của ảnh đang ở nhóm "có thể"
         res.append(dict(res[0], score=0.33)); res.append(dict(res[45], score=0.5))
         DUPS["search"] = [res[0]["id"], res[45]["id"]]
+    # hợp đồng F.3: b công khai cho ảnh hiện; ảnh ẩn b = null, trừ khi >=2 khung ẩn cùng chuỗi gốc đều trúng → khung đầu trong số trúng; mọi hit có t
+    orig = {r[0]: r[8] for r in UNIQ}
+    hh = {}
+    for x in res:
+        if x["id"] in hidden and orig.get(x["id"]):
+            hh.setdefault(orig[x["id"]], []).append(x["id"])
+    order = {r[0]: i for i, r in enumerate(ROWS)}
+    for x in res:
+        stale = x.pop("_stale", False)
+        if x["id"] in hidden:
+            g = sorted(hh.get(orig.get(x["id"]), []), key=order.get)
+            x["b"] = g[0] if len(g) >= 2 else None
+        elif not stale:
+            x["b"] = pub_b.get(x["id"])
+        x["t"] = make_token(x["id"])
     return 200, dict(query=dict(n_faces=1, n_ignored=0, bbox=[w * .3, h * .2, w * .7, h * .65], width=w, height=h, det_score=.9),
-                     results=res, total_matches=len(res), truncated=False, indexed_photos=len(UNIQ), indexed_faces=len(UNIQ) * 2,
+                     results=res, total_matches=len(res), truncated=False,
                      timing_ms=dict(decode=5, detect=30, embed=10, compare=1, total=46))
 
 
@@ -283,6 +352,17 @@ class H(BaseHTTPRequestHandler):
         if "gzip" in (self.headers.get("Accept-Encoding") or ""):
             body, hdr["Content-Encoding"] = gzip.compress(body, 6), "gzip"
         self.send(code, body, "text/html; charset=utf-8", hdr, head)
+
+    def unauth(self):
+        self.send(401, b'{"detail":"C\xe1\xba\xa7n m\xc3\xa3 ch\xe1\xbb\xa7 nh\xc3\xa0."}', "application/json", {"Cache-Control": "no-store"})
+
+    def token_for(self, pid, query):
+        """ảnh ẩn: 404 như id không tồn tại, trừ khi ?t= đúng (hợp đồng F.3)"""
+        with STATE_LOCK:
+            if pid not in HIDDEN:
+                return True, {}
+        t = dict(x.split("=", 1) for x in query.split("&") if "=" in x).get("t", "")
+        return token_ok(pid, t), {"Cache-Control": "private, no-store"}
 
     def nf(self):
         self.send(404, b'{"detail":"not found"}', "application/json", {"Cache-Control": "no-store"})
@@ -325,13 +405,21 @@ class H(BaseHTTPRequestHandler):
                 body, hdr["Content-Encoding"] = gzip.compress(body, 6), "gzip"
             return self.send(200, body, TYPES.get(ext, "application/octet-stream"), hdr, head)
         if path == "/api/gallery":
-            hdr = {"Cache-Control": "public, max-age=60", "ETag": META_ETAG, "Vary": "Accept-Encoding"}
-            if self.headers.get("If-None-Match") == META_ETAG:
+            with STATE_LOCK:
+                pub = dict(PUB)
+            hdr = {"Cache-Control": "no-cache", "ETag": pub["etag"], "Vary": "Accept-Encoding"}
+            if self.headers.get("If-None-Match") == pub["etag"]:
                 return self.send(304, b"", "application/json", hdr)
             gz = "gzip" in (self.headers.get("Accept-Encoding") or "")
             if gz:
                 hdr["Content-Encoding"] = "gzip"
-            return self.send(200, MGZ if gz else MANIFEST, "application/json", hdr, head)
+            return self.send(200, pub["gz"] if gz else pub["body"], "application/json", hdr, head)
+        if path in ("/api/stats", "/api/process", "/api/admin/photos") and a.admin_token and not self.authed():
+            return self.unauth()
+        if path == "/api/admin/photos":
+            with STATE_LOCK:
+                body = dict(photos=[r[:7] + [r[8], 1 if r[0] in HIDDEN else 0] for r in ROWS], counts=counts(), settings=dict(SETTINGS))
+            return self.send(200, json.dumps(body).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/api/stats":
             s = dict(originals=len(ROWS), photos=len(ROWS), pending=0, faces=len(ROWS) * 2, disk_free=50 * 2 ** 30, disk_total=100 * 2 ** 30,
                      stored_bytes=len(ROWS) * 3_000_000, max_total_bytes=int(a.quota_gb * 2 ** 30) if a.quota_gb else None, max_upload_mb=60)
@@ -346,14 +434,20 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, json.dumps(LOG).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         m = re.match(r"^/(thumbs|previews)/([0-9a-f]{16})\.jpg$", path)
         if m and m.group(2) in BY_ID:
+            ok, extra = self.token_for(m.group(2), u.query)
+            if not ok:
+                return self.nf()
             k = BY_ID[m.group(2)][7]
             with open(os.path.join(VDIR, f"{k}.{'thumb' if m.group(1) == 'thumbs' else 'preview'}.jpg"), "rb") as fh:
-                return self.send(200, fh.read(), "image/jpeg", {"Cache-Control": "public, max-age=3600"}, head)
+                return self.send(200, fh.read(), "image/jpeg", dict({"Cache-Control": "public, max-age=3600"}, **extra), head)
         m = re.match(r"^/originals/([0-9a-f]{16})$", path)
         if m and m.group(1) in BY_ID:
+            ok, extra = self.token_for(m.group(1), u.query)
+            if not ok:
+                return self.nf()
             r = BY_ID[m.group(1)]
             with open(os.path.join(VDIR, f"{r[7]}.orig.jpg"), "rb") as fh:
-                return self.send(200, fh.read(), "image/jpeg", {"Content-Disposition": f'attachment; filename="{r[6]}"', "Cache-Control": "private, max-age=3600"}, head)
+                return self.send(200, fh.read(), "image/jpeg", dict({"Content-Disposition": f'attachment; filename="{r[6]}"', "Cache-Control": "private, max-age=3600"}, **extra), head)
         if path.startswith("/i/"):
             return self.image(path, head)
         self.nf()
@@ -376,6 +470,10 @@ class H(BaseHTTPRequestHandler):
                 LOG["cdn"].append(["POST", path])
         if self.kind == "cdn":
             return self.nf()
+        if path == "/__mock/unhide":  # đưa mock về trạng thái ban đầu (không ẩn gì, cài đặt mặc định)
+            with STATE_LOCK:
+                HIDDEN.clear(); SETTINGS["search_includes_hidden"] = True; rebuild_public()
+            return self.send(200, b"{}", "application/json")
         if path == "/__mock/reset":
             with log_lock:
                 LOG["cdn"].clear(); LOG["post"].clear(); FAILS.clear()
@@ -399,6 +497,12 @@ class H(BaseHTTPRequestHandler):
             with log_lock:
                 FAILS.append(now)
             return self.send(401, b'{"detail":"M\xc3\xa3 kh\xc3\xb4ng \xc4\x91\xc3\xbang."}', "application/json", {"Cache-Control": "no-store"})
+        if path in ("/api/admin/visibility", "/api/admin/settings"):
+            if a.admin_token and not self.authed():
+                return self.unauth()
+            if self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
+                return self.send(403, b'{"detail":"forbidden"}', "application/json", {"Cache-Control": "no-store"})
+            return self.admin_post(path, body)
         gated = path in ("/api/upload", "/api/process")
         if gated and a.admin_token:
             if not self.authed(header=True):
@@ -411,6 +515,41 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/process":
             return self.send(200, json.dumps(dict(state="done", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")).encode(), "application/json")
         self.nf()
+
+
+def _admin_post(self, path, body):
+    def reply(code, obj):
+        self.send(code, json.dumps(obj).encode(), "application/json", {"Cache-Control": "no-store"})
+    try:
+        d = json.loads(body or b"")
+        assert isinstance(d, dict)
+        if path == "/api/admin/settings":
+            v = d["search_includes_hidden"]
+            assert isinstance(v, bool)
+            with STATE_LOCK:
+                SETTINGS["search_includes_hidden"] = v
+                return reply(200, {"settings": dict(SETTINGS)})
+        ids, hid = d["ids"], d["hidden"]
+        assert isinstance(hid, bool) and isinstance(ids, list) and 1 <= len(ids) <= 5000
+        assert all(isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i) for i in ids)
+    except Exception:
+        return reply(400, {"detail": "yêu cầu không hợp lệ"})
+    ids = list(dict.fromkeys(ids))
+    with STATE_LOCK:
+        known = [i for i in ids if i in BY_ID]
+        before = len(HIDDEN)
+        if hid:
+            HIDDEN.update(known)
+        else:
+            HIDDEN.difference_update(known)
+        changed = abs(len(HIDDEN) - before)
+        rebuild_public()
+        if a.admin_delay:
+            time.sleep(a.admin_delay)
+        reply(200, {"changed": changed, "unknown": len(ids) - len(known), "counts": counts()})
+
+
+H.admin_post = _admin_post
 
 
 class CdnH(H):
@@ -428,7 +567,7 @@ if __name__ == "__main__":
         servers.append(Srv(("127.0.0.1", a.cdn_port), CdnH))
     for s in servers[1:]:
         threading.Thread(target=s.serve_forever, daemon=True).start()
-    print(f"mock: app http://localhost:{a.port}  cdn {CDN or '(không)'}  {len(ROWS)} ảnh  {len(MGZ) // 1024} KB gzip manifest", flush=True)
+    print(f"mock: app http://localhost:{a.port}  cdn {CDN or '(không)'}  {len(ROWS)} ảnh  {len(PUB['gz']) // 1024} KB gzip manifest", flush=True)
     try:
         servers[0].serve_forever()
     except KeyboardInterrupt:

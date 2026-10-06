@@ -20,7 +20,9 @@ function refreshStats() {
 }
 async function loadStats() {
   try {
-    const d = await (await fetch("/api/stats")).json();
+    const r = await fetch("/api/stats");
+    if (r.status === 401) return toLogin();
+    const d = await r.json();
     maxMB = d.max_upload_mb;
     $("drop-hint").textContent = `JPG, PNG, WEBP · tối đa ${maxMB} MB mỗi ảnh`;
     $("n-orig").textContent = n0.format(d.originals); $("n-done").textContent = n0.format(d.photos);
@@ -121,7 +123,7 @@ function showStatus(s) {
   if (run && !timer) timer = setInterval(poll, 1000);
   if (!run && timer) { clearInterval(timer); timer = null; refreshStats(); }
 }
-async function poll() { try { showStatus(await (await fetch("/api/process")).json()); } catch (e) {} }
+async function poll() { try { const r = await fetch("/api/process"); if (r.status === 401) return toLogin(); showStatus(await r.json()); } catch (e) {} }
 $("proc").onclick = async () => {
   const r = await fetch("/api/process", { method: "POST" });
   if (r.status === 401) return toLogin();
@@ -131,3 +133,294 @@ $("proc").onclick = async () => {
   if (r.status === 200 && !timer) timer = setInterval(poll, 1000);
 };
 refreshStats(); poll();
+
+// ---- Ẩn / hiện ảnh (hợp đồng F.4) ----
+// Dữ liệu: GET /api/admin/photos → [id, w, h, t, v, c, name, b, hidden]; b = chuỗi liên thanh GỐC (không phải bản đã dồn của khách).
+const vis = (() => {
+  const grid = $("vgrid"), bar = $("abar"), toastEl = $("toast");
+  const FILTERS = { all: () => true, shown: p => !p.hidden, hidden: p => p.hidden };
+  const P = [], byId = new Map(), bursts = new Map();   // bursts: b → mọi khung gốc
+  let filter = "all", selectMode = false, armed = false, anchor = null, flat = [], idx = new Map(), cells = new Map(), unitByKey = new Map();
+  const sel = new Set(), expanded = new Set();
+  let chain = Promise.resolve(), toastTimer = 0, swallow = 0, pvPos = -1;
+  const thumb = p => p.v ? `/i/${p.id}-${p.v}-240.webp` : "";
+  const big = p => p.v ? `/i/${p.id}-${p.v}-2000.webp` : "";
+  const plural = n => n0.format(n) + " ảnh";
+
+  function counts() { let h = 0; for (const p of P) if (p.hidden) h++; return { all: P.length, shown: P.length - h, hidden: h }; }
+  function paintCounts() {
+    const c = counts();
+    for (const k of ["all", "shown", "hidden"]) $("c-" + k).textContent = n0.format(c[k]);
+    return c;
+  }
+  async function api(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r.status === 401) { toLogin(); throw new Error("401"); }
+    if (!r.ok) throw new Error("http " + r.status);
+    return r.json();
+  }
+
+  // ---- dữ liệu ----
+  async function load() {
+    $("v-state").textContent = "Đang tải danh sách ảnh…"; $("v-state").hidden = false;
+    try {
+      const r = await fetch("/api/admin/photos");
+      if (r.status === 401) return toLogin();
+      if (!r.ok) throw new Error("http " + r.status);
+      const d = await r.json();
+      P.length = 0; byId.clear(); bursts.clear();
+      for (const [id, w, h, t, v, c, name, b, hidden] of d.photos) {
+        const p = { id, w, h, v, c, name, b: b || null, hidden: !!hidden };
+        P.push(p); byId.set(id, p);
+        if (p.b) { if (!bursts.has(p.b)) bursts.set(p.b, []); bursts.get(p.b).push(p); }
+      }
+      for (const id of [...sel]) if (!byId.has(id)) sel.delete(id);
+      setting(d.settings.search_includes_hidden);
+      render();
+    } catch (e) {
+      if (e.message === "401") return;
+      $("v-state").textContent = "Chưa tải được danh sách ảnh. Chạm để thử lại.";
+      $("v-state").onclick = () => { $("v-state").onclick = null; load(); };
+    }
+  }
+
+  // ---- dựng lưới: một ô cho mỗi chuỗi gốc (các khung khớp bộ lọc), ô lẻ cho ảnh không thuộc chuỗi ----
+  function build() {
+    flat = P.filter(FILTERS[filter]); idx = new Map(flat.map((p, i) => [p.id, i]));
+    const out = [], byB = new Map();
+    for (const p of flat) {
+      if (p.b) {
+        let u = byB.get(p.b);
+        if (!u) { u = { key: "b" + p.b, b: p.b, frames: [] }; byB.set(p.b, u); out.push(u); }
+        u.frames.push(p);
+      } else out.push({ key: p.id, frames: [p] });
+    }
+    return out;
+  }
+  function render() {
+    paintCounts();
+    const units = build();
+    cells = new Map(); unitByKey = new Map();
+    const frag = document.createDocumentFragment();
+    for (const u of units) {
+      const burst = u.b && u.frames.length > 1;
+      if (burst && expanded.has(u.b)) {
+        const box = el("div", "bopen"), head = el("div", "bopen-h"), g = el("div", "vgrid vgrid--in");
+        const all = bursts.get(u.b);
+        head.append(el("span", "bopen-t", `Chuỗi ${all.length} ảnh chụp liên tiếp` + (u.frames.length < all.length ? ` · đang xem ${u.frames.length}` : "")));
+        const close = el("button", "bopen-x", "Thu gọn"); close.type = "button"; close.dataset.collapse = u.b; head.append(close);
+        for (const p of u.frames) { const fu = { key: p.id, frames: [p], b: p.b, inBurst: true }; unitByKey.set(fu.key, fu); g.append(cell(fu, false)); }
+        box.append(head, g); frag.append(box);
+      } else { unitByKey.set(u.key, u); frag.append(cell(u, burst)); }
+    }
+    grid.replaceChildren(frag);
+    const none = !flat.length;
+    $("v-state").hidden = !none;
+    if (none) $("v-state").textContent = filter === "hidden" ? "Chưa có ảnh nào đang ẩn." : filter === "shown" ? "Không còn ảnh nào đang hiện." : "Chưa có ảnh nào.";
+    refresh();
+  }
+  function cell(u, burst) {
+    const c = el("div", "cell"), b = el("button", "tile"), first = u.frames[0];
+    c.dataset.k = u.key; b.type = "button";
+    c.style.setProperty("--c", first.c || "#e9dccf");
+    if (burst) c.classList.add("is-burst");
+    if (first.v) { const im = new Image(); im.loading = "lazy"; im.decoding = "async"; im.alt = ""; im.draggable = false; im.src = thumb(first); b.append(im); }
+    else b.append(el("span", "noimg", "chưa có ảnh nhỏ"));
+    const chk = el("i", "chk"); chk.setAttribute("aria-hidden", "true");
+    const tags = el("span", "tags"); b.append(chk, tags);
+    c.append(b);
+    if (burst) {
+      const o = el("button", "bopen-btn"); o.type = "button"; o.dataset.open = u.b;
+      o.setAttribute("aria-label", `Mở chuỗi ${bursts.get(u.b).length} ảnh`); o.append(el("span", null, "Mở chuỗi"));
+      c.append(o);
+    }
+    cells.set(u.key, { u, c, b, tags, burst });
+    return c;
+  }
+  // trạng thái từng ô (chọn / ẩn / huy hiệu) — gọi lại khi chọn đổi mà không dựng lại lưới
+  function refresh() {
+    for (const e of cells.values()) {
+      const { u, c, b, tags, burst } = e;
+      const n = u.frames.reduce((k, p) => k + (sel.has(p.id) ? 1 : 0), 0), st = n === 0 ? "none" : n === u.frames.length ? "all" : "part";
+      c.dataset.sel = st; c.classList.toggle("selectable", selectMode);
+      const hid = u.frames.reduce((k, p) => k + (p.hidden ? 1 : 0), 0), all = u.b ? bursts.get(u.b) : u.frames;
+      const allHid = all.reduce((k, p) => k + (p.hidden ? 1 : 0), 0);
+      c.classList.toggle("is-hidden", hid === u.frames.length);
+      tags.textContent = "";
+      if (burst) tags.append(el("span", "tag tag--n", "×" + u.frames.length));
+      if (allHid && allHid < all.length && burst) tags.append(el("span", "tag tag--mix", `${allHid}/${all.length} ẩn`));
+      else if (hid === u.frames.length) tags.append(el("span", "tag tag--hid", "Đã ẩn"));
+      else if (hid) tags.append(el("span", "tag tag--mix", `${hid}/${u.frames.length} ẩn`));
+      const name = burst ? `Chuỗi ${u.frames.length} ảnh` : first(u).name;
+      b.setAttribute("aria-label", name + (hid === u.frames.length ? ", đang ẩn" : hid ? `, ${hid} ảnh đang ẩn` : ", đang hiện") + (selectMode ? (st === "all" ? ", đã chọn" : st === "part" ? ", chọn một phần" : ", chưa chọn") : ""));
+      if (selectMode) b.setAttribute("aria-pressed", st === "all" ? "true" : st === "part" ? "mixed" : "false"); else b.removeAttribute("aria-pressed");
+    }
+    const n = sel.size;
+    let sh = 0, hd = 0; for (const id of sel) { if (byId.get(id).hidden) hd++; else sh++; }
+    $("abar-n").textContent = n ? `${plural(n)} đã chọn` : "Chưa chọn ảnh nào";
+    $("a-hide").disabled = !sh; $("a-show").disabled = !hd;
+    $("a-hide").textContent = sh ? `Ẩn (${n0.format(sh)})` : "Ẩn"; $("a-show").textContent = hd ? `Hiện (${n0.format(hd)})` : "Hiện";
+    $("a-clear").disabled = !n;
+    $("a-range").setAttribute("aria-pressed", armed ? "true" : "false");
+    $("a-range").textContent = armed ? "Chạm ảnh cuối của đoạn" : "Chọn đến đây";
+    $("a-range").classList.toggle("on", armed);
+    $("v-mode").textContent = selectMode ? "Xong" : "Chọn"; $("v-mode").setAttribute("aria-pressed", selectMode ? "true" : "false");
+    $("v-all").hidden = !selectMode; $("v-help").hidden = !selectMode;
+    bar.hidden = !selectMode;
+    document.body.classList.toggle("has-bar", selectMode);
+    if (selectMode) document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px");
+  }
+  const first = u => u.frames[0];
+
+  // ---- chọn ----
+  function setMode(on) {
+    selectMode = on; armed = false;
+    if (!on) { sel.clear(); anchor = null; }
+    refresh();
+  }
+  const span = u => [idx.get(u.frames[0].id), idx.get(u.frames[u.frames.length - 1].id)];
+  function toggle(u) {
+    const all = u.frames.every(p => sel.has(p.id));
+    for (const p of u.frames) all ? sel.delete(p.id) : sel.add(p.id);
+    anchor = [u.frames[0].id, u.frames[u.frames.length - 1].id];
+  }
+  function rangeTo(u) {
+    const a = anchor && anchor.map(id => idx.get(id));
+    if (!a || a[0] == null) { toggle(u); return; }
+    const t = span(u), lo = Math.min(a[0], t[0]), hi = Math.max(a[1], t[1]);
+    for (let i = lo; i <= hi; i++) sel.add(flat[i].id);
+    anchor = [u.frames[0].id, u.frames[u.frames.length - 1].id];
+  }
+  grid.addEventListener("click", e => {
+    if (swallow > Date.now()) { e.preventDefault(); return; }
+    const op = e.target.closest("[data-open]"), cl = e.target.closest("[data-collapse]");
+    if (op) { expanded.add(op.dataset.open); render(); focusB(op.dataset.open); return; }
+    if (cl) { expanded.delete(cl.dataset.collapse); render(); return; }
+    const c = e.target.closest(".cell"); if (!c) return;
+    const u = unitByKey.get(c.dataset.k); if (!u) return;
+    if (selectMode || e.shiftKey) {
+      if (!selectMode) selectMode = true;
+      if (armed || (e.shiftKey && anchor)) rangeTo(u); else toggle(u);
+      armed = false; refresh();
+    } else preview(u.frames[0]);
+  });
+  function focusB(b) { const f = grid.querySelector(".bopen-x"); if (f) f.focus(); }
+  grid.addEventListener("contextmenu", e => e.preventDefault());
+  grid.addEventListener("dragstart", e => e.preventDefault());
+  // nhấn giữ = vào chế độ chọn và chọn ô đó; cuộn/di chuyển thì huỷ
+  let lp = 0, lpAt = null;
+  grid.addEventListener("pointerdown", e => {
+    const c = e.target.closest(".cell"); if (!c || e.target.closest("[data-open]") || e.button) return;
+    lpAt = [e.clientX, e.clientY]; clearTimeout(lp);
+    lp = setTimeout(() => {
+      const u = unitByKey.get(c.dataset.k); if (!u) return;
+      swallow = Infinity; selectMode = true; armed = false;
+      for (const p of u.frames) sel.add(p.id);
+      anchor = [u.frames[0].id, u.frames[u.frames.length - 1].id];
+      if (navigator.vibrate) try { navigator.vibrate(15); } catch (_) {}
+      refresh();
+    }, 480);
+  });
+  const stopLP = () => { clearTimeout(lp); lpAt = null; if (swallow === Infinity) swallow = Date.now() + 350; };  // chỉ nuốt cú chạm ngay sau khi nhả tay
+  grid.addEventListener("pointermove", e => { if (lpAt && Math.hypot(e.clientX - lpAt[0], e.clientY - lpAt[1]) > 8) stopLP(); });
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) grid.addEventListener(t, stopLP);
+  addEventListener("scroll", stopLP, { passive: true });
+
+  $("v-mode").onclick = () => setMode(!selectMode);
+  $("v-all").onclick = () => { for (const p of flat) sel.add(p.id); refresh(); };
+  $("a-clear").onclick = () => { sel.clear(); armed = false; anchor = null; refresh(); };
+  $("a-range").onclick = () => { armed = !armed && !!anchor; if (!anchor) toast("Chạm một ảnh trước, rồi chạm “Chọn đến đây” và ảnh cuối của đoạn."); refresh(); };
+  for (const b of document.querySelectorAll(".fchip")) b.onclick = () => {
+    filter = b.dataset.f; anchor = null; armed = false;
+    for (const x of document.querySelectorAll(".fchip")) x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    render();
+  };
+  addEventListener("keydown", e => { if (e.key === "Escape" && selectMode && !document.querySelector("dialog[open]")) setMode(false); });
+
+  // ---- ẩn / hiện: lạc quan, quay lại khi lỗi, hoàn tác ----
+  function toast(text, undo) {
+    clearTimeout(toastTimer);
+    $("toast-t").textContent = text; $("toast-undo").hidden = !undo; $("toast-undo").onclick = undo ? () => { toastEl.hidden = true; undo(); } : null;
+    toastEl.hidden = false;
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, undo ? 10000 : 5000);
+  }
+  function confirmBig(n, hidden) {
+    const d = $("cf");
+    $("cf-t").textContent = `${hidden ? "Ẩn" : "Hiện"} ${plural(n)}?`;
+    return new Promise(res => {
+      const done = v => { d.close(); res(v); };
+      $("cf-yes").onclick = () => done(true); $("cf-no").onclick = () => done(false); d.oncancel = () => res(false);
+      d.showModal();
+    });
+  }
+  async function apply(list, hidden, isUndo) {
+    const ch = list.filter(p => p.hidden !== hidden);
+    if (!ch.length) return;
+    if (!isUndo && ch.length > 200 && !(await confirmBig(ch.length, hidden))) return;
+    for (const p of ch) p.hidden = hidden;
+    if (!isUndo) sel.clear();
+    anchor = null; armed = false;
+    render();
+    const ids = ch.map(p => p.id), want = counts();
+    const word = hidden ? "Đã ẩn" : "Đã hiện";
+    const undo = () => apply(ch, !hidden, true);
+    toast(isUndo ? `Đã hoàn tác (${plural(ch.length)})` : `${word} ${plural(ch.length)}`, isUndo ? null : undo);
+    chain = chain.then(async () => {
+      let ok = true;
+      for (let i = 0; i < ids.length && ok; i += 5000) {
+        try {
+          const d = await api("/api/admin/visibility", { ids: ids.slice(i, i + 5000), hidden });
+          if (i + 5000 >= ids.length && (d.counts.hidden !== want.hidden || d.counts.all !== want.all)) load();  // lệch với máy chủ → tải lại cho đúng
+        } catch (e) {
+          if (e.message === "401") return;
+          ok = false;
+          for (const p of ch) { p.hidden = !hidden; if (!isUndo) sel.add(p.id); }  // trả lại cả lựa chọn để bấm lại được ngay
+          render();
+          toast(`Chưa lưu được — ${plural(ch.length)} giữ như cũ. Bạn thử lại nhé.`);
+        }
+      }
+    });
+    return chain;
+  }
+  const chosen = () => [...sel].map(id => byId.get(id)).filter(Boolean);
+  $("a-hide").onclick = () => apply(chosen(), true);
+  $("a-show").onclick = () => apply(chosen(), false);
+
+  // ---- xem ảnh (chế độ thường) ----
+  const pv = $("pv");
+  function preview(p) {
+    pvPos = idx.has(p.id) ? idx.get(p.id) : -1;
+    showPv(p); if (!pv.open) pv.showModal();
+  }
+  function showPv(p) {
+    $("pv-img").src = big(p) || thumb(p) || ""; $("pv-img").alt = p.name;
+    const all = p.b ? bursts.get(p.b) : null;
+    $("pv-cap").textContent = `${p.name} · ${p.hidden ? "đang ẩn" : "đang hiện"}` + (all ? ` · khung ${all.indexOf(p) + 1}/${all.length} của chuỗi` : "");
+    $("pv-tog").textContent = p.hidden ? "Hiện ảnh này" : "Ẩn ảnh này";
+    $("pv-tog").onclick = async () => { await apply([p], !p.hidden); if (pv.open && byId.get(p.id) === p) showPv(p); };
+    $("pv-prev").hidden = $("pv-next").hidden = pvPos < 0 || flat.length < 2;
+  }
+  const step = d => { if (pvPos < 0 || !flat.length) return; pvPos = (pvPos + d + flat.length) % flat.length; showPv(flat[pvPos]); };
+  $("pv-prev").onclick = () => step(-1); $("pv-next").onclick = () => step(1);
+  $("pv-close").onclick = () => pv.close();
+  pv.addEventListener("click", e => { if (e.target === pv) pv.close(); });
+  pv.addEventListener("keydown", e => { if (e.key === "ArrowLeft") step(-1); else if (e.key === "ArrowRight") step(1); });
+  pv.addEventListener("close", () => { $("pv-img").removeAttribute("src"); });
+
+  // ---- cài đặt tìm bằng selfie ----
+  function setting(on) {
+    const cb = $("set-incl"); cb.checked = on; cb.disabled = false;
+    $("set-note").textContent = on
+      ? "Đang bật: khách vẫn tìm thấy ảnh của mình, kể cả ảnh đang ẩn. Lưu ý: nhờ vậy khách có thể đoán được ảnh nào đang ẩn."
+      : "Đang tắt: ảnh đang ẩn được giấu hoàn toàn khỏi khách, cả khi họ tìm bằng selfie.";
+  }
+  $("set-incl").onchange = async () => {
+    const cb = $("set-incl"), want = cb.checked; cb.disabled = true;
+    try { const d = await api("/api/admin/settings", { search_includes_hidden: want }); setting(d.settings.search_includes_hidden); toast(want ? "Đã bật: ảnh ẩn vẫn có thể hiện khi khách tìm bằng selfie." : "Đã tắt: ảnh ẩn không hiện khi khách tìm bằng selfie."); }
+    catch (e) { if (e.message !== "401") { setting(!want); toast("Chưa lưu được cài đặt. Bạn thử lại nhé."); } }
+  };
+
+  addEventListener("resize", () => { if (selectMode) document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px"); });
+  load();
+  return { load };
+})();

@@ -21,6 +21,7 @@ let photos = [], galleryReady = false;
 
 // ---------- địa chỉ ảnh + đường lùi: CDN → cùng nguồn gốc /i/ → cũ (/thumbs, /previews) ----------
 let CDN = "";
+const tq = x => x.tok ? "?t=" + encodeURIComponent(x.tok) : "";  // x.tok (không phải x.t: ở manifest `t` là giờ chụp)  // ảnh có token theo kết quả tìm (ảnh đang ẩn): /originals /thumbs /previews cần ?t=
 const iUrl = (base, x, n) => `${base}/i/${x.id}-${x.v}-${n}.webp`;
 function chain(x, kind) {
   const steps = [];
@@ -30,7 +31,7 @@ function chain(x, kind) {
       else steps.push({ src: iUrl(base, x, 2000) });
     }
   }
-  steps.push({ src: kind === "thumb" ? `/thumbs/${x.id}.jpg` : `/previews/${x.id}.jpg` });
+  steps.push({ src: (kind === "thumb" ? `/thumbs/${x.id}.jpg` : `/previews/${x.id}.jpg`) + tq(x) });
   return steps;
 }
 // gán bước đầu của đường lùi cho <img>; lỗi thì sang bước kế, hết đường thì onBad
@@ -466,10 +467,8 @@ function showResults() {
   $("s-tips").hidden = true;
   const total = data.results.filter(x => x.score >= MAYBE_CUT).length;
   const none = !TUNE && total === 0;
-  const empty = data.indexed_photos === 0;
-  $("s-title").textContent = empty ? "Album đang được cập nhật" : none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
-  if (empty) $("s-text").textContent = "Ảnh cưới chưa được đưa lên đầy đủ. Bạn quay lại sau ít phút nhé.";
-  else if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
+  $("s-title").textContent = none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
+  if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
   else $("s-text").textContent = "Dưới đây là những khoảnh khắc có bạn.";
   if (q.n_faces > 1) {
     $("s-multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Chúng tôi dùng khuôn mặt to và rõ nhất (khung bao quanh mặt). ` +
@@ -496,7 +495,7 @@ function clearResults() {
 
 // ---------- kết quả: dùng lại đúng URL ảnh và cách dựng như thư viện ----------
 // `b` theo manifest (nguồn đã dùng để dựng các khung của chuỗi) — nếu manifest cũ/mới lệch với kết quả tìm kiếm thì vẫn nhất quán
-const fromHit = r => { const mp = photoById.get(r.id); return { id: r.id, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: (mp ? mp.b : r.b) || null, score: r.score, bbox: r.bbox }; };
+const fromHit = r => { const mp = photoById.get(r.id); return { id: r.id, tok: r.t || null, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: (mp ? mp.b : r.b) || null, score: r.score, bbox: r.bbox }; };
 // một ảnh = một ô: gộp theo id lấy điểm cao nhất, xếp điểm giảm dần. Chia nhóm SAU khi gộp nên hai nhóm không bao giờ trùng nhau
 const hits = list => uniqById(list.map(fromHit), (x, o) => x.score > o.score).sort((a, b) => b.score - a.score);
 
@@ -567,7 +566,7 @@ function renderTune() {
   const shown = burstTiles(hits(data.results.filter(x => x.score >= th)));
   $("tcount").textContent = `${shown.length} ô / ${data.results.length} ảnh có điểm ≥ 0.15`;
   $("tune-info").textContent = `Hai mức đang dùng cho khách: chắc chắn ≥ ${CONFIDENT_CUT.toFixed(2)} (nhãn xanh), có thể ≥ ${MAYBE_CUT.toFixed(2)} (nhãn vàng). ` +
-    `Chỉ mục ${data.indexed_photos} ảnh, ${data.indexed_faces} mặt. Máy chủ ${data.timing_ms.total.toFixed(0)} ms, tổng ${data.e2e.toFixed(0)} ms.`;
+    `Máy chủ ${data.timing_ms.total.toFixed(0)} ms, tổng ${data.e2e.toFixed(0)} ms.`;
   gMain.put(COLLAPSE_BURSTS ? stackTiles(shown) : { items: shown, flat: shown }); gMain.setActive(true);
   $("g-main-n").textContent = countText(gMain);
   const cut = data.truncated && shown.length && th <= data.results[data.results.length - 1].score;
@@ -639,7 +638,7 @@ function show(dir) {
   bl.hidden = !(hd && hd.frames.length > 1);
   if (!bl.hidden) bl.textContent = `Chụp liên tiếp ${hd.frames.indexOf(x) + 1}/${hd.frames.length}`;
   lbImg.alt = `Ảnh cưới số ${cur.i + 1} trên ${n}`;
-  $("lb-save").href = "/originals/" + x.id;
+  $("lb-save").href = "/originals/" + x.id + tq(x);
   const spin = $("lb-spin");
   lbImg.style.opacity = "";
   lbImg.src = x.ts || chain(x, "thumb")[0].src;  // ảnh nhỏ của ô lưới (đã có trong cache): hiện ngay, rồi thay bằng bản 2000 px
@@ -820,7 +819,7 @@ async function fetchBlob(x) {
   const e = { state: "loading", pct: 0, ctl: new AbortController(), file: null, denied: false };
   blobs.set(x.id, e); paintShare();
   try {
-    const r = await fetch("/originals/" + x.id, { signal: e.ctl.signal });
+    const r = await fetch("/originals/" + x.id + tq(x), { signal: e.ctl.signal });
     if (!r.ok) throw new Error("http " + r.status);
     const total = +r.headers.get("content-length") || 0, rd = r.body && r.body.getReader(), parts = [];
     if (rd) {
