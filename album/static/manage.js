@@ -71,11 +71,15 @@ function upload(it, tries = 0) {
     setTimeout(() => upload(it, tries + 1), 2000 * (tries + 1)); return true;
   };
   x.open("POST", "/api/upload?name=" + encodeURIComponent(it.f.name));
-  x.timeout = 120000;  // một file kẹt không được giữ chỗ trong hàng đợi mãi
+  // hết thời gian theo KHÔNG HOẠT ĐỘNG (không có tiến độ tải lên trong 60 s), không phải tổng thời gian: ảnh gốc 15–25 MB trên mạng yếu vẫn tải được
+  let idle = 0;
+  const stalled = () => { if (retry()) return; st.textContent = "✗ quá thời gian chờ"; st.className = "f-st err"; failN++; fin(); };
+  const arm = () => { clearTimeout(idle); idle = setTimeout(() => { x.abort(); stalled(); }, 60000); };
   x.setRequestHeader("Content-Type", "application/octet-stream");
-  x.upload.onprogress = e => { if (!e.lengthComputable) return; sent += e.loaded - it.loaded; it.loaded = e.loaded; const p = Math.round(e.loaded / e.total * 100); st.textContent = p + "%"; it.fill.style.width = p + "%"; pump(); };
+  x.upload.onprogress = e => { arm(); if (!e.lengthComputable) return; sent += e.loaded - it.loaded; it.loaded = e.loaded; const p = Math.round(e.loaded / e.total * 100); st.textContent = p + "%"; it.fill.style.width = p + "%"; pump(); };
   const fin = () => { sent += it.f.size - it.loaded; it.loaded = it.f.size; it.li.classList.add("done"); active--; pump(); refreshStats(); };
   x.onload = () => {
+    clearTimeout(idle);
     let d = null; try { d = JSON.parse(x.responseText); } catch (e) {}
     if (!d || typeof d !== "object") d = x.status === 200 ? { detail: "máy chủ trả lời không đọc được" } : {};  // 200 mà không phải JSON: lỗi, không phải "trùng"
     if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : ""); st.className = "f-st ok"; doneN++; }
@@ -85,9 +89,9 @@ function upload(it, tries = 0) {
     else { st.textContent = "✗ " + (d.detail || ("lỗi " + x.status)); st.className = "f-st err"; failN++; }
     fin();
   };
-  x.onerror = () => { if (retry()) return; st.textContent = "✗ mất kết nối"; st.className = "f-st err"; failN++; fin(); };
-  x.ontimeout = () => { if (retry()) return; st.textContent = "✗ quá thời gian chờ"; st.className = "f-st err"; failN++; fin(); };
-  x.send(it.f);
+  x.onerror = () => { clearTimeout(idle); if (retry()) return; st.textContent = "✗ mất kết nối"; st.className = "f-st err"; failN++; fin(); };
+  x.upload.onload = () => clearTimeout(idle);  // đã gửi xong: chờ máy chủ trả lời
+  arm(); x.send(it.f);
 }
 $("pick").onchange = () => { addFiles($("pick").files); $("pick").value = ""; };
 const drop = $("drop");

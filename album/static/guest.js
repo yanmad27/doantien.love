@@ -251,7 +251,7 @@ const gMaybe = new VGallery($("vg-maybe"), "maybe", (g, i, b) => openLb(g, i, b,
 
 // ---------- tải danh sách ảnh (preload ở <head> dùng lại đúng request này) ----------
 async function loadGallery() {
-  $("empty").hidden = true; $("skeleton").hidden = false;
+  $("empty").hidden = true; $("skeleton").hidden = false; if (mode === "all") $("all").hidden = false;
   let m;
   try {
     let r = await (window.__gallery || fetch("/api/gallery"));  // request đã bắt đầu ở <head>
@@ -287,6 +287,7 @@ async function loadGallery() {
 }
 function showEmpty(t, s, retry) {
   loadDecor();
+  if (retry) $("all").hidden = true;  // thẻ lỗi: bỏ vùng thư viện trống (min-height) phía trên
   $("empty").hidden = false; $("empty-t").textContent = t; $("empty-s").textContent = s; $("empty-retry").hidden = !retry;
 }
 $("empty-retry").onclick = loadGallery;
