@@ -24,12 +24,12 @@ Không có bí mật nào. Tất cả đều có mặc định trong image; ch�
 | `DATA_DIR` | `/data` | Nơi lưu mọi thứ bền vững (volume) |
 | `ALBUM_MAX_UPLOAD_MB` | `60` | Giới hạn dung lượng mỗi ảnh (ảnh 45 MP JPEG thường 10–30 MB) |
 | `ALBUM_MIN_FREE_MB` | `5120` | Đĩa host dùng chung với app khác: dưới mức trống này (kiểm lúc bắt đầu và mỗi 8 MB khi đang nhận), app từ chối tải ảnh lên (HTTP 507, thông báo tiếng Việt) |
-| `ALBUM_MAX_TOTAL_GB` | `20` | **Hạn mức tổng** dung lượng ảnh gốc trong album (tính cả phần đã đặt chỗ cho các upload đang chạy). Hết hạn mức → 507. Đặt theo đĩa thực có |
+| `ALBUM_MAX_TOTAL_GB` | `20` | **Hạn mức tổng** dung lượng ảnh gốc trong album (tính cả phần đã đặt chỗ cho các upload đang chạy). Hết hạn mức → 507. Đặt theo đĩa thực có. **`0` hoặc để trống = không giới hạn tổng** (`/api/stats` trả `max_total_bytes: null`); ngưỡng đĩa trống `ALBUM_MIN_FREE_MB` vẫn áp dụng |
 | `ALBUM_THREADS` | `2` | Số luồng onnxruntime (image đặt sẵn 2 để không chiếm hết CPU của VPS dùng chung) |
 | `ALBUM_INDEX_WINDOW` | `1` | Số ảnh giải mã cùng lúc khi Xử lý. `1` = tuần tự (RAM đỉnh thấp nhất); `2` = giải mã trước một ảnh, nhanh hơn ~10–20% nhưng đỉnh RAM thêm ~0.5–1 GB với ảnh 60 MP |
 | `ALBUM_APP_HOSTS` | `album.doantien.love,localhost,127.0.0.1` | Danh sách host (cách nhau dấu phẩy) được dùng **toàn bộ app**. Host khác trỏ vào cùng container (tên miền CDN, mục 4b) chỉ lấy được ảnh + file tĩnh + `/healthz` + `/robots.txt`; mọi thứ khác 404 |
 | `ALBUM_CDN_ORIGIN` | trống | Origin CDN cho ảnh WebP, vd. `https://img.rsrm.dev` (không có đường dẫn). Điền vào `cdn` của `/api/gallery` + `<link rel=preconnect>`. **Trống = ảnh cùng origin = công tắc tắt CDN** (xem 4b) |
-| `ALBUM_ADMIN_TOKEN` | trống | Đặt thì `POST /api/upload` và `POST /api/process` cần header `X-Album-Token: <mã>` (hoặc cookie `album_token`), sai → 401; `/manage` hiện ô nhập mã. Trống = mở như trước. Đây là bí mật: đặt trong tab Environment, đừng commit |
+| `ALBUM_ADMIN_TOKEN` | trống | Đặt thì: `GET /manage` không có cookie `album_token` hợp lệ → 401 + trang đăng nhập (`static/manage-login.html`); `POST /api/admin-login {"token"}` đúng → cookie HttpOnly, SameSite=Strict, 30 ngày (thêm Secure khi https/`X-Forwarded-Proto`), sai → 401, quá 10 lần sai/phút/IP → 429. `POST /api/upload` và `POST /api/process` nhận cookie đó hoặc header `X-Album-Token: <mã>`, sai → 401. `GET /api/process`, `/api/stats`, trang khách và `/api/gallery` vẫn mở. Trống = mở như trước. Đây là bí mật: đặt trong tab Environment, đừng commit; app không bao giờ in nó ra response hoặc log |
 | `ALBUM_DERIVE_WORKERS` | `2` | Số ảnh sinh WebP cùng lúc khi Xử lý (mỗi ảnh JPEG chỉ giải mã thu nhỏ nên nhẹ RAM) |
 | `ALBUM_LOW_MEM` | `1` | Tắt arena cấp phát của onnxruntime (RSS đỉnh thấp hơn ~20%, tốc độ như nhau) |
 

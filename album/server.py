@@ -58,6 +58,9 @@ MAX_BODY_SLOTS = 8        # số body selfie đang nhận cùng lúc (mỗi cái
 DISK_CHECK_EVERY = 8 * 1024 * 1024
 PHOTO_ID = re.compile(r"^[0-9a-f]{16}$")
 DERIVE_WORKERS = int(os.environ.get("ALBUM_DERIVE_WORKERS", 2))  # số ảnh sinh WebP cùng lúc (JPEG giải mã thu nhỏ nên nhẹ RAM)
+LOGIN_MAX_FAILS = 10  # lần nhập sai mỗi phút mỗi IP
+LOGIN_FALLBACK = ("<!doctype html><meta charset=utf-8><title>Đăng nhập</title><p>Cần mã chủ nhà. "
+                  "Gửi POST /api/admin-login {\"token\": …} để nhận cookie.</p>")  # khi static/manage-login.html chưa có
 DEFAULT_APP_HOSTS = "album.doantien.love,localhost,127.0.0.1"
 PUBLIC_PREFIXES = ("/i/", "/thumbs/", "/previews/", "/static/")  # host ngoài (CDN) chỉ được GET/HEAD/OPTIONS các đường này
 PUBLIC_EXACT = ("/healthz", "/robots.txt")
@@ -96,12 +99,17 @@ def static_version():
     return _ver["v"]
 
 
-def static_page(name, cdn=""):
-    with open(os.path.join(HERE, "static", name), encoding="utf-8") as fh:
-        html = fh.read().replace("__V__", static_version())
+def static_page(name, cdn="", status=200, fallback=None):
+    try:
+        with open(os.path.join(HERE, "static", name), encoding="utf-8") as fh:
+            html = fh.read().replace("__V__", static_version())
+    except FileNotFoundError:
+        if fallback is None:
+            raise
+        html = fallback
     if cdn:
         html = html.replace("<!--__CDN_PRECONNECT__-->", f'<link rel="preconnect" href="{htmllib.escape(cdn, quote=True)}">')
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(html, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 class NoIndexMiddleware:
@@ -270,6 +278,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                max_upload=60 * 1024 * 1024, det_size=DEFAULT_DET_SIZE, min_free=5120 * 1024 * 1024,
                max_total=20 * 1024 ** 3, app_hosts=None, cdn_origin=None, admin_token=None):
     require_webp()
+    max_total = max_total or None  # 0/None = không giới hạn tổng dung lượng (vẫn giữ ngưỡng đĩa trống)
     if app_hosts is None:
         app_hosts = env("ALBUM_APP_HOSTS", default=DEFAULT_APP_HOSTS)
     app_hosts = [h.strip().lower() for h in (app_hosts.split(",") if isinstance(app_hosts, str) else app_hosts) if h.strip()]
@@ -405,15 +414,60 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
 
-    def require_admin(request: Request):
-        """ALBUM_ADMIN_TOKEN chưa đặt = mở như cũ. Đặt rồi: header X-Album-Token hoặc cookie album_token, so sánh thời gian hằng."""
+    def is_admin(request: Request, header=True):
+        """ALBUM_ADMIN_TOKEN chưa đặt = mở như cũ. Đặt rồi: cookie album_token (hoặc header X-Album-Token), so sánh thời gian hằng."""
         if not token:
-            return
+            return True
         want = token.encode()
-        for got in (request.headers.get("x-album-token"), request.cookies.get("album_token")):
-            if got and hmac.compare_digest(got.encode(), want):
-                return
-        raise HTTPException(401, "Cần mã chủ nhà (X-Album-Token) để thực hiện thao tác này.")
+        got_all = [request.cookies.get("album_token")] + ([request.headers.get("x-album-token")] if header else [])
+        return any(got and hmac.compare_digest(got.encode(), want) for got in got_all)
+
+    def require_admin(request: Request):
+        if not is_admin(request):
+            raise HTTPException(401, "Cần mã chủ nhà (cookie album_token hoặc header X-Album-Token) để thực hiện thao tác này.")
+
+    fails = {}  # ip -> [thời điểm sai]; throttle đăng nhập trong RAM
+    fails_lock = threading.Lock()
+
+    def client_ip(request: Request):
+        xff = request.headers.get("x-forwarded-for", "")
+        return xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "?")  # mục ngoài cùng bên phải do proxy tin cậy thêm
+
+    def throttled(ip, record=False):
+        now = time.time()
+        with fails_lock:
+            for k in [k for k, v in fails.items() if not v or now - v[-1] > 60]:
+                del fails[k]
+            ts = [t for t in fails.get(ip, []) if now - t < 60]
+            if record:
+                ts.append(now)
+            fails[ip] = ts
+            return len(ts) >= LOGIN_MAX_FAILS if not record else len(ts) > LOGIN_MAX_FAILS
+
+    @app.post("/api/admin-login")
+    async def api_admin_login(request: Request):
+        if not token:
+            raise HTTPException(404)
+        ip = client_ip(request)
+        if throttled(ip):
+            raise HTTPException(429, "Nhập sai quá nhiều lần, hãy thử lại sau ít phút.")
+        body = b""
+        async for c in request.stream():
+            body += c
+            if len(body) > 4096:
+                raise HTTPException(413)
+        try:
+            given = json.loads(body).get("token")
+        except Exception:
+            given = None
+        if not isinstance(given, str) or not hmac.compare_digest(given.encode(), token.encode()):
+            if throttled(ip, record=True):
+                raise HTTPException(429, "Nhập sai quá nhiều lần, hãy thử lại sau ít phút.")
+            raise HTTPException(401, "Mã không đúng.")
+        https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+        resp = Response(status_code=204, headers={"Cache-Control": "no-store"})
+        resp.set_cookie("album_token", token, max_age=30 * 86400, path="/", httponly=True, samesite="strict", secure=https)
+        return resp
 
     @app.get("/api/gallery")
     def api_gallery(request: Request):
@@ -500,7 +554,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             if shutil.disk_usage(data_dir).free < min_free:
                 await reject(request, 507, f"Ổ đĩa sắp đầy (còn dưới {min_free // 2**20} MB trống), không nhận thêm ảnh. Hãy xoá bớt hoặc mở rộng dung lượng.")
             with quota_lock:  # đặt chỗ trước dung lượng tối đa của file này; trả lại trong finally
-                if stored_bytes() + quota["reserved"] + max_upload <= max_total:
+                if max_total is None or stored_bytes() + quota["reserved"] + max_upload <= max_total:
                     quota["reserved"] += max_upload
                     reserved = True
             if not reserved:
@@ -633,7 +687,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         return static_page("index.html", cdn)
 
     @app.get("/manage")
-    def manage():
+    def manage(request: Request):
+        if not is_admin(request, header=False):  # trình duyệt điều hướng không gửi được header → chỉ nhận cookie
+            return static_page("manage-login.html", cdn, 401, fallback=LOGIN_FALLBACK)
         return static_page("manage.html", cdn)
 
     # CSS/JS/font/hoạ tiết của giao diện: chỉ file tĩnh cục bộ, không nạp gì từ ngoài
@@ -663,8 +719,8 @@ def main():
     ap.add_argument("--max-upload-mb", type=int, default=int(env("ALBUM_MAX_UPLOAD_MB", default=60)))
     ap.add_argument("--min-free-mb", type=int, default=int(env("ALBUM_MIN_FREE_MB", default=5120)),
                     help="từ chối tải lên khi ổ đĩa của DATA_DIR còn trống ít hơn mức này")
-    ap.add_argument("--max-total-gb", type=float, default=float(env("ALBUM_MAX_TOTAL_GB", default=20)),
-                    help="tổng dung lượng ảnh gốc tối đa trong album")
+    ap.add_argument("--max-total-gb", type=float, default=(float(os.environ["ALBUM_MAX_TOTAL_GB"] or 0) if "ALBUM_MAX_TOTAL_GB" in os.environ else 20.0),
+                    help="tổng dung lượng ảnh gốc tối đa trong album; 0 (hoặc ALBUM_MAX_TOTAL_GB rỗng) = không giới hạn")
     a = ap.parse_args()
     data_dir = os.path.abspath(a.data_dir)
     try:
@@ -676,7 +732,7 @@ def main():
         sys.exit(f"LỖI: không ghi được vào DATA_DIR={data_dir} ({e}). Volume phải cho phép user của container ghi (xem DEPLOY.md).")
     app = create_app(data_dir, a.model_dir, a.providers.split(","), threads=a.threads,
                      max_upload=a.max_upload_mb * 1024 * 1024, min_free=a.min_free_mb * 1024 * 1024,
-                     max_total=int(a.max_total_gb * 1024 ** 3))
+                     max_total=int(a.max_total_gb * 1024 ** 3) if a.max_total_gb > 0 else None)
     uvicorn.run(app, host=a.host, port=a.port, log_level="warning", workers=1)
 
 

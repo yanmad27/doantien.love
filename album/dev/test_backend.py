@@ -366,22 +366,76 @@ class GateTests(unittest.TestCase):
     def test_owner_token(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
-        app = app_with(d, admin_token="s3cret")
+        app = app_with(d, admin_token="test-token")
+        seen = []
         for hdr in (None, {"X-Album-Token": "wrong"}, {"Cookie": "album_token=wrong"}, {"X-Album-Token": ""}):
             st, h, body, nread = call(app, "POST", "/api/process", headers=hdr)
             self.assertEqual(st, 401, hdr)
             self.assertIn("detail", json.loads(body))
             self.assertEqual(h["cache-control"], "no-store")
             self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers=hdr, body=b"x" * 50)[0], 401)
-        self.assertEqual(call(app, "POST", "/api/process", headers={"X-Album-Token": "s3cret"})[0], 200)
+            st, h, body, _ = call(app, "GET", "/manage", headers=hdr)  # /manage: chỉ cookie, header không đủ
+            self.assertEqual((st, h["cache-control"]), (401, "no-store"))
+            self.assertIn(b"<", body)
+            seen.append(body)
+        self.assertEqual(call(app, "GET", "/manage", headers={"X-Album-Token": "test-token"})[0], 401)
+        ck = {"Cookie": "a=b; album_token=test-token"}
+        self.assertEqual(call(app, "GET", "/manage", headers=ck)[0], 200)
+        self.assertEqual(call(app, "POST", "/api/process", headers={"X-Album-Token": "test-token"})[0], 200)
         app.state.job.thread.join(60)
-        self.assertEqual(call(app, "POST", "/api/process", headers={"Cookie": "a=b; album_token=s3cret"})[0], 200)
+        self.assertEqual(call(app, "POST", "/api/process", headers=ck)[0], 200)
         app.state.job.thread.join(60)
-        for path in ("/api/process", "/api/stats", "/manage", "/api/gallery"):
-            self.assertEqual(call(app, "GET", path)[0], 200, path)
-        self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers={"X-Album-Token": "s3cret"}, body=b"x" * 50)[0], 400)  # qua cổng token
-        open_app = app_with(d, admin_token="")
-        self.assertEqual(call(open_app, "POST", "/api/upload?name=a.jpg", body=b"x" * 50)[0], 400)
+        for path in ("/api/process", "/api/stats", "/api/gallery"):
+            st, _, body, _ = call(app, "GET", path)
+            self.assertEqual(st, 200, path)
+            seen.append(body)
+        self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers={"X-Album-Token": "test-token"}, body=b"x" * 50)[0], 400)  # qua cổng token
+        self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers=ck, body=b"x" * 50)[0], 400)
+        self.assertFalse(any(b"test-token" in b for b in seen))
+        # token chưa đặt: mọi thứ mở như cũ
+        for t in (None, ""):
+            open_app = app_with(d, admin_token=t)
+            self.assertEqual(call(open_app, "GET", "/manage")[0], 200)
+            self.assertEqual(call(open_app, "POST", "/api/upload?name=a.jpg", body=b"x" * 50)[0], 400)
+            self.assertEqual(call(open_app, "POST", "/api/admin-login", body=b'{"token":"x"}')[0], 404)
+
+    def test_admin_login_cookie_and_throttle(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d, admin_token="test-token")
+        post = lambda tok, **hd: call(app, "POST", "/api/admin-login", headers=dict({"X-Forwarded-For": "9.9.9.9"}, **hd), body=json.dumps({"token": tok}).encode())
+        st, h, body, _ = post("test-token")
+        self.assertEqual((st, body), (204, b""))
+        ck = h["set-cookie"]
+        self.assertTrue(ck.startswith("album_token=test-token;"))
+        for flag in ("HttpOnly", "SameSite=strict", "Path=/", "Max-Age=2592000"):
+            self.assertIn(flag.lower(), ck.lower(), flag)
+        self.assertNotIn("secure", ck.lower())  # http thường
+        self.assertIn("secure", post("test-token", **{"X-Forwarded-Proto": "https"})[1]["set-cookie"].lower())
+        self.assertEqual(call(app, "GET", "/manage", headers={"Cookie": ck.split(";")[0]})[0], 200)
+        # sai: 401 JSON không lộ token; ngoài ngưỡng → 429 (kể cả khi lần sau đúng); IP khác không bị ảnh hưởng
+        for i in range(10):
+            st, _, body, _ = call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "8.8.8.8"}, body=b'{"token":"bad"}')
+            self.assertEqual(st, 401)
+            self.assertNotIn(b"test-token", body)
+        for tok in ("bad", "test-token"):
+            st, _, body, _ = call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "8.8.8.8"}, body=json.dumps({"token": tok}).encode())
+            self.assertEqual(st, 429)
+        self.assertEqual(post("test-token")[0], 204)
+        for bad in (b"", b"not json", b'{"token":5}', b"[]"):
+            self.assertEqual(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "7.7.7.7"}, body=bad)[0], 401, bad)
+
+    def test_quota_disabled(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d, max_total=0)
+        self.assertIsNone(json.loads(call(app, "GET", "/api/stats")[2])["max_total_bytes"])
+        png = io.BytesIO()
+        Image.new("RGB", (40, 30)).save(png, "PNG")
+        self.assertEqual(json.loads(call(app, "POST", "/api/upload?name=a.png", body=png.getvalue())[2])["status"], "ok")
+        app2 = app_with(d, max_total=1)  # có hạn mức: 1 byte → hết chỗ
+        self.assertEqual(json.loads(call(app2, "GET", "/api/stats")[2])["max_total_bytes"], 1)
+        self.assertEqual(call(app2, "POST", "/api/upload?name=b.png", body=png.getvalue())[0], 507)
 
     def test_cdn_preconnect_templating(self):
         page = os.path.join(ALBUM, "static", "index.html")
