@@ -364,6 +364,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                         q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path "
                              "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id ORDER BY m.taken IS NULL, m.taken, p.path")
                         for pid, w, h, t, v, c, name in db.execute(q):
+                            if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
+                                continue
                             rows.append([pid, w, h, None if t is None else round(t, 3), v, c, name])
                             meta[pid] = (v, c)
                     finally:
@@ -605,7 +607,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     stored["bytes"] -= old[0] if old else 0
                 final = fname
                 root = store.originals_dir(data_dir)
-                if db.execute("SELECT 1 FROM originals WHERE name=?", (final,)).fetchone() or \
+                # trùng tên KHÔNG phân biệt hoa/thường (X.jpg ~ x.jpg: ổ đĩa không phân biệt thì sẽ ghi đè nhau) mà khác nội dung
+                # → đây là ảnh khác, giữ cả hai bằng hậu tố -<sha8>; cùng nội dung thì đã bị chặn ở trên theo SHA-256
+                if db.execute("SELECT 1 FROM originals WHERE lower(name)=lower(?)", (final,)).fetchone() or \
                         os.path.exists(os.path.join(root, final)):
                     stem, ext = os.path.splitext(fname)
                     final = f"{stem}-{digest[:8]}{ext}"  # cùng tên, khác nội dung: không ghi đè

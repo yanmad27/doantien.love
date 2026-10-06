@@ -348,6 +348,55 @@ class GateTests(unittest.TestCase):
         self.assertNotEqual(g0["mv"], g1["mv"])
         self.assertEqual(g1["cdn"], "")
 
+    # ---- không bao giờ trùng ảnh ----
+    def test_gallery_ids_unique_and_schema_forbids_dupes(self):
+        ids = [p[0] for p in self.gal["photos"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        db = sqlite3.connect(store.db_path(self.d))
+        pid = ids[0]
+        with self.assertRaises(sqlite3.IntegrityError):  # photo_meta.id là khoá chính → join không thể nhân đôi dòng
+            db.execute("INSERT INTO photo_meta VALUES (?,?,?,?,?,?,?,?,?)", (pid, None, "x", "#000000", 1, 1, 1, 1, 1))
+        with self.assertRaises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?)", (pid, "other.jpg", 1, 1, 1, 1, 1, 0))
+        # originals có nhiều dòng cũng không ảnh hưởng manifest (manifest không join originals)
+        db.execute("INSERT INTO originals VALUES ('extra1.jpg', 'aa', 1)")
+        db.execute("INSERT INTO originals VALUES ('extra2.jpg', 'bb', 1)")
+        db.commit()
+        db.close()
+        g = json.loads(call(self.app, "GET", "/api/gallery")[2])
+        self.assertEqual(len(g["photos"]), len(ids))
+        db = sqlite3.connect(store.db_path(self.d))
+        db.execute("DELETE FROM originals WHERE name LIKE 'extra%'")
+        db.commit()
+        db.close()
+
+    def test_upload_duplicates_and_case_variants(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d)
+
+        def png(color):
+            b = io.BytesIO()
+            Image.new("RGB", (40, 30), color).save(b, "PNG")
+            return b.getvalue()
+
+        up = lambda name, body: json.loads(call(app, "POST", "/api/upload?name=" + name, body=body)[2])
+        a, b = png((1, 2, 3)), png((9, 9, 9))
+        r1 = up("X.JPG.png", a)
+        self.assertEqual((r1["status"], r1["name"]), ("ok", "X.JPG.png"))
+        self.assertEqual(up("X.JPG.png", a)["status"], "duplicate")         # cùng byte, cùng tên
+        self.assertEqual(up("other-name.png", a)["status"], "duplicate")    # cùng byte, tên khác → vẫn trùng (SHA-256)
+        r2 = up("x.jpg.PNG", b)                                              # khác byte, tên chỉ khác hoa/thường
+        self.assertEqual((r2["status"], r2["renamed"]), ("ok", True))
+        self.assertNotEqual(r2["name"].lower(), r1["name"].lower())          # không ghi đè, không coi là trùng
+        files = sorted(os.listdir(os.path.join(d, "originals")))
+        self.assertEqual(len(files), 2, files)
+        self.assertEqual(up("x.jpg.png", b)["status"], "duplicate")          # byte của bản thứ hai cũng được nhận ra
+        run_process(app)
+        g = json.loads(call(app, "GET", "/api/gallery")[2])
+        self.assertEqual(len(g["photos"]), 2)
+        self.assertEqual(len({p[0] for p in g["photos"]}), 2)
+
     def test_cdn_kill_switch_and_html(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -531,6 +580,9 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(db.execute("SELECT count(*) FROM photo_meta").fetchone()[0], len(good) + 1)
         db.close()
         s_after = search()
+        for r in (s_before, s_after):
+            ids = [x["id"] for x in r["results"]]
+            self.assertEqual(len(ids), len(set(ids)))  # mỗi ảnh đúng một kết quả
         searched = calls["detect"]  # chỉ truy vấn selfie mới được dò
         self.assertEqual(searched, 1)
         calls["detect"] = calls["embed"] = 0
@@ -547,6 +599,26 @@ class MigrationTests(unittest.TestCase):
         # rollback: code cũ vẫn chạy được trên DB đã nâng cấp (bảng thừa bị bỏ qua) và cho kết quả y hệt
         after_old = json.loads(subprocess.run([sys.executable, script], check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1])
         self.assertEqual(after_old["results"], before_old["results"])
+
+
+BIG = "/tmp/album-e/data-a"
+
+
+@unittest.skipUnless(os.path.exists(os.path.join(BIG, "index.db")) and os.path.exists(QUERY)
+                     and os.path.isdir(os.path.join(ALBUM, "models")), "cần bộ ảnh thử 1900 ảnh ở /tmp/album-e/data-a (đã lập chỉ mục)")
+class BigSetTests(unittest.TestCase):
+    def test_unique_ids_on_1900_set(self):
+        app = server.create_app(BIG, os.path.join(ALBUM, "models"), ["CPUExecutionProvider"])
+        g = json.loads(call(app, "GET", "/api/gallery")[2])
+        ids = [p[0] for p in g["photos"]]
+        self.assertGreaterEqual(len(ids), 1900)
+        self.assertEqual(len(ids), len(set(ids)))
+        st, _, b, _ = call(app, "POST", "/api/search", body=open(QUERY, "rb").read())
+        self.assertEqual(st, 200)
+        sids = [x["id"] for x in json.loads(b)["results"]]
+        self.assertTrue(sids)
+        self.assertEqual(len(sids), len(set(sids)))
+        self.assertTrue(set(sids) <= set(ids))
 
 
 if __name__ == "__main__":
