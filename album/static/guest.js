@@ -467,8 +467,10 @@ function showResults() {
   $("s-tips").hidden = true;
   const total = data.results.filter(x => x.score >= MAYBE_CUT).length;
   const none = !TUNE && total === 0;
-  $("s-title").textContent = none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
-  if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
+  const empty = photos.length === 0;
+  $("s-title").textContent = empty ? "Album đang được cập nhật" : none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
+  if (empty) $("s-text").textContent = "Ảnh cưới chưa được đưa lên đầy đủ. Bạn quay lại sau ít phút nhé.";
+  else if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
   else $("s-text").textContent = "Dưới đây là những khoảnh khắc có bạn.";
   if (q.n_faces > 1) {
     $("s-multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Chúng tôi dùng khuôn mặt to và rõ nhất (khung bao quanh mặt). ` +
@@ -495,7 +497,7 @@ function clearResults() {
 
 // ---------- kết quả: dùng lại đúng URL ảnh và cách dựng như thư viện ----------
 // `b` theo manifest (nguồn đã dùng để dựng các khung của chuỗi) — nếu manifest cũ/mới lệch với kết quả tìm kiếm thì vẫn nhất quán
-const fromHit = r => { const mp = photoById.get(r.id); return { id: r.id, tok: r.t || null, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: (mp ? mp.b : r.b) || null, score: r.score, bbox: r.bbox }; };
+const fromHit = r => { const mp = photoById.get(r.id); return { id: r.id, tok: mp ? null : (r.t || null), w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: (mp ? mp.b : r.b) || null, score: r.score, bbox: r.bbox }; };
 // một ảnh = một ô: gộp theo id lấy điểm cao nhất, xếp điểm giảm dần. Chia nhóm SAU khi gộp nên hai nhóm không bao giờ trùng nhau
 const hits = list => uniqById(list.map(fromHit), (x, o) => x.score > o.score).sort((a, b) => b.score - a.score);
 

@@ -332,6 +332,7 @@ const vis = (() => {
   $("a-range").onclick = () => { armed = !armed && !!anchor; if (!anchor) toast("Chạm một ảnh trước, rồi chạm “Chọn đến đây” và ảnh cuối của đoạn."); refresh(); };
   for (const b of document.querySelectorAll(".fchip")) b.onclick = () => {
     filter = b.dataset.f; anchor = null; armed = false;
+    for (const id of [...sel]) if (!FILTERS[filter](byId.get(id))) sel.delete(id);  // chỉ giữ các khung còn nhìn thấy ở bộ lọc mới
     for (const x of document.querySelectorAll(".fchip")) x.setAttribute("aria-pressed", x === b ? "true" : "false");
     render();
   };

@@ -429,7 +429,11 @@ def vis_suite():
         # --- bộ lọc theo khung ---
         c = chips(pg)
         check(c == [len(R), len(R) - len(hid), len(hid)], f"{label}: số đếm bộ lọc {c}")
+        # chọn ở "Tất cả" rồi đổi bộ lọc: lựa chọn chỉ còn các khung nhìn thấy (không "Hiện" nhầm ảnh ngoài màn hình)
+        pg.click("#v-all"); check(sel_n(pg) == len(R), f"{label}: chọn tất cả ở 'Tất cả'")
         pg.click('.fchip[data-f="hidden"]'); pg.wait_for_function("document.querySelector('.fchip[data-f=hidden]').getAttribute('aria-pressed') === 'true'")
+        check(sel_n(pg) == len(hid), f"{label}: đổi sang 'Đang ẩn': lựa chọn được cắt còn {len(hid)} (được {sel_n(pg)})")
+        pg.click("#a-clear")
         pg.click("#v-all")
         check(selected(pg, bursts, hid) == hid and sel_n(pg) == len(hid), f"{label}: lọc 'Đang ẩn' + Chọn tất cả = đúng {len(hid)} khung đang ẩn")
         pg.click("#a-clear")
