@@ -2,10 +2,14 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
+<!-- manifest: bắt đầu tải ngay từ byte đầu của HTML (trước cả CSS), guest.js dùng lại đúng request này. Dùng fetch() trực tiếp thay cho
+     <link rel=preload as=fetch> vì WebKit không tái dùng preload cho fetch() (tải 2 lần), còn cách này chỉ tải 1 lần ở mọi trình duyệt -->
+<script>window.__gallery=fetch("/api/gallery").catch(function(){return null})</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#fffaf3">
-<title>Tìm ảnh của bạn · Album cưới Khắc Doãn &amp; Đông Tiên</title>
+<title>Album cưới · Khắc Doãn &amp; Đông Tiên</title>
+<!--__CDN_PRECONNECT__-->
 <link rel="icon" href="/static/img/favicon.svg?v=__V__" type="image/svg+xml">
 <link rel="stylesheet" href="/static/fonts.css?v=__V__">
 <link rel="stylesheet" href="/static/album.css?v=__V__">
@@ -17,33 +21,21 @@
 <img class="flower flower--br" src="/static/img/bloom-side.webp?v=__V__" width="300" height="541" alt="" aria-hidden="true">
 
 <main class="page" id="main">
-  <header class="intro">
+  <header class="hero">
     <img class="logo rise" src="/static/img/heart-logo.webp?v=__V__" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
-    <p class="eyebrow rise" style="animation-delay:.1s">Album cưới</p>
-    <h1 class="title rise" style="animation-delay:.18s">Tìm ảnh của bạn</h1>
-    <i class="ornament rise" style="animation-delay:.26s" aria-hidden="true"></i>
-    <p class="lead rise" style="animation-delay:.32s">Chỉ cần một tấm selfie, chúng tôi sẽ tìm những khoảnh khắc có bạn trong ngày cưới của Khắc Doãn &amp; Đông Tiên.</p>
+    <p class="eyebrow rise" style="animation-delay:.08s">Album cưới</p>
+    <h1 class="title rise" style="animation-delay:.14s">Khắc Doãn &amp; Đông Tiên</h1>
+    <p class="meta rise" style="animation-delay:.2s"><span class="date">04 · 10 · 2026</span><i class="sep" aria-hidden="true"></i><span id="count" aria-live="polite">&nbsp;</span></p>
+    <div class="cta-row rise" id="cta-row" style="animation-delay:.26s">
+      <label class="btn btn--solid" id="cta-find" for="in-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.4"/><path d="M5.2 20c.7-3.5 3.3-5.4 6.8-5.4s6.1 1.9 6.8 5.4"/></svg>Tìm ảnh của bạn</label>
+      <p class="cta-s" id="cta-s">Chỉ cần một tấm selfie. Ảnh selfie <b>không bao giờ được lưu lại</b>.</p>
+    </div>
+    <input class="sr" type="file" id="in-file" accept="image/*" aria-label="Chọn ảnh selfie để tìm ảnh của bạn">
   </header>
 
-  <section class="card stage rise" id="stage" style="animation-delay:.4s">
-    <!-- 1. mở đầu: chọn ảnh -->
-    <div id="st-idle" class="idle">
-      <div class="actions touch-only">
-        <label class="btn btn--solid btn--wide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.1-1.6A1.5 1.5 0 0 1 10 4.8h4a1.5 1.5 0 0 1 1.2.6L16.3 7h2.2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.6" r="3.3"/></svg>Chụp ảnh selfie<input class="sr" type="file" id="in-cam" accept="image/*" capture="user"></label>
-        <label class="btn btn--wide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 5-4.5 3.5 3 3-2.5L20 17"/></svg>Chọn từ thư viện<input class="sr" type="file" id="in-lib-touch" accept="image/*"></label>
-      </div>
-      <label class="drop desktop-only" id="drop">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.6"/><path d="M5 20c.6-3.6 3.4-5.6 7-5.6s6.4 2 7 5.6"/></svg>
-        <span class="drop-t">Kéo thả ảnh selfie vào đây</span>
-        <span class="drop-s">hoặc</span>
-        <span class="btn btn--solid">Chọn ảnh từ máy</span>
-        <input class="sr" type="file" id="in-lib" accept="image/*">
-      </label>
-      <p class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><span>Ảnh selfie chỉ dùng để so khớp ngay lúc này và <b>không bao giờ được lưu lại</b>.</span></p>
-    </div>
-
-    <!-- 2. đã chọn ảnh: xem trước + trạng thái -->
-    <div id="st-work" class="work" hidden>
+  <!-- tìm bằng selfie: xem trước + trạng thái -->
+  <section class="card stage" id="finder" hidden aria-label="Tìm ảnh của bạn">
+    <div class="work">
       <figure class="selfie" id="selfie-fig">
         <div class="selfie-in"><img id="selfie" alt="Ảnh selfie bạn vừa chọn"><i class="box" id="selfie-box" hidden></i><i class="scan" aria-hidden="true"></i></div>
       </figure>
@@ -61,20 +53,21 @@
         </div>
         <div class="s-actions" id="s-actions" hidden>
           <button type="button" class="btn btn--solid" id="b-retry" hidden>Thử lại</button>
-          <button type="button" class="btn btn--quiet" id="b-other">Chọn ảnh khác</button>
+          <label class="btn" for="in-file" id="b-other">Chọn ảnh khác</label>
+          <button type="button" class="btn btn--quiet" id="b-all">Xem tất cả ảnh</button>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 3. kết quả -->
+  <!-- kết quả -->
   <section class="results" id="results" hidden aria-label="Kết quả tìm kiếm">
     <div class="tune" id="tune" hidden>
       <p class="tune-h">Chế độ chỉnh ngưỡng (chỉ dành cho chủ nhà)</p>
       <div class="tune-row">
         <label for="th">Ngưỡng giống nhau: <b id="thv"></b></label>
         <input type="range" id="th" min="0.15" max="0.8" step="0.01" value="0.40">
-        <span id="count"></span>
+        <span id="tcount"></span>
       </div>
       <p class="tune-s" id="tune-info"></p>
     </div>
@@ -85,7 +78,7 @@
         <p class="g-count" id="g-main-n"></p>
       </div>
       <p class="g-empty" id="g-main-empty" hidden></p>
-      <div class="grid" id="grid-main"></div>
+      <div class="vg" id="vg-main" role="group" aria-label="Ảnh của bạn"></div>
     </div>
 
     <p class="trunc" id="trunc" hidden></p>
@@ -97,13 +90,32 @@
       </button>
       <div id="maybe-body" hidden>
         <p class="hint">Những ảnh này chỉ giống bạn ở mức vừa phải, nên có thể lẫn ảnh của người khác.</p>
-        <div class="grid" id="grid-maybe"></div>
+        <div class="vg" id="vg-maybe" role="group" aria-label="Có thể cũng là bạn"></div>
       </div>
     </div>
   </section>
 
+  <!-- toàn bộ ảnh -->
+  <section class="all" id="all" aria-label="Tất cả ảnh">
+    <div class="skeleton" id="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="vg" id="vg-all" role="group" aria-label="Tất cả ảnh cưới"></div>
+  </section>
+
+  <!-- album trống / không tải được -->
+  <section class="card empty" id="empty" hidden>
+    <p class="s-title script" id="empty-t"></p>
+    <p class="s-text" id="empty-s"></p>
+    <div class="s-actions"><button type="button" class="btn btn--solid" id="empty-retry" hidden>Thử lại</button></div>
+  </section>
+
   <footer class="foot"><i class="ornament" aria-hidden="true"></i><p><span>Khắc Doãn &amp; Đông Tiên</span><span class="dot"> · </span><span class="date">04 · 10 · 2026</span></p></footer>
 </main>
+
+<!-- nút nổi: luôn với tới được khi đã cuộn qua đầu trang -->
+<div class="pill" id="pill" hidden>
+  <label class="btn btn--solid" id="pill-find" for="in-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.4"/><path d="M5.2 20c.7-3.5 3.3-5.4 6.8-5.4s6.1 1.9 6.8 5.4"/></svg>Tìm ảnh của bạn</label>
+  <button type="button" class="btn btn--solid" id="pill-all" hidden>Xem tất cả ảnh</button>
+</div>
 
 <!-- khung xem ảnh toàn màn hình -->
 <div class="lb" id="lb" role="dialog" aria-modal="true" aria-label="Xem ảnh" hidden>
@@ -123,6 +135,6 @@
   </div>
   <p class="lb-toast" id="lb-toast" role="status"></p>
 </div>
-<script src="/static/guest.js?v=__V__"></script>
+<script src="/static/guest.js?v=__V__" defer></script>
 </body>
 </html>

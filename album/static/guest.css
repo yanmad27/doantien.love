@@ -1,29 +1,25 @@
-/* Trang khách: tìm ảnh bằng selfie */
-.intro { text-align: center; padding-top: .4rem; }
-.logo { display: block; width: 104px; height: auto; margin: 0 auto .7rem; }
-.stage { max-width: 640px; margin: 1.8rem auto 0; padding: 1.5rem 1.25rem 1.3rem; overflow: hidden; }
+/* Trang khách: album mở thẳng vào thư viện ảnh; selfie là hành động tuỳ chọn */
+html { scrollbar-gutter: stable; }
+.page { padding-top: 2.6rem; }
 
-.touch-only { display: flex; }
-.desktop-only { display: none; }
-@media (hover: hover) and (pointer: fine) {
-  .touch-only { display: none; }
-  .desktop-only { display: flex; }
-}
+/* ---- đầu trang: bộ nhận diện thiệp mời, gọn để ảnh hiện ngay màn đầu ---- */
+.hero { text-align: center; }
+.logo { display: block; width: 76px; height: auto; margin: 0 auto .5rem; }
+.hero .title { margin-top: .1rem; font-size: clamp(2.3rem, 9.4vw, 3.9rem); line-height: 1.12; }
+.meta { display: flex; align-items: center; justify-content: center; gap: .7rem; margin: .45rem 0 0; color: var(--gold-ink); font-family: var(--ui); font-size: .74rem; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; }
+.meta .sep { width: 4px; height: 4px; rotate: 45deg; border: 1px solid var(--gold); }
+.meta .date { white-space: nowrap; }
+.cta-row { margin: 1.1rem 0 1.5rem; }
+.cta-row .btn { min-height: 52px; padding-inline: 2rem; }
+.cta-s { text-wrap: balance; margin: .7rem auto 0; max-width: 24em; color: var(--ink-soft); font-family: var(--serif); font-weight: 500; font-size: 1.05rem; line-height: 1.4; }
+.cta-s b { color: var(--ink); font-weight: 600; }
+body:has(#in-file:focus-visible) #cta-find, body:has(#in-file:focus-visible) #pill-find, body:has(#in-file:focus-visible) #b-other, .btn:focus-visible { outline: 2px solid var(--peach-ink); outline-offset: 3px; }
+.stage { max-width: 640px; margin: 1.4rem auto 0; padding: 1.5rem 1.25rem 1.3rem; overflow: hidden; }
+.empty { max-width: 560px; margin: 1.6rem auto 0; padding: 2rem 1.25rem; text-align: center; }
+.empty .s-text { margin-top: .5rem; }
 
-.actions { flex-direction: column; gap: .8rem; }
-.btn--wide { width: 100%; min-height: 54px; }
-.btn:has(input:focus-visible) { outline: 2px solid var(--peach-ink); outline-offset: 3px; }  /* chỉ nút bọc input file; không dính sau khi bấm nút thường */
-
-.drop { flex-direction: column; align-items: center; gap: .3rem; padding: 2rem 1rem 1.7rem; border: 1.5px dashed var(--peach); border-radius: 12px; background: rgba(245, 211, 199, .16); cursor: pointer; transition: background .25s, border-color .25s; }
-.drop:hover, .drop.over { background: rgba(245, 211, 199, .38); border-color: var(--peach-dark); }
-.drop:focus-within { outline: 2px solid var(--peach-ink); outline-offset: 3px; }
-.drop svg { width: 46px; height: 46px; color: var(--peach-dark); margin-bottom: .2rem; }
-.drop-t { font-family: var(--serif); font-weight: 500; font-size: 1.35rem; color: var(--ink); }
-.drop-s { font-size: .75rem; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: .3rem; }
-
-.privacy { display: flex; gap: .6rem; align-items: flex-start; margin: 1.25rem 0 0; color: var(--ink-soft); font-family: var(--serif); font-weight: 500; font-size: 1.05rem; line-height: 1.45; text-align: left; }
-.privacy svg { width: 20px; height: 20px; flex: none; margin-top: .15rem; color: var(--gold-ink); }
-.privacy b { color: var(--ink); font-weight: 600; }
+/* kéo thả ảnh vào trang */
+body.dragging::after { content: "Thả ảnh selfie vào đây"; position: fixed; inset: 16px; z-index: 90; display: grid; place-items: center; border: 2px dashed var(--peach-dark); border-radius: 16px; background: rgba(255, 250, 243, .9); color: var(--peach-ink); font-family: var(--script); font-size: 2.4rem; pointer-events: none; }
 
 /* đã chọn ảnh */
 .work { display: flex; flex-direction: column; align-items: center; gap: 1.1rem; text-align: center; }
@@ -53,7 +49,7 @@
 /* kết quả */
 .results { margin-top: 2.6rem; }
 .group + .group { margin-top: 2.2rem; }
-.grid + .group, .grid-wrap + .group { margin-top: 2rem; }
+.vg + .group { margin-top: 2rem; }
 #g-maybe { margin-top: 1.8rem; }
 .g-head { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 1.1rem; }
 .g-title { margin: 0; font-size: clamp(2.3rem, 9vw, 3.3rem); line-height: 1.1; }
@@ -61,20 +57,30 @@
 .g-empty { margin: 0 auto 1rem; max-width: 30em; text-align: center; font-family: var(--serif); font-weight: 500; font-size: 1.25rem; color: var(--ink-soft); line-height: 1.5; }
 .trunc { margin: 1.2rem auto 0; max-width: 34em; text-align: center; color: var(--warn); font-size: .9rem; }
 
-.grid { column-count: 2; column-gap: 10px; margin-inline: auto; }
-.grid[data-n="1"] { column-count: 1; max-width: 460px; }
-@media (min-width: 640px) { .grid { column-count: 3; column-gap: 14px; } .grid[data-n="2"] { column-count: 2; max-width: 720px; } .grid[data-n="1"] { column-count: 1; } }
-@media (min-width: 1000px) { .grid { column-count: 4; } .grid[data-n="3"] { column-count: 3; max-width: 1000px; } .grid[data-n="2"] { column-count: 2; max-width: 720px; } .grid[data-n="1"] { column-count: 1; } }
-.tile { position: relative; display: block; width: 100%; margin: 0 0 10px; padding: 4px; break-inside: avoid; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--paper); cursor: zoom-in;
-  box-shadow: 0 6px 18px rgba(89, 71, 63, .09); transition: transform .35s var(--ease-out), box-shadow .35s; }
-@media (min-width: 640px) { .tile { margin-bottom: 14px; } }
-.tile:hover { transform: translateY(-3px); box-shadow: 0 14px 30px rgba(89, 71, 63, .16); }
+
+/* ---- thư viện: hàng ảnh căn đều (tính bằng JS), chỉ dựng các hàng gần màn hình ---- */
+.all { min-height: 40vh; }
+.vg { position: relative; width: 100%; }
+.vrow { position: absolute; left: 0; width: 100%; display: flex; gap: 4px; }
+@media (min-width: 500px) { .vrow { gap: 6px; } }
+@media (min-width: 900px) { .vrow { gap: 8px; } }
+.tile { position: relative; flex: none; display: block; height: 100%; padding: 0; overflow: hidden; border: 0; border-radius: 6px; background: linear-gradient(135deg, var(--rose-pale), #fbe9df); cursor: zoom-in; -webkit-tap-highlight-color: transparent; transition: transform .3s var(--ease-out), box-shadow .3s; }
+@media (min-width: 900px) { .tile { border-radius: 8px; } .tile:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(89, 71, 63, .2); z-index: 1; } }
 .tile:active { transform: scale(.985); }
-.tile-in { position: relative; display: block; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg, var(--rose-pale), #fbe9df); line-height: 0; }
-.tile-in.bad::after { content: "Ảnh chưa tải được"; position: absolute; inset: 0; display: grid; place-items: center; padding: .5rem; text-align: center; font-family: var(--serif); font-weight: 500; font-size: 1rem; line-height: 1.3; color: var(--ink-soft); }
-.tile-in.bad img { display: none; }
-.tile img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .6s var(--ease-out); }
+.tile img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s ease-out; }
 .tile img.on { opacity: 1; }
+.tile.bad::after { content: "Chưa tải được"; position: absolute; inset: 0; display: grid; place-items: center; padding: .4rem; text-align: center; font-family: var(--serif); font-weight: 500; font-size: .95rem; color: var(--ink-soft); }
+.tile.bad img { display: none; }
+.skeleton { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.skeleton i { aspect-ratio: 3 / 2; border-radius: 6px; background: linear-gradient(135deg, var(--rose-pale), #fbe9df); animation: pulse 1.6s ease-in-out infinite alternate; }
+.skeleton i:nth-child(2n) { animation-delay: .25s; aspect-ratio: 3 / 4; }
+@keyframes pulse { from { opacity: .45; } to { opacity: .9; } }
+
+/* nút nổi (điện thoại: với tới bằng ngón cái) */
+.pill { position: fixed; z-index: 50; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); translate: -50% 0; animation: rise .35s var(--ease-out); }
+.pill .btn { min-height: 44px; padding-inline: 1.3rem; box-shadow: 0 10px 28px rgba(89, 71, 63, .3); white-space: nowrap; }
+body.lb-open .pill { display: none; }
+
 
 .toggle { max-width: 440px; margin-inline: auto; display: flex; align-items: center; justify-content: center; gap: .6rem; width: 100%; min-height: 56px; padding: .6rem 1rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--peach-ink); cursor: pointer; transition: background .25s; }
 .toggle:hover { background: rgba(239, 153, 144, .12); }
@@ -85,7 +91,7 @@
 .hint { margin: 1.1rem auto 1.1rem; max-width: 30em; text-align: center; font-family: var(--serif); font-weight: 500; font-size: 1.1rem; color: var(--ink-soft); line-height: 1.5; }
 #maybe-body:not([hidden]) { animation: rise .5s var(--ease-out); }
 
-.foot { max-width: 85%; margin: 3.4rem auto 0; padding-bottom: 4.5rem; text-align: center; color: var(--gold-ink); font-family: var(--ui); font-size: .7rem; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; }
+.foot { max-width: 85%; margin: 2.6rem auto 0; padding-bottom: 5.5rem; text-align: center; color: var(--gold-ink); font-family: var(--ui); font-size: .7rem; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; }
 .foot p { margin: 0; }
 .foot .date { white-space: nowrap; }
 @media (max-width: 560px) { .foot span { display: block; } .foot .dot { display: none; } .foot .date { margin-top: .35rem; } }
@@ -131,3 +137,16 @@ body.lb-open { overflow: hidden; }
 
 @media (max-width: 360px) { .foot { letter-spacing: .16em; } .eyebrow { letter-spacing: .2em; } }
 @media (max-width: 420px) { .page { padding-inline: 1rem; } .stage { padding-inline: 1rem; } }
+
+/* tìm xong: thẻ gọn lại, ảnh selfie nhỏ cạnh lời nhắn */
+.stage { scroll-margin-top: 1rem; }
+.stage.is-done { padding: 1rem 1.1rem; }
+.stage.is-done .work { flex-direction: row; align-items: center; gap: 1rem; text-align: left; }
+.stage.is-done .selfie { flex: none; }
+.stage.is-done .selfie img { max-height: 96px; min-width: 64px; }
+.stage.is-done .status { flex: 1; min-width: 0; }
+.stage.is-done .s-title { font-size: clamp(1.6rem, 6vw, 2rem); }
+.stage.is-done .s-text { margin-top: .1rem; font-size: 1.05rem; line-height: 1.35; }
+.stage.is-done .s-actions { justify-content: flex-start; margin-top: .7rem; gap: .5rem; }
+.stage.is-done .s-actions .btn { min-height: 40px; padding: .4rem 1rem; font-size: .68rem; }
+.results { scroll-margin-top: 1rem; }

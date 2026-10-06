@@ -1,51 +1,39 @@
-"""Chỉ dùng khi phát triển: lái trình duyệt thật qua đúng giao diện mới (tải lên → Xử lý → selfie → lưới kết quả →
-lightbox → Lưu ảnh), chụp màn hình từng bước, kiểm không có request nào ra ngoài localhost và đo RSS đỉnh của server.
+"""Chỉ dùng khi phát triển: lái trình duyệt thật qua giao diện album mới (mở thẳng thư viện → cuộn hết → lightbox →
+tìm bằng selfie → quay lại tất cả → Lưu ảnh), chụp màn hình từng bước và kiểm các điều bất biến.
 
-  python dev/e2e.py --photos f1.jpg f2.jpg ... --selfie s.jpg --out /tmp/shots [--url http://127.0.0.1:8000] [--pid PID]
+  # với máy chủ giả (dev/mock_gallery.py --admin-token secret):
+  python dev/e2e.py --url http://localhost:8820 --selfie /tmp/album-test/photos/wedding_couple.jpg --out /tmp/album-e/shots --mock --manage-token secret
+  # với backend thật (đã có ảnh được xử lý): bỏ --mock; thêm --photos f1.jpg ... nếu muốn tải lên + Xử lý trước
 
-Thoát mã ≠ 0 nếu một bước hỏng. Ảnh chụp có thể chứa ảnh khách: .gitignore đã loại *.png.
+--browser chromium|webkit (zoom bằng hai ngón chỉ chạy ở chromium). Thoát mã ≠ 0 nếu một bước hỏng. Ảnh chụp có thể chứa ảnh khách: .gitignore đã loại *.png.
 """
 import argparse
+import json
 import os
-import subprocess
 import sys
-import threading
-import time
+import urllib.request
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--url", default="http://127.0.0.1:8000")
-ap.add_argument("--photos", nargs="+", required=True)
+ap.add_argument("--url", default="http://localhost:8820")
 ap.add_argument("--selfie", required=True)
 ap.add_argument("--out", required=True)
-ap.add_argument("--pid", type=int, help="PID server để đo RSS đỉnh khi xử lý")
-ap.add_argument("--reduced-motion", action="store_true", help="chạy với prefers-reduced-motion: reduce")
+ap.add_argument("--photos", nargs="*", help="tải lên + Xử lý trước (backend thật, thư mục dữ liệu trống)")
+ap.add_argument("--mock", action="store_true", help="đang chạy dev/mock_gallery.py: kiểm thêm log của 'CDN', đường lùi và /manage có mã")
+ap.add_argument("--manage-token", default="", help="mock chạy với --admin-token này: thử ô nhập mã ở /manage")
+ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit"])
+ap.add_argument("--reduced-motion", action="store_true")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
-shot = lambda pg, n: pg.screenshot(path=os.path.join(a.out, n), full_page=True)
-host = urlparse(a.url).hostname
-
-peak = [0.0]
-stop = threading.Event()
-external = []
-
-
-def sample():
-    while not stop.is_set():
-        r = subprocess.run(["ps", "-o", "rss=", "-p", str(a.pid)], capture_output=True, text=True).stdout.strip()
-        if r:
-            peak[0] = max(peak[0], int(r) / 1024)
-        time.sleep(0.2)
-
-
-def rss():
-    return int(subprocess.run(["ps", "-o", "rss=", "-p", str(a.pid)], capture_output=True, text=True).stdout) / 1024
-
-
-def watch(ctx):
-    ctx.on("request", lambda r: external.append(r.url) if urlparse(r.url).hostname not in (host, "localhost", "127.0.0.1") and not r.url.startswith(("data:", "blob:")) else None)
+APP = urlparse(a.url)
+APP_ORIGIN = f"{APP.scheme}://{APP.netloc}"
+webkit = a.browser == "webkit"
+tag = "" if not webkit else "wk-"
+shot = lambda pg, n, full=False: pg.screenshot(path=os.path.join(a.out, tag + n), full_page=full)
+external, selfie_posts = [], []
+allowed = {APP.netloc}
 
 
 def check(cond, msg):
@@ -54,209 +42,368 @@ def check(cond, msg):
         sys.exit(1)
 
 
+def watch(ctx):
+    def on_req(r):
+        u = urlparse(r.url)
+        if r.url.startswith(("data:", "blob:")):
+            return
+        external.append(r.url)  # lọc ở cuối: nguồn gốc CDN chỉ biết sau khi manifest về
+        try:
+            body = r.post_data_buffer  # thân Blob có thể không đọc được ở vài trình duyệt; khi đọc được thì kiểm luôn
+        except Exception:
+            body = None
+        if r.method in ("POST", "PUT", "PATCH") or (body and len(body) > 100):  # mọi request mang thân (selfie/ảnh tải lên): chỉ được tới đúng nguồn gốc của trang
+            check(f"{u.scheme}://{u.netloc}" == APP_ORIGIN, "request có thân (selfie) gửi tới nguồn gốc khác ứng dụng: " + r.url)
+        if r.method == "POST" and u.path == "/api/search":
+            selfie_posts.append(r.url)
+            check(f"{u.scheme}://{u.netloc}" == APP_ORIGIN and r.url == APP_ORIGIN + "/api/search", "POST /api/search phải là đường dẫn tương đối cùng nguồn gốc: " + r.url)
+    ctx.on("request", on_req)
+
+
+def mock_log():
+    with urllib.request.urlopen(a.url + "/__mock/log") as f:
+        return json.load(f)
+
+
+def vis_tile(pg, root):
+    """(chỉ số, x, y) của một ô ảnh đang nằm trọn trong màn hình"""
+    return pg.evaluate("""root => { const vh = innerHeight;
+      for (const b of document.querySelectorAll(root + ' .tile')) { const r = b.getBoundingClientRect();
+        if (r.top > 70 && r.bottom < vh - 70 && r.left >= 0) return [+b.dataset.i, r.left + r.width / 2, r.top + r.height / 2]; } return null; }""", root)
+
+
+def settle(pg, root="#vg-all", timeout=30000):
+    """mọi ô đang nhìn thấy đã có ảnh"""
+    pg.wait_for_function("""root => { const vh = innerHeight; let n = 0;
+      for (const b of document.querySelectorAll(root + ' .tile')) { const r = b.getBoundingClientRect();
+        if (r.bottom > 0 && r.top < vh) { n++; const i = b.firstChild; if (!(i.complete && i.naturalWidth > 0) && !b.classList.contains('bad')) return false; } }
+      return n > 0; }""", arg=root, timeout=timeout)
+
+
+SHARE_STUB = """
+  window.__shares = []; window.__deny = 0; window.__clickTask = false;
+  document.addEventListener('click', () => { window.__clickTask = true; setTimeout(() => window.__clickTask = false, 0); }, true);
+  Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
+  Object.defineProperty(navigator, 'share', { configurable: true, value: d => {
+    window.__shares.push({ sync: window.__clickTask, n: d.files.length, type: d.files[0].type, size: d.files[0].size });
+    if (window.__deny > 0) { window.__deny--; return Promise.reject(new DOMException('x', 'NotAllowedError')); }
+    return new Promise(r => setTimeout(r, 400)); } });
+"""
+
 with sync_playwright() as p:
-    b = p.chromium.launch()
+    b = getattr(p, a.browser).launch()
     rm = "reduce" if a.reduced_motion else "no-preference"
 
-    # ---- chủ nhà (desktop): tải lên → Xử lý ----
-    ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm, accept_downloads=True)
-    watch(ctx)
-    pg = ctx.new_page()
-    pg.goto(a.url + "/manage")
-    pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
-    print("đĩa:", pg.inner_text("#disk"))
-    shot(pg, "1-manage-empty.png")
-    pg.set_input_files("#pick", a.photos)
-    pg.wait_for_function("document.getElementById('upsum').textContent.includes('Hoàn tất')", timeout=300000)
-    pg.wait_for_function("document.getElementById('n-orig').textContent !== '0' && document.getElementById('n-orig').textContent !== '–'")
-    shot(pg, "2-upload-done.png")
-    print("upload:", pg.inner_text("#upsum"), "|", pg.inner_text("#upchips").replace("\n", ", "))
-    if a.pid:
-        print(f"RSS trước khi xử lý: {rss():.0f} MB")
-        threading.Thread(target=sample, daemon=True).start()
-    pg.click("#proc")
-    pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Đang xử lý')")
-    pg.wait_for_timeout(1500)
-    shot(pg, "3-process-running.png")
-    pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Hoàn tất')", timeout=900000)
-    stop.set()
-    shot(pg, "4-process-done.png")
-    print("process:", pg.inner_text("#ptiles").replace("\n", " "), "|", pg.inner_text("#pinfo"))
-    if a.pid:
-        print(f"RSS đỉnh khi xử lý: {peak[0]:.0f} MB; sau xử lý: {rss():.0f} MB")
-    ctx.close()
+    # ---------- (tuỳ chọn) chủ nhà tải ảnh lên + Xử lý trên backend thật ----------
+    if a.photos:
+        ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm)
+        watch(ctx)
+        pg = ctx.new_page()
+        pg.goto(a.url + "/manage")
+        pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+        pg.set_input_files("#pick", a.photos)
+        pg.wait_for_function("document.getElementById('upsum').textContent.includes('Hoàn tất')", timeout=300000)
+        pg.click("#proc")
+        pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Hoàn tất')", timeout=900000)
+        print("đã tải lên + xử lý:", pg.inner_text("#ptiles").replace("\n", " "))
+        ctx.close()
 
-    # ---- khách (điện thoại): selfie → lưới → lightbox (zoom, chạm vùng tối) → chia sẻ/Lưu ảnh ----
+    # ---------- khách (điện thoại) ----------
     ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True,
                         reduced_motion=rm, accept_downloads=True)
     watch(ctx)
-    # navigator.share giả: ghi lại việc có được gọi ĐỒNG BỘ trong cú bấm hay không (cờ __clickTask chỉ còn đúng trong task của click)
-    ctx.add_init_script("""
-      window.__shares = []; window.__deny = 0; window.__clickTask = false;
-      document.addEventListener('click', () => { window.__clickTask = true; setTimeout(() => window.__clickTask = false, 0); }, true);
-      Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
-      Object.defineProperty(navigator, 'share', { configurable: true, value: d => {
-        window.__shares.push({ sync: window.__clickTask, n: d.files.length, type: d.files[0].type, size: d.files[0].size });
-        if (window.__deny > 0) { window.__deny--; return Promise.reject(new DOMException('x', 'NotAllowedError')); }
-        return new Promise(r => setTimeout(r, 400)); } });
-    """)
-    originals = []
-    ctx.on("request", lambda r: originals.append(r.url) if "/originals/" in r.url else None)
+    ctx.add_init_script(SHARE_STUB)
+    reqs = []
+    ctx.on("request", lambda r: reqs.append((r.method, r.url)))
     pg = ctx.new_page()
+    errors = []
+    pg.on("pageerror", lambda e: errors.append(str(e)))
+    pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    if a.mock:
+        urllib.request.urlopen(urllib.request.Request(a.url + "/__mock/reset", method="POST", data=b""))
+
+    # 1. mở là thấy thư viện, chưa cần selfie
     pg.goto(a.url + "/")
-    pg.wait_for_selector("#st-idle")
     html = pg.content()
-    check("/static/guest.js?v=" in html and "__V__" not in html, "URL tĩnh phải có ?v=<mã nội dung>")
+    check("/static/guest.js?v=" in html and "__V__" not in html and "__CDN_PRECONNECT__" not in html.replace("<!--__CDN_PRECONNECT__-->", ""), "URL tĩnh phải có ?v=<mã nội dung>")
     check(pg.evaluate("matchMedia('(pointer: coarse)').matches"), "giả lập điện thoại phải là pointer: coarse")
-    check(pg.locator("label:has(#in-cam)").is_visible(), "nút Chụp ảnh selfie phải hiện trên điện thoại")
-    check(pg.get_attribute("#in-cam", "capture") == "user", "input selfie phải có capture=user")
-    pg.wait_for_timeout(1300 if not a.reduced_motion else 0)
-    pg.screenshot(path=os.path.join(a.out, "5-guest-idle.png"))  # chỉ viewport: full_page làm mất giả lập cảm ứng (pointer: coarse) của playwright
-    pg.set_input_files("#in-lib-touch", a.selfie)
-    pg.wait_for_selector("#results:not([hidden])", timeout=60000)
-    pg.wait_for_selector("#grid-main .tile img.on, #grid-maybe .tile img.on", timeout=30000)
-    pg.wait_for_load_state("networkidle")
-    n = pg.locator(".tile").count()
-    check(n > 1, "phải có ít nhất 2 ảnh kết quả")
-    check("điểm" not in pg.inner_text("#results").lower() and not pg.locator(".score").count(), "khách không được thấy điểm")
-    print("kết quả:", pg.inner_text("#s-title"), "|", pg.inner_text("#g-main-n"), "|", n, "ô ảnh")
-    pg.screenshot(path=os.path.join(a.out, "6-guest-results.png"))
-    tile = pg.locator("#grid-main .tile, #grid-maybe .tile").first
+    pg.wait_for_selector("#vg-all .tile img.on", timeout=30000)
+    settle(pg)
+    n_all = int(pg.inner_text("#count").split()[0].replace(".", ""))
+    check(n_all > 0, "phải có ảnh trong album")
+    check(pg.is_visible("#cta-find") and pg.text_content("#cta-find").strip() == "Tìm ảnh của bạn", "nút Tìm ảnh của bạn phải hiện ở đầu trang")
+    check(pg.text_content("h1").strip() == "Khắc Doãn & Đông Tiên", "đầu trang phải mang bộ nhận diện thiệp")
+    check(not [u for m, u in reqs if "/api/search" in u], "chưa chọn selfie thì không được gọi /api/search")
+    check(len([u for m, u in reqs if u.split("?")[0].endswith("/api/gallery")]) == 1, "manifest chỉ được tải 1 lần (bắt đầu từ <head>): %s" % [u for m, u in reqs if "/api/gallery" in u])
+    cdn = pg.evaluate("document.querySelector('link[rel=preconnect]') ? document.querySelector('link[rel=preconnect]').href.replace(/\\/$/, '') : ''")
+    cdn_img = pg.evaluate("document.querySelector('#vg-all .tile img').currentSrc")
+    if cdn:
+        allowed.add(urlparse(cdn).netloc)
+        check(cdn_img.startswith(cdn + "/i/"), "ảnh nhỏ phải đi từ CDN khi có: " + cdn_img)
+    first = pg.evaluate("document.querySelector('#vg-all .tile img').fetchPriority")
+    check(first == "high", "ảnh hàng đầu phải fetchpriority=high: " + first)
+    check(pg.evaluate("document.querySelector('#vg-all .tile img').decoding") == "async", "decoding=async")
+    check(pg.evaluate("[...document.querySelectorAll('#vg-all .tile img')].every(i => i.getAttribute('sizes') || !i.srcset)"), "srcset cần sizes")
+    pg.wait_for_timeout(1200 if not a.reduced_motion else 0)
+    shot(pg, "1-gallery-first-load.png")
+    print(f"thư viện: {n_all} ảnh, màn đầu đã đủ ảnh; ảnh nhỏ từ {cdn_img.split('/i/')[0] or 'cùng nguồn gốc'}")
+
+    # 2. cuộn hết toàn bộ ảnh
+    seen, max_dom, max_img = set(), 0, 0
+    total_h = pg.evaluate("document.documentElement.scrollHeight")
+    y, step, shot_mid = 0, pg.evaluate("innerHeight * 0.8"), False
+    while True:
+        pg.evaluate("y => scrollTo(0, y)", y)
+        pg.wait_for_timeout(35)
+        r = pg.evaluate("""() => { const vh = innerHeight, s = []; for (const b of document.querySelectorAll('#vg-all .tile')) { const q = b.getBoundingClientRect(); if (q.bottom > 0 && q.top < vh) s.push(+b.dataset.i); }
+          return { s, dom: document.querySelectorAll('#vg-all .tile').length, img: document.querySelectorAll('#vg-all .tile img[src]').length }; }""")
+        seen.update(r["s"]); max_dom = max(max_dom, r["dom"]); max_img = max(max_img, r["img"])
+        if not shot_mid and y > total_h * 0.4:
+            settle(pg); shot(pg, "2-gallery-mid-scroll.png"); shot_mid = True
+        if y >= total_h - pg.evaluate("innerHeight"):
+            break
+        y += step
+    settle(pg)
+    check(len(seen) == n_all, f"cuộn qua phải thấy đủ {n_all} ảnh, mới thấy {len(seen)}")
+    check(max_dom < 400, f"số ô trong DOM phải bị chặn, đang {max_dom}")
+    print(f"cuộn hết: thấy {len(seen)}/{n_all} ảnh, DOM tối đa {max_dom} ô, ô đang giữ ảnh tối đa {max_img}")
+    shot(pg, "3-gallery-bottom.png")
+    check(pg.is_visible("#pill") and pg.is_visible("#pill-find"), "nút nổi phải hiện khi đã cuộn qua đầu trang")
+    pg.evaluate("scrollTo(0, 0)")
+    pg.wait_for_function("document.getElementById('pill').hidden")
+    pg.evaluate("scrollTo(0, document.documentElement.scrollHeight * 0.3)")
+    settle(pg)
+
+    # 3. lightbox từ thư viện (chế độ cả album)
+    t = vis_tile(pg, "#vg-all")
+    check(t, "cần một ô nhìn thấy để mở")
+    idx = t[0]
+    originals_before = len([u for m, u in reqs if "/originals/" in u])
+    pg.touchscreen.tap(t[1], t[2])
+    pg.wait_for_selector("#lb:not([hidden])")
+    check(pg.text_content("#lb-count").replace(".", "").startswith(f"{idx + 1} /"), "đếm ảnh trong lightbox: " + pg.text_content("#lb-count"))
+    check(pg.text_content("#lb-count").endswith(pg.inner_text("#count").split()[0]), "lightbox đi qua cả album: " + pg.text_content("#lb-count"))
+    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+    check("-2000.webp" in pg.evaluate("document.getElementById('lb-img').currentSrc"), "lightbox dùng bản WebP 2000 px")
+    pg.wait_for_timeout(400 if not a.reduced_motion else 0)
+    shot(pg, "4-lightbox-from-gallery.png")
     zoom = lambda: float(pg.get_attribute("#lb", "data-zoom"))
     rect = lambda: pg.evaluate("(() => { const i = document.getElementById('lb-img'), b = i.getBoundingClientRect(); const k = Math.min(b.width / i.naturalWidth, b.height / i.naturalHeight); const w = i.naturalWidth * k, h = i.naturalHeight * k; return { l: b.left + (b.width - w) / 2, t: b.top + (b.height - h) / 2, w, h, bl: b.left, bt: b.top, bw: b.width, bh: b.height }; })()")
-
-    # -- lightbox: mở, mũi tên ẩn trên cảm ứng, zoom --
-    tile.click()
-    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
-    pg.wait_for_timeout(400 if not a.reduced_motion else 0)
-    print("lightbox:", pg.inner_text("#lb-count"), pg.eval_on_selector("#lb-img", "i => i.naturalWidth + 'x' + i.naturalHeight"))
-    check(not pg.is_visible("#lb-prev") and not pg.is_visible("#lb-next"), "mũi tên ‹ › phải ẩn trên cảm ứng")
-    check(pg.evaluate("getComputedStyle(document.getElementById('lb')).backgroundColor") == "rgb(38, 28, 24)", "nền lightbox phải đặc #261c18")
-    pg.screenshot(path=os.path.join(a.out, "7-guest-lightbox.png"))
     r = rect()
     cx, cy = r["l"] + r["w"] / 2, r["t"] + r["h"] / 2
-    check(abs(zoom() - 1) < 0.01, "ban đầu chưa zoom")
-    pg.touchscreen.tap(cx, cy)
-    pg.wait_for_timeout(60)
-    pg.touchscreen.tap(cx, cy)
+    pg.touchscreen.tap(cx, cy); pg.wait_for_timeout(60); pg.touchscreen.tap(cx, cy)
     pg.wait_for_function("parseFloat(document.getElementById('lb').dataset.zoom) > 2.4")
-    check(abs(zoom() - 2.5) < 0.05, "chạm đúp phải zoom ~2.5×, đang là %s" % zoom())
-    pg.wait_for_timeout(400)
-    pg.screenshot(path=os.path.join(a.out, "7b-guest-lightbox-zoomed.png"))
-    # vuốt ngang khi đang zoom: chỉ di chuyển ảnh, không đổi ảnh
-    y = r["t"] + r["h"] / 2
-    pg.mouse.move(300, y); pg.mouse.down(); pg.mouse.move(200, y, steps=6); pg.mouse.move(100, y, steps=6); pg.mouse.up()
-    pg.wait_for_timeout(100)
-    check(pg.inner_text("#lb-count").startswith("1 /"), "vuốt khi đang zoom không được đổi ảnh")
-    check(zoom() > 2.4, "vuốt khi đang zoom không được thoát zoom")
-    # vuốt xuống khi đang zoom: không đóng
-    pg.mouse.move(200, 300); pg.mouse.down(); pg.mouse.move(200, 420, steps=8); pg.mouse.move(200, 600, steps=8); pg.mouse.up()
-    pg.wait_for_timeout(200)
-    check(pg.is_visible("#lb"), "vuốt xuống khi đang zoom không được đóng")
-    # chạm đúp lần nữa: thu về
+    check(abs(zoom() - 2.5) < 0.05, "chạm đúp phải zoom ~2.5×")
     pg.touchscreen.tap(cx, cy); pg.wait_for_timeout(60); pg.touchscreen.tap(cx, cy)
     pg.wait_for_function("parseFloat(document.getElementById('lb').dataset.zoom) < 1.01")
-    # chụm hai ngón (CDP): phóng to quanh tâm
-    cdp = ctx.new_cdp_session(pg)
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": cx - 45, "y": cy, "id": 1}, {"x": cx + 45, "y": cy, "id": 2}]})
-    for k in range(1, 6):
-        d = 45 + 10 * k
-        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": cx - d, "y": cy, "id": 1}, {"x": cx + d, "y": cy, "id": 2}]})
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
-    pg.wait_for_timeout(100)
-    check(zoom() > 1.8, "chụm hai ngón phải zoom, đang là %s" % zoom())
-    print("zoom: chạm đúp 2.5×, chụm →", round(zoom(), 2), "; vuốt/vuốt xuống bị bỏ qua khi đang zoom")
-    # đổi ảnh bằng phím: zoom về 1 và sang ảnh 2
+    if not webkit:
+        cdp = ctx.new_cdp_session(pg)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": cx - 45, "y": cy, "id": 1}, {"x": cx + 45, "y": cy, "id": 2}]})
+        for k in range(1, 6):
+            d = 45 + 10 * k
+            cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": cx - d, "y": cy, "id": 1}, {"x": cx + d, "y": cy, "id": 2}]})
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        pg.wait_for_timeout(100)
+        check(zoom() > 1.8, "chụm hai ngón phải zoom, đang là %s" % zoom())
     pg.keyboard.press("ArrowRight")
-    pg.wait_for_function("document.getElementById('lb-count').textContent.startsWith('2 /')")
+    pg.wait_for_function(f"document.getElementById('lb-count').textContent.replace(/\\./g, '').startsWith('{idx + 2} /')")
     check(abs(zoom() - 1) < 0.01, "đổi ảnh phải đặt lại zoom")
-    # N1: chụm (về ~1×) trong vùng tối rồi nhấc từng ngón nhanh — không được tính là chạm vùng tối để đóng
-    r = rect(); y0 = r["t"] - 40
-    check(y0 > r["bt"] + 10, "cần vùng tối phía trên ảnh để thử chụm trong vùng tối")
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": cx - 45, "y": y0, "id": 1}, {"x": cx + 45, "y": y0, "id": 2}]})
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": cx - 46, "y": y0, "id": 1}, {"x": cx + 46, "y": y0, "id": 2}]})
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": [{"x": cx + 46, "y": y0, "id": 2}]})  # nhấc ngón 1, còn ngón 2
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
-    pg.wait_for_timeout(200)
-    check(pg.is_visible("#lb") and abs(zoom() - 1) < 0.01, "chụm trong vùng tối rồi nhấc ngón không được đóng lightbox")
-    print("chụm trong vùng tối + nhấc ngón: lightbox vẫn mở")
-    # chạm vào vùng tối quanh ảnh: đóng
-    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
-    r = rect()
-    pt = (r["bl"] + r["bw"] / 2, r["t"] - 12) if r["t"] - 12 > r["bt"] + 4 else ((r["l"] - 8, r["bt"] + r["bh"] / 2) if r["l"] - 8 > r["bl"] else (4, r["bt"] + r["bh"] / 2))
-    pg.touchscreen.tap(*pt)
-    pg.wait_for_selector("#lb", state="hidden", timeout=5000)
-    print("chạm vùng tối quanh ảnh tại", [round(v) for v in pt], "→ đã đóng")
+    # chế độ cả album: KHÔNG tải sẵn ảnh gốc cho nút Chia sẻ (1.900 ảnh gốc ~3 MB), chỉ tải khi bấm
+    pg.wait_for_function("document.getElementById('lb-share').offsetParent !== null")
+    pg.wait_for_timeout(2300)
+    check(len([u for m, u in reqs if "/originals/" in u]) == originals_before, "cả album: không được tải sẵn ảnh gốc: %s" % [u for m, u in reqs if "/originals/" in u])
+    pg.click("#lb-share")
+    pg.wait_for_function("document.getElementById('lb-share').textContent.trim() === 'Chia sẻ' || document.getElementById('lb-share').hasAttribute('aria-busy')")
+    pg.wait_for_function("window.__shares.length === 0 && document.getElementById('lb-share').textContent.trim() === 'Chia sẻ'", timeout=30000)
+    check(len([u for m, u in reqs if "/originals/" in u]) == originals_before + 1, "bấm Chia sẻ ở cả album: tải ảnh gốc lúc bấm")
+    pg.click("#lb-share")  # lần hai: file đã sẵn → chia sẻ đồng bộ trong cú bấm
+    sh = pg.evaluate("window.__shares")
+    check(len(sh) == 1 and sh[0]["sync"] and sh[0]["size"] > 10000, "bấm lần hai phải gọi share đồng bộ: %s" % sh)
+    print("lightbox (cả album): đếm đúng, bản 2000 WebP, zoom, không tải sẵn ảnh gốc, chia sẻ khi bấm: OK")
+    # đóng: focus quay về đúng ô (dù đã lướt qua ảnh khác); Tab bị giữ trong lightbox
+    if not webkit:  # Safari mặc định không cho Tab dừng ở nút/liên kết: kiểm Tab chỉ ở Chromium
+        pg.keyboard.press("Tab"); pg.keyboard.press("Tab")
+        check(pg.evaluate("document.getElementById('lb').contains(document.activeElement)"), "Tab phải ở trong lightbox")
+    pg.keyboard.press("Escape")
+    pg.wait_for_selector("#lb", state="hidden")
+    check(webkit or pg.evaluate("document.activeElement && document.activeElement.classList.contains('tile') ? +document.activeElement.dataset.i : -1") == idx + 1, "đóng lightbox: focus về ô của ảnh đang xem")
+    y_before = pg.evaluate("scrollY")
 
-    # -- chia sẻ: mạng chậm, gọi navigator.share đồng bộ trong cú bấm khi file đã sẵn --
-    cdp = ctx.new_cdp_session(pg)
-    cdp.send("Network.enable")
-    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})  # các bước zoom ở trên đã kéo ảnh gốc vào cache; thử tải thật
-    cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 30, "downloadThroughput": 500_000, "uploadThroughput": -1})
-    originals.clear()
-    tile.click()
-    pg.wait_for_selector("#lb-share", state="visible", timeout=10000)
-    pg.wait_for_function("document.getElementById('lb-share').hasAttribute('aria-busy')")
-    busy = pg.text_content("#lb-share").strip()
-    check("Đang chuẩn bị" in busy, "nút Chia sẻ phải hiện tiến độ khi chưa có file: %r" % busy)
-    pg.click("#lb-share")  # chưa sẵn sàng: không được gọi share
-    check(pg.evaluate("window.__shares.length") == 0, "chưa tải xong thì không được gọi navigator.share")
-    pg.wait_for_function("document.getElementById('lb-share').textContent.trim() === 'Chia sẻ'", timeout=60000)
-    cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
-    check(len([u for u in originals if "/originals/" in u]) == 1, "chỉ tải trước ảnh gốc của ảnh đang xem: %s" % originals)
-    pg.evaluate("window.__deny = 1")
+    # 4. tìm bằng selfie → thu hẹp
+    pg.set_input_files("#in-file", a.selfie)
+    pg.wait_for_selector("#results:not([hidden])", timeout=60000)
+    pg.wait_for_selector("#vg-main .tile img.on", timeout=30000)
+    pg.wait_for_timeout(500)
+    check(pg.is_hidden("#all"), "tìm selfie: thư viện đầy đủ phải ẩn (thu hẹp)")
+    nm = int(pg.text_content("#g-main-n").split()[0])
+    check(nm > 1, "phải có ảnh trong 'Ảnh của bạn'")
+    check(pg.get_attribute("#maybe-toggle", "aria-expanded") == "false" if pg.is_visible("#g-maybe") else True, "'Có thể cũng là bạn' mặc định thu gọn")
+    check("điểm" not in pg.inner_text("#results").lower() and not pg.locator(".score").count(), "khách không được thấy điểm")
+    print("selfie:", pg.inner_text("#s-title"), "|", pg.inner_text("#g-main-n"), "|", pg.inner_text("#maybe-n") if pg.is_visible("#maybe-n") else "(không có nhóm 'có thể')")
+    pg.wait_for_timeout(900)
+    shot(pg, "5-selfie-results.png")
+    if pg.is_visible("#g-maybe"):
+        pg.click("#maybe-toggle")
+        check(pg.get_attribute("#maybe-toggle", "aria-expanded") == "true" and pg.locator("#vg-maybe .tile").count() > 0, "mở nhóm 'Có thể cũng là bạn'")
+        pg.locator("#g-maybe").scroll_into_view_if_needed()
+        pg.wait_for_selector("#vg-maybe .tile img.on", timeout=20000)
+        shot(pg, "5b-selfie-maybe-open.png")
+        pg.click("#maybe-toggle")
+    # ảnh kết quả đi đúng URL v/w/h/c như thư viện
+    pg.evaluate("document.getElementById('results').scrollIntoView()")
+    pg.wait_for_timeout(300)
+    settle(pg, "#vg-main")
+    src = pg.evaluate("[...document.querySelectorAll('#vg-main .tile img[src]')].map(i => i.currentSrc)[0] || ''")
+    check("/i/" in src and ("-480.webp" in src or "-240.webp" in src), "kết quả dùng URL /i/ có v: " + src)
+    t = vis_tile(pg, "#vg-main")
+    pg.touchscreen.tap(t[1], t[2])
+    pg.wait_for_selector("#lb:not([hidden])")
+    check(pg.text_content("#lb-count").endswith(f"/ {nm}"), "lightbox của kết quả đi qua đúng tập kết quả: " + pg.text_content("#lb-count"))
+    n0 = len([u for m, u in reqs if "/originals/" in u])
+    pg.wait_for_timeout(2400)  # SHARE_PREFETCH_MS = 1500
+    check(len([u for m, u in reqs if "/originals/" in u]) == n0 + 1, "ảnh của bạn: tải sẵn đúng 1 ảnh gốc (ảnh đang xem)")
+    pg.wait_for_function("document.getElementById('lb-share').textContent.trim() === 'Chia sẻ'", timeout=30000)
+    pg.evaluate("window.__deny = 0")
     pg.click("#lb-share")
     sh = pg.evaluate("window.__shares")
-    check(len(sh) == 1 and sh[0]["sync"] and sh[0]["size"] > 10000 and sh[0]["type"] == "image/jpeg", "share phải được gọi đồng bộ với file đã sẵn: %s" % sh)
-    pg.wait_for_function("document.getElementById('lb-share').textContent.includes('Bấm lần nữa')")
-    pg.click("#lb-share")  # gọi lại sau NotAllowedError: vẫn đồng bộ, dùng lại file đã giữ
-    sh = pg.evaluate("window.__shares")
-    check(len(sh) == 2 and sh[1]["sync"], "bấm lần nữa phải chia sẻ ngay: %s" % sh)
-    pg.evaluate("document.getElementById('lb-share').click()")  # đang chia sẻ dở: bấm thêm bị bỏ qua
-    check(len(pg.evaluate("window.__shares")) == 2, "đang chia sẻ dở mà bấm thêm thì không được gọi lại")
+    check(len(sh) == 2 and sh[1]["sync"], "ảnh của bạn: share đồng bộ khi file đã tải sẵn: %s" % sh)
     pg.wait_for_timeout(600)
-    pg.evaluate("document.getElementById('lb-share').click(); document.getElementById('lb-share').click()")  # bấm đúp
-    check(len(pg.evaluate("window.__shares")) == 3, "bấm đúp phải chỉ gọi share một lần")
-    print("chia sẻ: tiến độ hiện, share gọi đồng bộ, NotAllowedError → 'Bấm lần nữa', chống bấm đúp: OK")
-    pg.wait_for_function("document.getElementById('lb-share').textContent.trim() === 'Chia sẻ'")
+    shot(pg, "6-lightbox-from-results.png")
+    pg.keyboard.press("Escape"); pg.wait_for_selector("#lb", state="hidden")
+    log_posts = [u for m, u in reqs if m == "POST"]
+    check(all(urlparse(u).netloc == APP.netloc and urlparse(u).path == "/api/search" for u in log_posts), "mọi POST của khách chỉ tới /api/search cùng nguồn gốc: %s" % log_posts)
+    check(selfie_posts and all(u == APP_ORIGIN + "/api/search" for u in selfie_posts), "selfie phải được gửi tới /api/search cùng nguồn gốc: %s" % selfie_posts)
+    if a.mock:
+        lg = mock_log()
+        check(all(m == "GET" and path.startswith("/i/") for m, path in lg["cdn"]), "'CDN' chỉ được thấy GET /i/*: %s" % [x for x in lg["cdn"] if not (x[0] == "GET" and x[1].startswith("/i/"))][:5])
+        check(all(k != "cdn" for k, path, n in lg["post"]), "không POST nào tới CDN")
+        sp = [x for x in lg["post"] if x[1] == "/api/search"]
+        check(sp and all(x[0] == "app" and x[2] > 100 for x in sp), "selfie chỉ tới cổng ứng dụng: %s" % sp)
+        print(f"selfie: {len(sp)} POST /api/search tới cổng ứng dụng, 0 POST và {len(lg['cdn'])} GET /i/ tại 'CDN'")
 
+    # 5. quay lại tất cả
+    pg.evaluate("scrollTo(0, 0)")
+    pg.wait_for_function("!document.getElementById('pill').hidden || true")
+    pg.click("#b-all")
+    pg.wait_for_selector("#all:not([hidden])")
+    check(pg.is_hidden("#results") and pg.is_hidden("#finder"), "Xem tất cả ảnh: kết quả phải ẩn")
+    settle(pg)
+    check(abs(pg.evaluate("scrollY") - y_before) < 3, "quay lại tất cả: về đúng chỗ đang xem (%s vs %s)" % (pg.evaluate("scrollY"), y_before))
+    check(pg.evaluate("document.querySelectorAll('#vg-all .tile').length") > 5 and pg.evaluate("document.querySelectorAll('#vg-main .tile').length") == 0, "dọn kết quả khi về tất cả")
+    shot(pg, "7-back-to-all.png")
+    print("Xem tất cả ảnh: về đúng vị trí cuộn, kết quả đã dọn")
+
+    # 6. Lưu ảnh (tải ảnh gốc cùng nguồn gốc)
+    t = vis_tile(pg, "#vg-all")
+    pg.touchscreen.tap(t[1], t[2])
+    pg.wait_for_selector("#lb:not([hidden])")
     with pg.expect_download(timeout=30000) as dl:
         pg.click("#lb-save")
     d = dl.value
     size = os.path.getsize(d.path())
     check(size > 10000, "file tải về phải là ảnh gốc")
-    print("tải về:", d.suggested_filename, size, "byte")
+    print("Lưu ảnh:", d.suggested_filename, size, "byte")
     pg.keyboard.press("Escape")
-    pg.wait_for_selector("#lb", state="hidden")
-
-    # -- album trống: tiêu đề phải là "đang được cập nhật", không phải "chưa tìm thấy" --
-    pg.goto(a.url + "/")
-    pg.route("**/api/search", lambda r: r.fulfill(status=200, content_type="application/json", body='{"query":{"n_faces":1,"n_ignored":0,"bbox":[10,10,100,100],"width":200,"height":200,"det_score":0.9},"results":[],"total_matches":0,"truncated":false,"indexed_photos":0,"indexed_faces":0,"timing_ms":{"total":1}}'))
-    pg.set_input_files("#in-lib-touch", a.selfie)
-    pg.wait_for_function("document.getElementById('s-title').textContent.length > 0 && !document.getElementById('s-msg').hidden")
-    check(pg.inner_text("#s-title") == "Album đang được cập nhật", "album trống: %r" % pg.inner_text("#s-title"))
-    print("album trống:", pg.inner_text("#s-title"))
+    check(not errors, "lỗi JS/console: %s" % errors)
     ctx.close()
 
-    # -- desktop: lightbox có mũi tên + nhấp đúp --
+    # ---------- đường lùi ảnh: CDN hỏng → /i/ cùng nguồn gốc → /thumbs ----------
+    if cdn:
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        got = []
+        ctx.on("response", lambda r: got.append((r.url, r.status)))
+        ctx.route(cdn + "/**", lambda r: r.abort())
+        pg = ctx.new_page(); pg.goto(a.url + "/")
+        pg.wait_for_selector("#vg-all .tile img.on", timeout=30000); settle(pg)
+        srcs = pg.evaluate("[...document.querySelectorAll('#vg-all .tile img[src]')].filter(i => i.complete && i.naturalWidth > 0).map(i => i.currentSrc)")
+        check(srcs and all(s.startswith(APP_ORIGIN + "/i/") or "/thumbs/" in s for s in srcs), "CDN hỏng: ảnh phải lùi về /i/ cùng nguồn gốc: %s" % srcs[:3])
+        print(f"CDN hỏng hoàn toàn: {len(srcs)} ảnh nhìn thấy đều lùi về {APP_ORIGIN}/i/ (hoặc /thumbs)")
+        ctx.close()
+    ctx = b.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+    ctx.route("**/i/**", lambda r: r.abort())
+    pg = ctx.new_page(); pg.goto(a.url + "/")
+    pg.wait_for_selector("#vg-all .tile img.on", timeout=30000); settle(pg)
+    srcs = pg.evaluate("[...document.querySelectorAll('#vg-all .tile img[src]')].filter(i => i.complete && i.naturalWidth > 0).map(i => i.currentSrc)")
+    check(srcs and all("/thumbs/" in s for s in srcs), "/i/ hỏng hẳn: phải lùi về /thumbs: %s" % srcs[:3])
+    pg.touchscreen.tap(*vis_tile(pg, "#vg-all")[1:])
+    pg.wait_for_function("document.getElementById('lb-img').currentSrc.includes('/previews/') && document.getElementById('lb-img').naturalWidth > 500", timeout=20000)
+    print(f"/i/ hỏng hẳn: ảnh nhỏ → /thumbs ({len(srcs)}), lightbox → /previews")
+    ctx.close()
+
+    # ---------- album trống ----------
+    ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm)
+    ctx.route("**/api/gallery", lambda r: r.fulfill(status=200, content_type="application/json", body='{"mv":"0","cdn":"","dv":2,"photos":[]}'))
+    pg = ctx.new_page(); pg.goto(a.url + "/")
+    pg.wait_for_function("document.getElementById('empty-t').textContent.length > 0")
+    check(pg.inner_text("#empty-t") == "Album đang được cập nhật" and pg.is_hidden("#cta-row") and pg.locator(".tile").count() == 0, "album trống: lời nhắn ấm áp, không nút selfie")
+    pg.wait_for_timeout(900 if not a.reduced_motion else 0)
+    shot(pg, "8-empty-gallery.png")
+    print("album trống:", pg.inner_text("#empty-t"))
+    ctx.close()
+
+    # ---------- desktop ----------
     ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm)
     watch(ctx)
-    pg = ctx.new_page()
-    pg.goto(a.url + "/")
-    pg.set_input_files("#in-lib", a.selfie)
-    pg.wait_for_selector("#grid-main .tile img.on, #grid-maybe .tile img.on", timeout=60000)
-    pg.locator(".tile").first.click()
-    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+    pg = ctx.new_page(); pg.goto(a.url + "/")
+    pg.wait_for_selector("#vg-all .tile img.on", timeout=30000); settle(pg)
+    pg.wait_for_timeout(1000 if not a.reduced_motion else 0)
+    shot(pg, "d1-gallery-first-load.png")
+    pg.evaluate("scrollTo(0, document.documentElement.scrollHeight * 0.45)"); settle(pg)
+    shot(pg, "d2-gallery-mid-scroll.png")
+    # bàn phím: Tab tới nút Tìm ảnh rồi vào ô ảnh đầu; Enter mở lightbox; Escape trả focus
+    pg.evaluate("scrollTo(0, 0)")
+    if not webkit:
+        pg.wait_for_selector('#vg-all .tile[data-i="0"]')
+        pg.focus("#in-file")
+        pg.keyboard.press("Tab")
+        check(pg.evaluate("document.activeElement.classList.contains('tile') && document.activeElement.dataset.i") == "0", "Tab từ nút Tìm ảnh phải vào ô ảnh đầu tiên")
+        for _ in range(5):
+            pg.keyboard.press("Tab")
+        check(pg.evaluate("document.activeElement.dataset.i") == "5", "Tab đi tuần tự qua các ô")
+    else:
+        pg.locator('#vg-all .tile[data-i="5"]').focus()
+    pg.keyboard.press("Enter")
+    pg.wait_for_selector("#lb:not([hidden])")
     check(pg.is_visible("#lb-prev") and pg.is_visible("#lb-next"), "desktop phải có mũi tên")
-    pg.screenshot(path=os.path.join(a.out, "8-desktop-lightbox.png"))
-    r = pg.evaluate("(() => { const b = document.getElementById('lb-img').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()")
-    pg.mouse.dblclick(*r)
-    pg.wait_for_function("parseFloat(document.getElementById('lb').dataset.zoom) > 2.4")
-    print("desktop: mũi tên hiện, nhấp đúp zoom →", pg.get_attribute("#lb", "data-zoom"))
+    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+    shot(pg, "d3-lightbox.png")
+    for _ in range(3):
+        pg.keyboard.press("ArrowRight")
+    pg.keyboard.press("Escape"); pg.wait_for_selector("#lb", state="hidden")
+    check(pg.evaluate("document.activeElement.dataset.i") == "8", "đóng: focus về ô của ảnh đang xem")
+    pg.set_input_files("#in-file", a.selfie)
+    pg.wait_for_selector("#vg-main .tile img.on", timeout=60000)
+    pg.wait_for_timeout(1000 if not a.reduced_motion else 0)
+    shot(pg, "d4-selfie-results.png")
+    pg.click("#b-all"); pg.wait_for_selector("#all:not([hidden])")
+    check(pg.locator("#vg-all .tile").count() > 5, "desktop: về tất cả")
     ctx.close()
 
-    # ---- không request nào ra ngoài ----
-    print("request ngoài localhost:", external or "không có")
-    check(not external, "có request ra ngoài: %s" % external)
+    # ---------- /manage + ô nhập mã chủ nhà ----------
+    ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm)
+    pg = ctx.new_page(); pg.goto(a.url + "/manage")
+    pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+    if a.manage_token:
+        pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_selector("#token-card:not([hidden])", timeout=10000)
+        check(pg.evaluate("localStorage.getItem('album_token')") is None, "chưa có mã thì chưa lưu")
+        pg.wait_for_timeout(500)
+        shot(pg, "9-manage-token-prompt.png")
+        pg.fill("#token-in", "sai-ma"); pg.click("#token-form button")
+        pg.wait_for_selector("#token-err:not([hidden])", timeout=10000)  # mã sai: 401 lại, báo "chưa đúng"
+        pg.fill("#token-in", a.manage_token); pg.click("#token-form button")
+        pg.wait_for_function("document.getElementById('upchips').textContent.includes('xong')", timeout=15000)
+        check(pg.evaluate("localStorage.getItem('album_token')") == a.manage_token, "mã phải được lưu ở localStorage")
+        check("album_token=" in pg.evaluate("document.cookie"), "mã phải được đặt vào cookie album_token")
+        check(pg.is_hidden("#token-card"), "nhập đúng mã thì ô nhập ẩn đi")
+        print("/manage: 401 → ô nhập mã → mã sai báo lỗi → mã đúng: tải lên chạy tiếp, mã lưu ở localStorage + cookie")
+        pg.click("#proc"); pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Hoàn tất') || true")
+    else:
+        shot(pg, "9-manage.png")
+    ctx.close()
+
+    external = [u for u in external if urlparse(u).netloc not in allowed]
+    print("request ngoài ứng dụng/CDN:", external or "không có")
+    check(not external, "có request ra ngoài: %s" % external[:5])
     b.close()
 print("E2E OK")

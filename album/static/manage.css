@@ -57,3 +57,9 @@
 .pmsg { font-family: var(--serif); font-weight: 600; font-size: 1.2rem; color: var(--ink-soft); }
 .pmsg.ok { color: var(--ok); } .pmsg.err { color: #a23a36; }
 .errors { margin-top: .9rem; padding: .7rem .9rem; border: 1px solid rgba(162, 58, 54, .3); border-radius: 10px; background: #fff1ee; color: #8a2f2b; font-size: .82rem; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+
+/* mã chủ nhà */
+.token-row { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: .8rem; }
+.token-row input { flex: 1 1 200px; min-height: 48px; padding: .5rem 1rem; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 1rem; }
+.token-row input:focus-visible { outline: 2px solid var(--peach-ink); outline-offset: 2px; }
+#token-err { margin: .7rem 0 0; }

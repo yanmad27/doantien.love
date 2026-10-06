@@ -25,6 +25,17 @@
     <p class="back"><a href="/">← Xem trang khách</a></p>
   </header>
 
+  <section class="card panel token" id="token-card" hidden aria-labelledby="h-token">
+    <h2 class="h" id="h-token">Cần mã chủ nhà</h2>
+    <p class="note">Trang này đang được khoá. Nhập mã chủ nhà để tải ảnh lên và bấm Xử lý. Mã chỉ được lưu trên máy này.</p>
+    <form class="token-row" id="token-form">
+      <label class="sr" for="token-in">Mã chủ nhà</label>
+      <input id="token-in" type="password" autocomplete="current-password" placeholder="Mã chủ nhà" required>
+      <button type="submit" class="btn btn--solid">Xác nhận</button>
+    </form>
+    <p class="pmsg err" id="token-err" role="alert" hidden>Mã chưa đúng, bạn thử lại nhé.</p>
+  </section>
+
   <section class="card panel" aria-labelledby="h-status">
     <h2 class="h" id="h-status">Tình trạng</h2>
     <div class="tiles" id="stats" aria-live="polite">
