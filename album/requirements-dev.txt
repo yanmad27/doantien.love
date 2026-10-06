@@ -1,0 +1,3 @@
+# Chỉ để chụp màn hình/kiểm thử giao diện — không cần khi chạy thật.
+-r requirements.txt
+playwright==1.60.0

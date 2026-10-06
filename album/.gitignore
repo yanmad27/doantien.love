@@ -1,0 +1,9 @@
+# Dữ liệu sinh ra / nhạy cảm — không bao giờ commit
+.venv/
+data/
+models/
+photos/
+selfies/
+__pycache__/
+*.onnx
+*.db

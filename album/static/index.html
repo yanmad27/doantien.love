@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tìm ảnh của bạn</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto; color: #222; }
+  h1 { font-size: 1.4rem; }
+  .panel { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  #selfie-wrap { position: relative; display: inline-block; }
+  #selfie-wrap img { max-height: 160px; display: block; border-radius: 6px; }
+  .box { position: absolute; border: 2px solid #e22; box-sizing: border-box; pointer-events: none; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; align-items: start; }
+  .card { border: 1px solid #ddd; border-radius: 6px; overflow: hidden; background: #fafafa; }
+  .thumb { position: relative; line-height: 0; }
+  .thumb img { width: 100%; height: auto; }
+  .meta { padding: 6px 8px; font-size: .85rem; display: flex; justify-content: space-between; gap: 6px; }
+  .meta .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; }
+  .score { font-weight: 600; white-space: nowrap; }
+  #msg { color: #a00; }
+  small { color: #666; }
+  input[type=range] { width: 260px; }
+</style>
+</head>
+<body>
+<h1>Tìm ảnh của bạn trong album cưới</h1>
+
+<div class="panel">
+  <div class="row">
+    <label>Chọn một ảnh selfie (rõ mặt): <input type="file" id="file" accept="image/*"></label>
+    <button id="go" disabled>Tìm ảnh</button>
+  </div>
+  <small>Ảnh của bạn chỉ được xử lý trong bộ nhớ để so khớp, không được lưu lại. Nếu ảnh có nhiều khuôn mặt, hệ thống dùng khuôn mặt <b>to nhất</b>.</small>
+  <p id="msg"></p>
+  <div id="selfie-wrap" hidden><img id="selfie" alt="ảnh của bạn"><div class="box" id="selfie-box"></div></div>
+  <div id="qinfo"></div>
+</div>
+
+<div class="panel" id="controls" hidden>
+  <div class="row">
+    <label>Ngưỡng giống nhau: <b id="thv"></b>
+      <input type="range" id="th" min="0.15" max="0.8" step="0.01" value="0.35"></label>
+    <span id="count"></span>
+  </div>
+  <small>Điểm là độ giống cosine (1 = giống hệt). Kéo thấp → nhiều ảnh hơn nhưng dễ nhầm người; kéo cao → ít nhầm nhưng có thể sót.</small>
+</div>
+
+<div id="grid"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let results = [], timing = null, info = null;
+
+$("file").onchange = () => {
+  const f = $("file").files[0];
+  $("go").disabled = !f;
+  $("selfie-wrap").hidden = true; $("qinfo").textContent = ""; $("msg").textContent = "";
+  if (f) { $("selfie").src = URL.createObjectURL(f); $("selfie-wrap").hidden = false; $("selfie-box").style.display = "none"; }
+};
+
+function placeBox(box, img, bbox, w, h) {
+  box.style.display = "block";
+  box.style.left = bbox[0] / w * 100 + "%"; box.style.top = bbox[1] / h * 100 + "%";
+  box.style.width = (bbox[2] - bbox[0]) / w * 100 + "%"; box.style.height = (bbox[3] - bbox[1]) / h * 100 + "%";
+}
+
+$("go").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  $("msg").textContent = "Đang tìm…"; $("go").disabled = true;
+  const t0 = performance.now();
+  try {
+    const r = await fetch("api/search", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
+    const e2e = performance.now() - t0;
+    if (r.status === 422) { $("msg").textContent = "Không thấy khuôn mặt nào trong ảnh này. Hãy thử ảnh selfie rõ hơn."; return; }
+    if (!r.ok) { $("msg").textContent = (await r.json()).detail || "Có lỗi xảy ra."; return; }
+    const d = await r.json();
+    results = d.results; info = d;
+    $("msg").textContent = "";
+    const q = d.query;
+    placeBox($("selfie-box"), $("selfie"), q.bbox, q.width, q.height);
+    $("qinfo").innerHTML = `<small>Tìm thấy ${q.n_faces} khuôn mặt trong ảnh bạn gửi` +
+      (q.n_faces > 1 ? " — đang dùng khuôn mặt to nhất (khung đỏ)" : "") +
+      `. Chỉ mục: ${d.indexed_photos} ảnh, ${d.indexed_faces} khuôn mặt. ` +
+      `Xử lý ${d.timing_ms.total.toFixed(0)} ms (máy chủ), ${e2e.toFixed(0)} ms (tổng).</small>`;
+    $("controls").hidden = false;
+    render();
+  } catch (err) {
+    $("msg").textContent = "Không kết nối được máy chủ.";
+  } finally { $("go").disabled = false; }
+};
+
+$("th").oninput = render;
+
+function render() {
+  const th = parseFloat($("th").value);
+  $("thv").textContent = th.toFixed(2);
+  const shown = results.filter(x => x.score >= th);
+  $("count").textContent = `${shown.length} ảnh (trên ${results.length} ảnh có điểm ≥ 0.15)`;
+  const grid = $("grid"); grid.textContent = "";
+  for (const x of shown) {
+    const card = document.createElement("div"); card.className = "card";
+    const t = document.createElement("div"); t.className = "thumb";
+    const img = document.createElement("img"); img.src = x.thumb; img.loading = "lazy"; img.alt = x.name;
+    const box = document.createElement("div"); box.className = "box";
+    placeBox(box, img, x.bbox, x.width, x.height);
+    t.append(img, box);
+    const m = document.createElement("div"); m.className = "meta";
+    m.innerHTML = `<span class="name"></span><span class="score">${x.score.toFixed(3)}</span>`;
+    m.firstChild.textContent = x.name; m.firstChild.title = `${x.name} — ${x.n_faces} mặt trong ảnh`;
+    card.append(t, m); grid.append(card);
+  }
+}
+</script>
+</body>
+</html>

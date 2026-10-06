@@ -7,3 +7,10 @@ dist/
 # index.html/styles.css/script.js và assets/gift-*.webp — giữ lại để đối chiếu,
 # nhưng đừng cho `git add .` nuốt cả thư mục Vite lẫn file PNG 718 KB vào lịch sử.
 doantien-gift-animation-handoff/
+
+# album/: app Python riêng; dữ liệu sinh ra không bao giờ vào git
+/album/.venv/
+/album/data/
+/album/models/
+/album/photos/
+/album/selfies/

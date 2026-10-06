@@ -7,3 +7,6 @@ node_modules
 # COPY assets ở Dockerfile không đụng tới nó, nhưng để đây thì cả thư mục Vite
 # vẫn bị gửi lên làm build context mỗi lần build.
 doantien-gift-animation-handoff
+
+# album/ là app riêng (venv, model, ảnh) — không để vào build context của thiệp
+album

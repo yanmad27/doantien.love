@@ -1,0 +1,185 @@
+"""Phát hiện + nhúng khuôn mặt bằng buffalo_l (SCRFD det_10g + ArcFace w600k_r50)
+chạy thẳng bằng onnxruntime — không cần gói `insightface` (cần build C-extension).
+
+Mọi ảnh ở đây là numpy RGB uint8 (H, W, 3), đã xoay đúng theo EXIF.
+"""
+import os
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+import onnxruntime as ort
+from PIL import Image, ImageOps
+
+Image.MAX_IMAGE_PIXELS = None  # ảnh cưới 45 MP vẫn là ảnh tin cậy của chủ nhà
+
+DET_FILE = "det_10g.onnx"
+REC_FILE = "w600k_r50.onnx"
+
+ARCFACE_DST = np.array(
+    [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
+     [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32)
+
+
+@dataclass
+class Face:
+    bbox: np.ndarray  # x1,y1,x2,y2 theo pixel ảnh gốc (đã xoay)
+    score: float
+    kps: np.ndarray   # 5x2
+    emb: np.ndarray = None  # 512 float32, đã chuẩn hoá L2
+
+    @property
+    def size(self):
+        return float(min(self.bbox[2] - self.bbox[0], self.bbox[3] - self.bbox[1]))
+
+    @property
+    def area(self):
+        return float((self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1]))
+
+
+def load_image(src):
+    """src: đường dẫn hoặc bytes. Trả về numpy RGB đã áp EXIF orientation."""
+    import io
+    fp = io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else src
+    with Image.open(fp) as im:
+        im = ImageOps.exif_transpose(im)
+        return np.asarray(im.convert("RGB"))
+
+
+def _umeyama(src, dst):
+    n = src.shape[0]
+    sm, dm = src.mean(0), dst.mean(0)
+    sd, dd = src - sm, dst - dm
+    cov = dd.T @ sd / n
+    d = np.ones(2)
+    if np.linalg.det(cov) < 0:
+        d[-1] = -1
+    u, s, vt = np.linalg.svd(cov)
+    r = u @ np.diag(d) @ vt
+    var = sd.var(0).sum()
+    scale = (s * d).sum() / var
+    t = dm - scale * r @ sm
+    m = np.zeros((2, 3), dtype=np.float32)
+    m[:, :2] = scale * r
+    m[:, 2] = t
+    return m
+
+
+def _nms(dets, thresh):
+    x1, y1, x2, y2, sc = dets.T
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    order = sc.argsort()[::-1]
+    keep = []
+    while order.size:
+        i = order[0]
+        keep.append(i)
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        inter = np.maximum(0, xx2 - xx1 + 1) * np.maximum(0, yy2 - yy1 + 1)
+        iou = inter / (areas[i] + areas[order[1:]] - inter)
+        order = order[1:][iou <= thresh]
+    return keep
+
+
+class FaceEngine:
+    def __init__(self, model_dir, providers=None, det_thresh=0.5, nms_thresh=0.4, threads=0):
+        det_path = os.path.join(model_dir, DET_FILE)
+        rec_path = os.path.join(model_dir, REC_FILE)
+        for p in (det_path, rec_path):
+            if not os.path.exists(p):
+                raise FileNotFoundError(f"Thiếu model {p} — chạy: python download_models.py")
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        if threads:
+            so.intra_op_num_threads = threads
+        providers = providers or ["CPUExecutionProvider"]
+        self.det = ort.InferenceSession(det_path, so, providers=providers)
+        self.rec = ort.InferenceSession(rec_path, so, providers=providers)
+        self.det_in = self.det.get_inputs()[0].name
+        self.rec_in = self.rec.get_inputs()[0].name
+        self.det_thresh, self.nms_thresh = det_thresh, nms_thresh
+        self._anchors = {}
+
+    def _centers(self, h, w, stride):
+        key = (h, w, stride)
+        if key not in self._anchors:
+            g = np.stack(np.mgrid[:h, :w][::-1], axis=-1).astype(np.float32)
+            c = (g * stride).reshape(-1, 2)
+            self._anchors[key] = np.repeat(c, 2, axis=0)  # 2 anchor mỗi ô
+        return self._anchors[key]
+
+    def detect(self, rgb, det_size=1280, coarse_pass=True):
+        """Dò ở cạnh dài `det_size` (bắt mặt nhỏ trong ảnh nhóm). SCRFD lại bỏ sót mặt quá
+        to so với khung (chân dung cận cảnh), nên thêm một lượt 640 rẻ tiền rồi gộp bằng NMS."""
+        faces = self._detect_one(rgb, det_size)
+        if coarse_pass and det_size > 640:
+            faces = faces + self._detect_one(rgb, 640)
+            if len(faces) > 1:
+                dets = np.array([[*f.bbox, f.score] for f in faces])
+                faces = [faces[i] for i in _nms(dets, self.nms_thresh)]
+        return faces
+
+    def _detect_one(self, rgb, det_size):
+        """det_size = cạnh dài của ảnh sau khi thu nhỏ (giữ tỉ lệ, đệm tới bội số 32)."""
+        h, w = rgb.shape[:2]
+        scale = det_size / max(h, w)
+        nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+        small = cv2.resize(rgb, (nw, nh), interpolation=interp)
+        ph, pw = -(-nh // 32) * 32, -(-nw // 32) * 32
+        canvas = np.zeros((ph, pw, 3), dtype=np.uint8)
+        canvas[:nh, :nw] = small
+        blob = ((canvas.astype(np.float32) - 127.5) / 128.0).transpose(2, 0, 1)[None]
+        outs = self.det.run(None, {self.det_in: blob})
+        scores_l, boxes_l, kps_l = [], [], []
+        for i, stride in enumerate((8, 16, 32)):
+            sc = outs[i].reshape(-1)
+            bb = outs[i + 3].reshape(-1, 4) * stride
+            kp = outs[i + 6].reshape(-1, 10) * stride
+            ctr = self._centers(ph // stride, pw // stride, stride)
+            m = sc >= self.det_thresh
+            if not m.any():
+                continue
+            c, bb, kp = ctr[m], bb[m], kp[m]
+            boxes_l.append(np.stack([c[:, 0] - bb[:, 0], c[:, 1] - bb[:, 1],
+                                     c[:, 0] + bb[:, 2], c[:, 1] + bb[:, 3]], 1))
+            kps_l.append((kp.reshape(-1, 5, 2) + c[:, None, :]))
+            scores_l.append(sc[m])
+        if not scores_l:
+            return []
+        sc = np.concatenate(scores_l)
+        bx = np.concatenate(boxes_l) / scale
+        kp = np.concatenate(kps_l) / scale
+        keep = _nms(np.hstack([bx, sc[:, None]]), self.nms_thresh)
+        faces = []
+        for i in keep:
+            b = bx[i].copy()
+            b[[0, 2]] = b[[0, 2]].clip(0, w)
+            b[[1, 3]] = b[[1, 3]].clip(0, h)
+            faces.append(Face(b.astype(np.float32), float(sc[i]), kp[i].astype(np.float32)))
+        return faces
+
+    def embed(self, rgb, faces):
+        if not faces:
+            return
+        crops = []
+        for f in faces:
+            m = _umeyama(f.kps, ARCFACE_DST)
+            crops.append(cv2.warpAffine(rgb, m, (112, 112), borderValue=0.0))
+        blob = ((np.stack(crops).astype(np.float32) - 127.5) / 127.5).transpose(0, 3, 1, 2)
+        e = self.rec.run(None, {self.rec_in: blob})[0] if self._rec_batch_ok() else \
+            np.concatenate([self.rec.run(None, {self.rec_in: b[None]})[0] for b in blob])
+        e = e / np.linalg.norm(e, axis=1, keepdims=True)
+        for f, v in zip(faces, e):
+            f.emb = v.astype(np.float32)
+
+    def _rec_batch_ok(self):
+        d = self.rec.get_inputs()[0].shape[0]
+        return not isinstance(d, int)
+
+    def analyze(self, rgb, det_size=1280, min_face=0):
+        faces = [f for f in self.detect(rgb, det_size) if f.size >= min_face]
+        self.embed(rgb, faces)
+        return faces
