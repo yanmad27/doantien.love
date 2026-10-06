@@ -54,8 +54,8 @@ def load_job(root, rel, data_dir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--photos", required=True, help="thư mục ảnh (quét đệ quy)")
-    ap.add_argument("--data-dir", default=os.environ.get("ALBUM_DATA_DIR", "data"))
-    ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", "models"))
+    ap.add_argument("--data-dir", default=os.environ.get("ALBUM_DATA_DIR", store.DEFAULT_DATA_DIR))
+    ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", store.DEFAULT_MODEL_DIR))
     ap.add_argument("--det-size", type=int, default=int(os.environ.get("ALBUM_DET_SIZE", 1600)),
                     help="cạnh dài ảnh khi dò mặt (mặc định 1600; 640 nhanh hơn nhưng mất mặt nhỏ)")
     ap.add_argument("--min-face", type=int, default=24,
@@ -66,6 +66,7 @@ def main():
     ap.add_argument("--prune", action="store_true", help="xoá khỏi chỉ mục ảnh không còn trong thư mục")
     ap.add_argument("--limit", type=int, default=0, help="chỉ xử lý N ảnh đầu (thử nghiệm)")
     a = ap.parse_args()
+    Image.MAX_IMAGE_PIXELS = None  # ảnh cưới 45 MP+ là ảnh của chủ nhà; chỉ nới ở indexer, không ở server
 
     root = os.path.abspath(a.photos)
     if not os.path.isdir(root):
@@ -80,6 +81,7 @@ def main():
         sys.exit(f"Chỉ mục này lập cho {old_root[0]}, không phải {root}. "
                  f"Dùng --data-dir khác hoặc --rebuild.")
     db.execute("INSERT OR REPLACE INTO meta VALUES ('photos_root', ?)", (root,))
+    db.commit()  # để rollback của một ảnh lỗi không cuốn theo dòng này
 
     rels = find_photos(root)
     if a.limit:
@@ -122,21 +124,27 @@ def main():
                 n_bad += 1
                 print(f"CẢNH BÁO: bỏ qua {rel}: {err}", file=sys.stderr)
                 continue
-            t0 = time.perf_counter()
-            dets = [f for f in eng.detect(rgb, a.det_size) if f.size >= a.min_face]
-            t1 = time.perf_counter()
-            eng.embed(rgb, dets)
-            t2 = time.perf_counter()
-            h, w = rgb.shape[:2]
-            st = os.stat(os.path.join(root, rel))
-            pid = store.photo_id(rel)
-            db.execute("DELETE FROM faces WHERE photo_id=?", (pid,))
-            db.execute("INSERT OR REPLACE INTO photos VALUES (?,?,?,?,?,?,?,?)",
-                       (pid, rel, st.st_size, st.st_mtime_ns, w, h, a.det_size, len(dets)))
-            for k, f in enumerate(dets):
-                db.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?)",
-                           (pid, k, *map(float, f.bbox), f.score, f.emb.astype(np.float16).tobytes()))
-            db.commit()
+            try:
+                t0 = time.perf_counter()
+                dets = [f for f in eng.detect(rgb, a.det_size) if f.size >= a.min_face]
+                t1 = time.perf_counter()
+                eng.embed(rgb, dets)
+                t2 = time.perf_counter()
+                h, w = rgb.shape[:2]
+                st = os.stat(os.path.join(root, rel))
+                pid = store.photo_id(rel)
+                db.execute("DELETE FROM faces WHERE photo_id=?", (pid,))
+                db.execute("INSERT OR REPLACE INTO photos VALUES (?,?,?,?,?,?,?,?)",
+                           (pid, rel, st.st_size, st.st_mtime_ns, w, h, a.det_size, len(dets)))
+                for k, f in enumerate(dets):
+                    db.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?)",
+                               (pid, k, *map(float, f.bbox), f.score, f.emb.astype(np.float16).tobytes()))
+                db.commit()
+            except Exception as e:  # một ảnh hỏng không được làm hỏng cả lượt chạy
+                db.rollback()
+                n_bad += 1
+                print(f"CẢNH BÁO: bỏ qua {rel}: {e}", file=sys.stderr)
+                continue
             n_ok += 1
             n_faces += len(dets)
             t_dec += td

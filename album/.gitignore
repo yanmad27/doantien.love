@@ -7,3 +7,8 @@ selfies/
 __pycache__/
 *.onnx
 *.db
+
+# ảnh chụp màn hình (dev/screenshot.py) và ảnh bất kỳ — có thể chứa ảnh khách
+*.png
+*.jpg
+*.jpeg

@@ -38,11 +38,13 @@ RSS của app (nhàn rỗi và sau các truy vấn), dung lượng chỉ mục/�
 
 | Env | Tham số | Mặc định |
 |---|---|---|
-| `ALBUM_DATA_DIR` | `--data-dir` | `data` (chứa `index.db`, `thumbs/`) |
-| `ALBUM_MODEL_DIR` | `--model-dir` | `models` |
+| `ALBUM_DATA_DIR` | `--data-dir` | `album/data` (chứa `index.db`, `thumbs/`) |
+| `ALBUM_MODEL_DIR` | `--model-dir` | `album/models` |
 | `ALBUM_HOST` / `ALBUM_PORT` | `--host` / `--port` | `127.0.0.1` / `8000` |
 | `ALBUM_DET_SIZE` | `index_photos.py --det-size` | `1600` |
 | `ALBUM_PROVIDERS` | `--providers` | `CPUExecutionProvider` |
+
+Mặc định của `data`/`models` tính theo thư mục chứa script, không phụ thuộc thư mục đang đứng.
 
 ## Lập chỉ mục
 
@@ -52,7 +54,8 @@ RSS của app (nhàn rỗi và sau các truy vấn), dung lượng chỉ mục/�
 - **Chạy lại được, theo kiểu tăng dần:** ảnh không đổi (cùng đường dẫn + kích thước + mtime +
   det-size) bị bỏ qua. `--prune` xoá ảnh đã biến mất khỏi thư mục; `--rebuild` làm lại từ đầu.
   Một `--data-dir` ứng với đúng một thư mục ảnh.
-- File hỏng/không đọc được: in `CẢNH BÁO` và bỏ qua, các ảnh còn lại vẫn chạy tiếp.
+- File hỏng/không đọc được, hay ảnh làm lỗi bước dò/nhúng: in `CẢNH BÁO` và bỏ qua, các ảnh còn lại vẫn chạy tiếp.
+- Indexer bỏ giới hạn số điểm ảnh của Pillow (ảnh của chủ nhà); server thì không.
 - `--min-face` (mặc định 24 px, trên ảnh gốc): bỏ mặt quá nhỏ vì embedding không đáng tin.
 - App tự nạp lại chỉ mục khi `index.db` đổi — không cần khởi động lại server.
 
@@ -85,6 +88,9 @@ Với ảnh thật 6000 px+ mặt sẽ nhỏ hơn sau khi thu; nếu đánh giá
   không dùng; `--providers` vẫn cho phép thử bản onnxruntime mới hơn.
 - Selfie: client gửi body thô tới `/api/search` (không multipart ⇒ không có file tạm do
   framework spool), server giải mã và xử lý trong RAM, không ghi gì ra đĩa.
+- Selfie bị giới hạn 25 MB và 100 MP (kiểm kích thước khai báo trong header trước khi giải mã; vượt → HTTP 413). Không đọc được → 400, lỗi khác → 500. Trang `/docs`, `/redoc` đã tắt (mặc định nạp JS từ CDN).
+- Kết quả tối đa 300 ảnh; nếu bị cắt, API trả `truncated`/`total_matches` và giao diện báo.
+- `download_models.py` ghim SHA-256 của hai file `.onnx`: file thiếu/hỏng/dở dang bị tải lại, ghi qua file `.part` rồi mới đổi tên.
 - Selfie nhiều mặt: dùng mặt **to nhất** (giao diện báo rõ và vẽ khung đỏ).
 - Điểm = cosine giữa hai embedding chuẩn hoá. Tham khảo: cùng người thường ≳ 0.35–0.4,
   khác người thường < 0.2; vùng 0.2–0.35 là vùng mơ hồ — cần đánh giá trên ảnh thật để chọn

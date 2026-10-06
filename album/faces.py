@@ -9,9 +9,19 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import onnxruntime as ort
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 
-Image.MAX_IMAGE_PIXELS = None  # ảnh cưới 45 MP vẫn là ảnh tin cậy của chủ nhà
+# Không nới MAX_IMAGE_PIXELS ở đây: file này cũng chạy trên đường tải selfie (không tin cậy).
+# Chỉ index_photos.py (ảnh của chủ nhà) mới bỏ giới hạn đó.
+QUERY_MAX_PIXELS = 100_000_000
+
+
+class ImageTooLarge(Exception):
+    pass
+
+
+class ImageUnreadable(Exception):
+    pass
 
 DET_FILE = "det_10g.onnx"
 REC_FILE = "w600k_r50.onnx"
@@ -37,13 +47,26 @@ class Face:
         return float((self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1]))
 
 
-def load_image(src):
-    """src: đường dẫn hoặc bytes. Trả về numpy RGB đã áp EXIF orientation."""
+def load_image(src, max_pixels=None):
+    """src: đường dẫn hoặc bytes. Trả về numpy RGB đã áp EXIF orientation.
+
+    max_pixels: kiểm tra kích thước khai báo trong header TRƯỚC khi giải mã, để ảnh "bom"
+    (PNG nhỏ khai báo hàng tỉ pixel) không ngốn RAM. Lỗi: ImageTooLarge / ImageUnreadable.
+    """
     import io
     fp = io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else src
-    with Image.open(fp) as im:
-        im = ImageOps.exif_transpose(im)
-        return np.asarray(im.convert("RGB"))
+    try:
+        with Image.open(fp) as im:
+            if max_pixels and im.size[0] * im.size[1] > max_pixels:
+                raise ImageTooLarge(f"{im.size[0]}x{im.size[1]}")
+            im = ImageOps.exif_transpose(im)
+            return np.asarray(im.convert("RGB"))
+    except ImageTooLarge:
+        raise
+    except Image.DecompressionBombError as e:
+        raise ImageTooLarge(str(e)) from e
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, EOFError) as e:
+        raise ImageUnreadable(str(e)) from e
 
 
 def _umeyama(src, dst):

@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS faces (
 """
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(HERE, "data")
+DEFAULT_MODEL_DIR = os.path.join(HERE, "models")
+
+
 def photo_id(relpath):
     return hashlib.sha1(relpath.encode("utf-8")).hexdigest()[:16]
 

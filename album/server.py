@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 import store
-from faces import FaceEngine, load_image
+from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
 
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +27,7 @@ MAX_RESULTS = 300
 
 
 def create_app(data_dir, model_dir, providers, query_det_size=640):
-    app = FastAPI(title="Tìm ảnh cưới")
+    app = FastAPI(title="Tìm ảnh cưới", docs_url=None, redoc_url=None, openapi_url=None)  # docs mặc định nạp JS từ CDN
     engine = FaceEngine(model_dir, providers=providers)
     cache = {"mtime": None, "E": None, "rows": None, "photos": None}
     lock = threading.Lock()
@@ -43,7 +43,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
 
     def search(body):
         t0 = time.perf_counter()
-        rgb = load_image(body)
+        rgb = load_image(body, QUERY_MAX_PIXELS)
         t1 = time.perf_counter()
         faces = engine.detect(rgb, query_det_size)
         t2 = time.perf_counter()
@@ -60,7 +60,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
             if pid not in best or sims[i] > sims[best[pid]]:
                 best[pid] = i
         res = []
-        for pid, i in sorted(best.items(), key=lambda kv: -sims[kv[1]])[:MAX_RESULTS]:
+        ranked = sorted(best.items(), key=lambda kv: -sims[kv[1]])
+        for pid, i in ranked[:MAX_RESULTS]:
             ph = photos[pid]
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", width=ph["width"], height=ph["height"],
@@ -69,7 +70,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
         return dict(
             query=dict(n_faces=len(faces), bbox=[round(float(v), 1) for v in face.bbox],
                        width=rgb.shape[1], height=rgb.shape[0], det_score=round(face.score, 3)),
-            results=res, indexed_photos=len(photos), indexed_faces=len(rows),
+            results=res, total_matches=len(ranked), truncated=len(ranked) > MAX_RESULTS,
+            indexed_photos=len(photos), indexed_faces=len(rows),
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
 
@@ -86,11 +88,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
             raise HTTPException(400, "Không có dữ liệu ảnh")
         try:
             out = await run_in_threadpool(search, body)
-        except HTTPException:
-            raise
+        except ImageTooLarge:
+            raise HTTPException(413, "Ảnh quá lớn (số điểm ảnh vượt giới hạn). Hãy chọn ảnh nhỏ hơn.")
+        except ImageUnreadable:
+            raise HTTPException(400, "Không đọc được ảnh này. Hãy thử file JPG hoặc PNG khác.")
         except Exception:
             log.exception("search lỗi")
-            raise HTTPException(400, "Không đọc được ảnh này")
+            raise HTTPException(500, "Máy chủ gặp lỗi khi xử lý. Vui lòng thử lại sau.")
         if out is None:
             return JSONResponse({"error": "no_face"}, status_code=422)
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
@@ -113,8 +117,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-dir", default=os.environ.get("ALBUM_DATA_DIR", "data"))
-    ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", "models"))
+    ap.add_argument("--data-dir", default=os.environ.get("ALBUM_DATA_DIR", store.DEFAULT_DATA_DIR))
+    ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", store.DEFAULT_MODEL_DIR))
     ap.add_argument("--host", default=os.environ.get("ALBUM_HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("ALBUM_PORT", 8000)))
     ap.add_argument("--providers", default=os.environ.get("ALBUM_PROVIDERS", "CPUExecutionProvider"))

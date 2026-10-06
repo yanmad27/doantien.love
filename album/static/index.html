@@ -21,6 +21,7 @@
   .score { font-weight: 600; white-space: nowrap; }
   #msg { color: #a00; }
   small { color: #666; }
+  #trunc { color: #a60; margin: 0 0 10px; }
   input[type=range] { width: 260px; }
 </style>
 </head>
@@ -47,16 +48,25 @@
   <small>Điểm là độ giống cosine (1 = giống hệt). Kéo thấp → nhiều ảnh hơn nhưng dễ nhầm người; kéo cao → ít nhầm nhưng có thể sót.</small>
 </div>
 
+<p id="trunc" hidden></p>
 <div id="grid"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 let results = [], timing = null, info = null;
 
+// Xoá sạch kết quả của lượt trước (tránh khách sau nhìn thấy ảnh của khách trước)
+function clearResults() {
+  results = []; info = null;
+  $("grid").textContent = ""; $("controls").hidden = true; $("trunc").hidden = true;
+  $("qinfo").textContent = ""; $("count").textContent = "";
+}
+
 $("file").onchange = () => {
   const f = $("file").files[0];
   $("go").disabled = !f;
-  $("selfie-wrap").hidden = true; $("qinfo").textContent = ""; $("msg").textContent = "";
+  clearResults();
+  $("selfie-wrap").hidden = true; $("msg").textContent = "";
   if (f) { $("selfie").src = URL.createObjectURL(f); $("selfie-wrap").hidden = false; $("selfie-box").style.display = "none"; }
 };
 
@@ -69,6 +79,7 @@ function placeBox(box, img, bbox, w, h) {
 $("go").onclick = async () => {
   const f = $("file").files[0];
   if (!f) return;
+  clearResults();
   $("msg").textContent = "Đang tìm…"; $("go").disabled = true;
   const t0 = performance.now();
   try {
@@ -99,6 +110,10 @@ function render() {
   $("thv").textContent = th.toFixed(2);
   const shown = results.filter(x => x.score >= th);
   $("count").textContent = `${shown.length} ảnh (trên ${results.length} ảnh có điểm ≥ 0.15)`;
+  // danh sách bị cắt ở ảnh điểm thấp nhất: chỉ cảnh báo khi ngưỡng đang thấp hơn điểm đó
+  const cut = info && info.truncated && results.length && th <= results[results.length - 1].score;
+  $("trunc").hidden = !cut;
+  if (cut) $("trunc").textContent = `Có ${info.total_matches} ảnh khớp nhưng chỉ hiển thị ${results.length} ảnh điểm cao nhất. Hãy tăng ngưỡng để thu hẹp danh sách.`;
   const grid = $("grid"); grid.textContent = "";
   for (const x of shown) {
     const card = document.createElement("div"); card.className = "card";
