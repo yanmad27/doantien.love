@@ -170,6 +170,16 @@ with sync_playwright() as p:
     pg.keyboard.press("ArrowRight")
     pg.wait_for_function("document.getElementById('lb-count').textContent.startsWith('2 /')")
     check(abs(zoom() - 1) < 0.01, "đổi ảnh phải đặt lại zoom")
+    # N1: chụm (về ~1×) trong vùng tối rồi nhấc từng ngón nhanh — không được tính là chạm vùng tối để đóng
+    r = rect(); y0 = r["t"] - 40
+    check(y0 > r["bt"] + 10, "cần vùng tối phía trên ảnh để thử chụm trong vùng tối")
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": cx - 45, "y": y0, "id": 1}, {"x": cx + 45, "y": y0, "id": 2}]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": cx - 46, "y": y0, "id": 1}, {"x": cx + 46, "y": y0, "id": 2}]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": [{"x": cx + 46, "y": y0, "id": 2}]})  # nhấc ngón 1, còn ngón 2
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    pg.wait_for_timeout(200)
+    check(pg.is_visible("#lb") and abs(zoom() - 1) < 0.01, "chụm trong vùng tối rồi nhấc ngón không được đóng lightbox")
+    print("chụm trong vùng tối + nhấc ngón: lightbox vẫn mở")
     # chạm vào vùng tối quanh ảnh: đóng
     pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
     r = rect()
@@ -181,6 +191,7 @@ with sync_playwright() as p:
     # -- chia sẻ: mạng chậm, gọi navigator.share đồng bộ trong cú bấm khi file đã sẵn --
     cdp = ctx.new_cdp_session(pg)
     cdp.send("Network.enable")
+    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})  # các bước zoom ở trên đã kéo ảnh gốc vào cache; thử tải thật
     cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 30, "downloadThroughput": 500_000, "uploadThroughput": -1})
     originals.clear()
     tile.click()

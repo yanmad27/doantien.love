@@ -274,6 +274,7 @@ function openLb(list, i, opener) {
 }
 function closeLb(silent) {
   if (!lbOpen) return;
+  ptrs.clear(); g = null;
   lbOpen = false; lb.hidden = true; document.body.classList.remove("lb-open");
   lbImg.removeAttribute("src"); lbImg.style.opacity = ""; resetZoom();
   clearTimeout(shareTimer); for (const e of blobs.values()) if (e.ctl) e.ctl.abort(); blobs.clear(); lastId = null;
@@ -415,15 +416,15 @@ function endPtr(e) {
     if (ptrs.size < 2) {
       if (z.s < 1.05) resetZoom();
       g = null;
-      if (ptrs.size === 1) { const [p] = [...ptrs.values()]; g = { mode: "one", x: p.x, y: p.y, t: performance.now(), axis: null, dx: 0, dy: 0, zx: z.x, zy: z.y, moved: true }; }
+      if (ptrs.size === 1) { const [p] = [...ptrs.values()]; g = { mode: "one", x: p.x, y: p.y, t: performance.now(), axis: null, dx: 0, dy: 0, zx: z.x, zy: z.y, moved: true, noTap: true }; }  // sau chụm, nhấc ngón còn lại không phải là chạm
     }
     return;
   }
   if (!g) return;
   const p = g; g = null;
   lbImg.style.opacity = "";
-  if (z.s > 1) { if (!p.moved && e.type === "pointerup") tap(e); return; }
-  if (!p.axis) { if (e.type === "pointerup" && Math.hypot(p.dx, p.dy) < 10 && performance.now() - p.t < 500) tap(e); return; }
+  if (z.s > 1) { if (!p.moved && !p.noTap && e.type === "pointerup") tap(e); return; }
+  if (!p.axis) { if (!p.noTap && e.type === "pointerup" && Math.hypot(p.dx, p.dy) < 10 && performance.now() - p.t < 500) tap(e); return; }
   const v = Math.abs(p.dx) / Math.max(performance.now() - p.t, 1);
   if (p.axis === "y" && p.dy > 90) { requestClose(); }
   else if (p.axis === "x" && (Math.abs(p.dx) > 60 || v > .5)) { lbImg.style.transform = ""; go(p.dx < 0 ? 1 : -1); }
@@ -436,7 +437,8 @@ stageEl.addEventListener("pointerup", endPtr);
 stageEl.addEventListener("pointercancel", endPtr);
 stageEl.addEventListener("wheel", e => {  // máy tính: lăn chuột để phóng/thu
   e.preventDefault();
-  zoomAt(Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-e.deltaY * 0.002))), e.clientX, e.clientY);
+  const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);  // dòng/trang (Firefox) quy về px
+  zoomAt(Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-dy * 0.002))), e.clientX, e.clientY);
 }, { passive: false });
 
 // ---------- lưu / chia sẻ ----------
@@ -448,6 +450,7 @@ function toast(t) { const el = $("lb-toast"); el.textContent = t; el.classList.a
 $("lb-save").addEventListener("click", () => toast("Đang tải ảnh gốc…"));
 
 const blobs = new Map();  // id -> { state: loading|ready|error, pct, ctl, file, denied }
+const SHARE_PREFETCH_MS = 1500;
 let shareTimer = 0, lastId = null, sharing = false;
 
 function prepareShare(x) {
@@ -459,7 +462,8 @@ function prepareShare(x) {
   if (left && left.state === "loading") { left.ctl.abort(); blobs.delete(prev); }
   lastId = x.id;
   paintShare();
-  if (!blobs.has(x.id)) shareTimer = setTimeout(() => fetchBlob(x), 400);  // lướt nhanh qua nhiều ảnh thì không tải ảnh nào
+  const saveData = navigator.connection && navigator.connection.saveData;  // chế độ tiết kiệm dữ liệu: chỉ tải khi bấm
+  if (!blobs.has(x.id) && !saveData) shareTimer = setTimeout(() => fetchBlob(x), SHARE_PREFETCH_MS);  // lướt nhanh qua nhiều ảnh thì không tải ảnh nào
 }
 async function fetchBlob(x) {
   const e = { state: "loading", pct: 0, ctl: new AbortController(), file: null, denied: false };
@@ -491,13 +495,17 @@ function paintShare() {
   if (!shareApi) { btn.hidden = true; return; }
   const x = cur.list[cur.i], e = x && blobs.get(x.id);
   btn.hidden = !!e && e.state === "error";  // không chia sẻ được thì chỉ còn nút Lưu ảnh
-  const busy = !e || e.state === "loading";
+  const busy = !!e && e.state === "loading";
   btn.toggleAttribute("aria-busy", busy);
-  $("lb-share-t").textContent = busy ? (e && e.pct ? `Đang chuẩn bị ${e.pct}%` : "Đang chuẩn bị…") : e.denied ? "Bấm lần nữa để chia sẻ" : "Chia sẻ";
+  $("lb-share-t").textContent = busy ? (e && e.pct ? `Đang chuẩn bị ${e.pct}%` : "Đang chuẩn bị…") : e && e.denied ? "Bấm lần nữa để chia sẻ" : "Chia sẻ";
 }
 $("lb-share").onclick = () => {
   const x = cur.list[cur.i], e = blobs.get(x.id);
-  if (!e || e.state !== "ready") { toast("Ảnh đang được chuẩn bị, vài giây nữa bạn bấm lại nhé."); return; }
+  if (!e || e.state !== "ready") {  // chưa tải sẵn (đợi trước khi tải / chế độ tiết kiệm dữ liệu): tải ngay khi bấm, có tiến độ trên nút
+    if (!e) { clearTimeout(shareTimer); fetchBlob(x); }
+    toast("Đang chuẩn bị ảnh, xong bạn bấm Chia sẻ lần nữa nhé.");
+    return;
+  }
   if (sharing) return;  // chống bấm đúp
   sharing = true; e.denied = false; paintShare();
   let p;

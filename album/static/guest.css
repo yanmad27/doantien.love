@@ -12,7 +12,7 @@
 
 .actions { flex-direction: column; gap: .8rem; }
 .btn--wide { width: 100%; min-height: 54px; }
-.btn:focus-within { outline: 2px solid var(--peach-ink); outline-offset: 3px; }
+.btn:has(input:focus-visible) { outline: 2px solid var(--peach-ink); outline-offset: 3px; }  /* chỉ nút bọc input file; không dính sau khi bấm nút thường */
 
 .drop { flex-direction: column; align-items: center; gap: .3rem; padding: 2rem 1rem 1.7rem; border: 1.5px dashed var(--peach); border-radius: 12px; background: rgba(245, 211, 199, .16); cursor: pointer; transition: background .25s, border-color .25s; }
 .drop:hover, .drop.over { background: rgba(245, 211, 199, .38); border-color: var(--peach-dark); }
@@ -105,7 +105,7 @@
 .lb[hidden] { display: none; }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 .lb-top { position: absolute; z-index: 3; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: max(.6rem, env(safe-area-inset-top)) .8rem .6rem 1.1rem; }
-.lb-count { font-family: var(--ui); font-size: .8rem; font-weight: 600; letter-spacing: .2em; }
+.lb-count { padding: .25rem .8rem; border-radius: 999px; background: rgba(38, 28, 24, .55); text-shadow: 0 1px 3px rgba(0, 0, 0, .6); font-family: var(--ui); font-size: .8rem; font-weight: 600; letter-spacing: .2em; }
 .lb-btn { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid rgba(255, 247, 238, .3); border-radius: 50%; background: rgba(38, 28, 24, .5); color: #fff7ee; cursor: pointer; transition: background .2s; }
 .lb-btn:hover { background: rgba(255, 247, 238, .18); }
 .lb-btn:focus-visible, .lb .btn:focus-visible { outline-color: #fff7ee; }
