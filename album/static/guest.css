@@ -163,3 +163,6 @@ body.lb-open { overflow: hidden; }
 
 .lb-info { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; }
 .lb-burst { padding: .2rem .8rem; border-radius: 999px; background: rgba(239, 153, 144, .9); color: #2a1a15; font-family: var(--ui); font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+
+.thanks { max-width: 32em; margin: 0 auto; font-family: var(--serif); font-weight: 500; font-size: 1.1rem; line-height: 1.5; letter-spacing: 0; text-transform: none; color: var(--ink-soft); }
+.foot .thanks + .ornament { margin-top: 1.4rem; }

@@ -43,7 +43,7 @@ new PerformanceObserver(l => { for (const e of l.getEntries()) if (e.name === 'f
       const r = b.getBoundingClientRect();
       if (r.bottom > 0 && r.top < vh) { n++; const i = b.firstChild; if (!(i.complete && i.naturalWidth > 0)) { ok = false; break; } }
     }
-    if (n > 0 && ok) requestAnimationFrame(() => { window.__fs = performance.now(); window.__fsN = n; window.__fsNames = performance.getEntriesByType('resource').filter(e => e.responseEnd > 0 && e.responseEnd <= performance.now()).map(e => e.name); /* chỉ request đã tải xong (WebKit liệt kê cả request đang bay) */ });
+    if (n > 0 && ok) requestAnimationFrame(() => { window.__fs = performance.now(); window.__fsN = n; window.__fsNames = performance.getEntriesByType('resource').filter(e => e.responseEnd > e.startTime && e.responseEnd <= performance.now()).map(e => e.name); /* chỉ request đã tải xong (WebKit liệt kê cả request đang bay) */ });
     else loop();
   });
 })();

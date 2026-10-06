@@ -394,7 +394,8 @@ with sync_playwright() as p:
         check(pg.evaluate("document.getElementById('lb').contains(document.activeElement)"), "Tab phải ở trong lightbox")
     pg.keyboard.press("Escape")
     pg.wait_for_selector("#lb", state="hidden")
-    check(webkit or pg.evaluate("document.activeElement && document.activeElement.classList.contains('tile') ? +document.activeElement.dataset.i : -1") == idx + 1, "đóng lightbox: focus về ô của ảnh đang xem")
+    got_i = pg.evaluate("document.activeElement && document.activeElement.classList.contains('tile') ? +document.activeElement.dataset.i : -1")
+    check(webkit or got_i == tile_of[flat[at[idx] + 1]], f"đóng lightbox: focus về ô chứa ảnh đang xem (được {got_i}, cần {tile_of[flat[at[idx] + 1]]}, idx {idx})")
     y_before = pg.evaluate("scrollY")
 
     # 4. tìm bằng selfie → thu hẹp
