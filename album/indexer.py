@@ -19,7 +19,7 @@ import numpy as np
 from PIL import Image, ImageCms, features
 
 import store
-from faces import ImageTooLarge, load_image
+from faces import ImageTooLarge, ImageUnreadable, load_image
 
 log = logging.getLogger("album")
 EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -387,14 +387,27 @@ def pending_derive(db):
     return db.execute(
         "SELECT p.id, p.path, p.size, p.mtime_ns FROM photos p LEFT JOIN photo_meta m ON m.id=p.id "
         "WHERE (m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns OR m.sig IS NULL) "
-        "AND NOT EXISTS (SELECT 1 FROM derive_failed f WHERE f.id=p.id AND f.size=p.size AND f.mtime_ns=p.mtime_ns) ORDER BY p.path",
-        (DERIV_VERSION,)).fetchall()
+        "AND NOT EXISTS (SELECT 1 FROM derive_failed f WHERE f.id=p.id AND f.size=p.size AND f.mtime_ns=p.mtime_ns AND f.deriv_ver=?) ORDER BY p.path",
+        (DERIV_VERSION, DERIV_VERSION)).fetchall()
+
+
+def is_permanent_error(err):
+    """Lỗi do chính file ảnh (hỏng/cụt/quá lớn/không nhận dạng được) → có thử lại cũng vậy. OSError CÓ errno (ENOSPC, EIO, EACCES, EROFS,
+    ENOMEM, ENOENT…) và MemoryError là lỗi hệ thống tạm thời → không ghi nhớ. OSError KHÔNG có errno là lỗi giải mã của Pillow
+    ('image file is truncated', 'broken data stream'…)."""
+    if isinstance(err, (ImageTooLarge, ImageUnreadable, Image.DecompressionBombError, SyntaxError, EOFError)):
+        return True
+    if isinstance(err, MemoryError):
+        return False
+    if isinstance(err, OSError):  # gồm UnidentifiedImageError (errno None)
+        return err.errno is None
+    return isinstance(err, ValueError)
 
 
 def known_derive_failures(db):
     """Số ảnh đang có bản ghi lỗi sinh WebP còn hiệu lực (file gốc chưa đổi từ lúc lỗi)."""
     return db.execute("SELECT count(*) FROM derive_failed f JOIN photos p ON p.id=f.id "
-                      "WHERE f.size=p.size AND f.mtime_ns=p.mtime_ns").fetchone()[0]
+                      "WHERE f.size=p.size AND f.mtime_ns=p.mtime_ns AND f.deriv_ver=?", (DERIV_VERSION,)).fetchone()[0]
 
 
 def drop_stale_derivatives(data_dir, pid, keep_v=None):
@@ -415,6 +428,8 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
     """Sinh WebP + photo_meta cho ảnh còn thiếu (ảnh mới và ảnh đã lập chỉ mục từ bản cũ). KHÔNG dò mặt, KHÔNG đánh dấu
     failed/decoding.json: lỗi chỉ được ghi log + đếm, ảnh giữ nguyên (v=null → giao diện dùng thumb cũ).
     Bộ nhớ chặn: tối đa `workers` ảnh cùng lúc. `db` tạo ở luồng gọi. on_progress(i, n, rel, err). Trả dict(ok, bad, wall)."""
+    db.execute("DELETE FROM derive_failed WHERE deriv_ver IS NOT ? ", (DERIV_VERSION,))  # đổi DERIV_VERSION → thử lại mọi ảnh từng lỗi
+    db.commit()
     todo = pending_derive(db)
     known = {r[0]: (r[1], r[2]) for r in db.execute("SELECT name, sha256, size FROM originals")}
     st = dict(ok=0, bad=0, total=len(todo), wall=0.0)
@@ -450,9 +465,10 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
                 st["ok"] += 1
             else:
                 log.warning("WebP bỏ qua %s: %s: %s", rel, type(err).__name__, err)
-                db.execute("INSERT OR REPLACE INTO derive_failed VALUES (?,?,?,?)",
-                           (pid, size, mtime_ns, f"{type(err).__name__}: {err}"[:300]))
-                db.commit()
+                if is_permanent_error(err):  # chỉ lỗi do chính dữ liệu ảnh mới ghi nhớ; lỗi tạm (đĩa đầy, I/O, RAM) thử lại lượt sau
+                    db.execute("INSERT OR REPLACE INTO derive_failed VALUES (?,?,?,?,?)",
+                               (pid, size, mtime_ns, f"{type(err).__name__}: {err}"[:300], DERIV_VERSION))
+                    db.commit()
                 st["bad"] += 1
             if on_progress:
                 on_progress(i, len(todo), rel, err)

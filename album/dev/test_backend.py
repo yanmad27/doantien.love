@@ -548,23 +548,35 @@ class GateTests(unittest.TestCase):
             self.assertTrue(v and c)
 
     # ---- token chủ nhà ----
+    @staticmethod
+    def login(app, ip="9.9.9.9", tok="test-token", **hd):
+        return call(app, "POST", "/api/admin-login", headers=dict({"X-Forwarded-For": ip}, **hd), body=json.dumps({"token": tok}).encode())
+
+    def session_cookie(self, app, ip="9.9.9.9"):
+        st, h, _, _ = self.login(app, ip)
+        self.assertEqual(st, 204)
+        return h["set-cookie"].split(";")[0]  # album_session=<hmac>
+
     def test_owner_token(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         app = app_with(d, admin_token="test-token")
         seen = []
-        for hdr in (None, {"X-Album-Token": "wrong"}, {"Cookie": "album_token=wrong"}, {"X-Album-Token": ""}):
-            st, h, body, nread = call(app, "POST", "/api/process", headers=hdr)
+        ip = {"X-Forwarded-For": "4.4.4.4"}
+        for hdr in (None, {"X-Album-Token": "wrong"}, {"Cookie": "album_session=wrong"}, {"X-Album-Token": ""}, {"Cookie": "album_token=test-token"}):
+            h0 = dict(ip, **(hdr or {}))
+            st, h, body, nread = call(app, "POST", "/api/process", headers=h0)
             self.assertEqual(st, 401, hdr)
             self.assertIn("detail", json.loads(body))
             self.assertEqual(h["cache-control"], "no-store")
-            self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers=hdr, body=b"x" * 50)[0], 401)
-            st, h, body, _ = call(app, "GET", "/manage", headers=hdr)  # /manage: chỉ cookie, header không đủ
+            self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers=h0, body=b"x" * 50)[0], 401)
+            st, h, body, _ = call(app, "GET", "/manage", headers=h0)  # /manage: chỉ cookie phiên, header không đủ
             self.assertEqual((st, h["cache-control"]), (401, "no-store"))
             self.assertIn(b"<", body)
             seen.append(body)
-        self.assertEqual(call(app, "GET", "/manage", headers={"X-Album-Token": "test-token"})[0], 401)
-        ck = {"Cookie": "a=b; album_token=test-token"}
+        self.assertEqual(call(app, "GET", "/manage", headers=dict(ip, **{"X-Album-Token": "test-token"}))[0], 401)
+        ck = {"Cookie": "a=b; " + self.session_cookie(app)}
+        self.assertNotIn("test-token", ck["Cookie"])  # cookie phiên không chứa mã
         self.assertEqual(call(app, "GET", "/manage", headers=ck)[0], 200)
         self.assertEqual(call(app, "POST", "/api/process", headers={"X-Album-Token": "test-token"})[0], 200)
         app.state.job.thread.join(60)
@@ -584,20 +596,77 @@ class GateTests(unittest.TestCase):
             self.assertEqual(call(open_app, "POST", "/api/upload?name=a.jpg", body=b"x" * 50)[0], 400)
             self.assertEqual(call(open_app, "POST", "/api/admin-login", body=b'{"token":"x"}')[0], 404)
 
+    def test_token_guessing_throttled_on_protected_routes(self):
+        """N1: header/cookie sai trên các route được bảo vệ cũng bị giới hạn như đăng nhập; thăm trần không tính."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for route in (("POST", "/api/process", b""), ("POST", "/api/upload?name=a.jpg", b"x" * 20), ("GET", "/manage", b"")):
+            app = app_with(d, admin_token="test-token")  # trạng thái giới hạn mới cho từng route (trần toàn cục là của app)
+            ip = "21.0.0.1"
+            bad = {"Cookie": "album_session=guess"} if route[1] == "/manage" else {"X-Album-Token": "guess"}
+            codes = [call(app, route[0], route[1], headers=dict(bad, **{"X-Forwarded-For": ip}), body=route[2])[0] for _ in range(14)]
+            self.assertEqual(codes[:10], [401] * 10, route[1])
+            self.assertEqual(set(codes[10:]), {429}, route[1])
+            # sau ngưỡng, thông tin xác thực ĐÚNG từ chính IP đó cũng bị chặn (không lọt qua đợt dò)
+            good = {"X-Album-Token": "test-token", "X-Forwarded-For": ip}
+            if route[1] != "/manage":
+                self.assertEqual(call(app, route[0], route[1], headers=good, body=route[2])[0], 429)
+        # burst đồng thời có lẫn mã đúng: không cái nào lọt qua sau khi đã đủ 10 lượt sai
+        app = app_with(d, admin_token="test-token")
+        ip = "22.0.0.1"
+        for _ in range(10):
+            call(app, "POST", "/api/upload?name=a.jpg", headers={"X-Album-Token": "guess", "X-Forwarded-For": ip}, body=b"x")
+        res = []
+
+        def shot(i):
+            hd = {"X-Album-Token": "test-token" if i % 5 == 0 else "guess", "X-Forwarded-For": ip}
+            res.append(call(app, "POST", "/api/upload?name=a.jpg", headers=hd, body=b"x" * 20)[0])
+
+        ths = [threading.Thread(target=shot, args=(i,)) for i in range(60)]
+        [t.start() for t in ths]
+        [t.join() for t in ths]
+        self.assertEqual(set(res), {429})
+        # thăm trần (không cookie, không header) không bao giờ tính lượt: 200 lượt vẫn là 401 (upload) / 401 (manage), không 429
+        app = app_with(d, admin_token="test-token")
+        ip = {"X-Forwarded-For": "23.0.0.1"}
+        self.assertEqual({call(app, "GET", "/manage", headers=ip)[0] for _ in range(200)}, {401})
+        self.assertEqual({call(app, "POST", "/api/process", headers=ip)[0] for _ in range(50)}, {401})
+        ck = {"Cookie": self.session_cookie(app, "23.0.0.1")}
+        self.assertEqual(call(app, "GET", "/manage", headers=dict(ip, **ck))[0], 200)  # chủ nhà vẫn vào được
+        # cookie mã thô (bản cũ) bị từ chối, và trận dò bằng cookie phiên sai cũng bị giới hạn
+        self.assertEqual(call(app, "GET", "/manage", headers={"X-Forwarded-For": "24.0.0.1", "Cookie": "album_token=test-token"})[0], 401)
+        # chủ nhà dùng cookie đúng nhiều lần (upload/process song song) không tự khoá mình
+        self.assertEqual({call(app, "POST", "/api/upload?name=a.jpg", headers=dict(ip, **ck), body=b"x" * 20)[0] for _ in range(40)}, {400})
+
+    def test_session_cookie_opaque(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d, admin_token="test-token")
+        st, h, body, _ = self.login(app, "30.0.0.1")
+        ck = h["set-cookie"]
+        self.assertEqual(st, 204)
+        self.assertTrue(ck.startswith("album_session="))
+        self.assertNotIn("test-token", ck)
+        self.assertNotIn(b"test-token", body)
+        for flag in ("HttpOnly", "SameSite=strict", "Path=/", "Max-Age=2592000"):
+            self.assertIn(flag.lower(), ck.lower(), flag)
+        self.assertNotIn("secure", ck.lower())
+        self.assertIn("secure", self.login(app, "30.0.0.2", **{"X-Forwarded-Proto": "https"})[1]["set-cookie"].lower())
+        # ổn định qua restart (cùng mã → cùng cookie), đổi mã → cookie cũ vô hiệu
+        app2 = app_with(d, admin_token="test-token")
+        self.assertEqual(call(app2, "GET", "/manage", headers={"Cookie": ck.split(";")[0]})[0], 200)
+        app3 = app_with(d, admin_token="other-token")
+        self.assertEqual(call(app3, "GET", "/manage", headers={"Cookie": ck.split(";")[0], "X-Forwarded-For": "30.0.0.9"})[0], 401)
+        # mọi phản hồi (kể cả lỗi) không lộ mã
+        for hd in ({"X-Album-Token": "x"}, {}):
+            _, h2, b2, _ = call(app, "POST", "/api/process", headers=dict(hd, **{"X-Forwarded-For": "30.0.0.5"}))
+            self.assertNotIn("test-token", json.dumps(h2) + b2.decode())
+
     def test_admin_login_cookie_and_throttle(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         app = app_with(d, admin_token="test-token")
-        post = lambda tok, **hd: call(app, "POST", "/api/admin-login", headers=dict({"X-Forwarded-For": "9.9.9.9"}, **hd), body=json.dumps({"token": tok}).encode())
-        st, h, body, _ = post("test-token")
-        self.assertEqual((st, body), (204, b""))
-        ck = h["set-cookie"]
-        self.assertTrue(ck.startswith("album_token=test-token;"))
-        for flag in ("HttpOnly", "SameSite=strict", "Path=/", "Max-Age=2592000"):
-            self.assertIn(flag.lower(), ck.lower(), flag)
-        self.assertNotIn("secure", ck.lower())  # http thường
-        self.assertIn("secure", post("test-token", **{"X-Forwarded-Proto": "https"})[1]["set-cookie"].lower())
-        self.assertEqual(call(app, "GET", "/manage", headers={"Cookie": ck.split(";")[0]})[0], 200)
+        self.assertEqual(self.login(app)[0], 204)
         # sai: 401 JSON không lộ token; ngoài ngưỡng → 429 (kể cả khi lần sau đúng); IP khác không bị ảnh hưởng
         for i in range(10):
             st, _, body, _ = call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "8.8.8.8"}, body=b'{"token":"bad"}')
@@ -606,7 +675,7 @@ class GateTests(unittest.TestCase):
         for tok in ("bad", "test-token"):
             st, _, body, _ = call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "8.8.8.8"}, body=json.dumps({"token": tok}).encode())
             self.assertEqual(st, 429)
-        self.assertEqual(post("test-token")[0], 204)
+        self.assertEqual(self.login(app)[0], 204)
         for bad in (b"", b"not json", b'{"token":5}', b"[]"):
             self.assertEqual(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "7.7.7.7"}, body=bad)[0], 401, bad)
 
@@ -733,6 +802,59 @@ class GateTests(unittest.TestCase):
         self.assertEqual(db.execute("SELECT count(*) FROM derive_failed").fetchone()[0], 0)
         self.assertEqual(db.execute("SELECT count(*) FROM photo_meta").fetchone()[0], 2)
         db.close()
+
+    def test_derive_transient_errors_not_persisted(self):
+        """N2: ENOSPC/EIO/MemoryError… không ghi nhớ (thử lại lượt sau); file hỏng ghi nhớ một lần; đổi DERIV_VERSION → thử lại."""
+        import errno
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        o = os.path.join(d, "originals")
+        os.makedirs(o)
+        for i in range(5):
+            make_jpeg(os.path.join(o, f"p{i}.jpg"), color=(i * 20, 5, 5))
+        make_jpeg(os.path.join(o, "corrupt.jpg"), color=(200, 5, 5))  # qua được bước lập chỉ mục; lỗi giải mã được mô phỏng ở bước WebP
+        app = app_with(d)
+        real = indexer.derive_one
+        mode = {"err": OSError(errno.ENOSPC, "No space left on device")}
+
+        def inject(path, *a, **k):
+            if path.endswith("corrupt.jpg"):
+                raise OSError("image file is truncated (3 bytes not processed)")  # lỗi giải mã của Pillow: errno None → vĩnh viễn
+            if mode["err"]:
+                raise mode["err"]
+            return real(path, *a, **k)
+
+        for err in (OSError(errno.ENOSPC, "x"), OSError(errno.EIO, "x"), OSError(errno.EACCES, "x"), OSError(errno.EROFS, "x"),
+                    OSError(errno.ENOMEM, "x"), MemoryError()):
+            mode["err"] = err
+            with mock.patch.object(indexer, "derive_one", inject):
+                run_process(app)
+            db = sqlite3.connect(store.db_path(d))
+            n = db.execute("SELECT count(*) FROM derive_failed").fetchone()[0]
+            db.close()
+            self.assertLessEqual(n, 1, err)  # tối đa file hỏng thật (corrupt.jpg), không ảnh nào khác
+            self.assertEqual(len(indexer.pending_derive(sqlite3.connect(store.db_path(d)))), 5, err)  # 5 ảnh vẫn phải làm lượt sau
+        mode["err"] = None
+        with mock.patch.object(indexer, "derive_one", inject):
+            run_process(app)
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(db.execute("SELECT count(*) FROM photo_meta").fetchone()[0], 5)  # thử lại thành công
+        rows = db.execute("SELECT id FROM derive_failed").fetchall()
+        self.assertEqual(rows, [(store.photo_id("corrupt.jpg"),)])  # file hỏng đúng một dòng
+        db.close()
+        # file hỏng không bị thử lại ở lượt sau
+        calls = []
+        with mock.patch.object(indexer, "derive_one", lambda p, *a, **k: calls.append(p) or real(p, *a, **k)):
+            run_process(app)
+        self.assertEqual(calls, [])
+        # đổi DERIV_VERSION → xoá ghi nhớ và thử lại
+        with mock.patch.object(indexer, "DERIV_VERSION", indexer.DERIV_VERSION + 1):
+            with mock.patch.object(indexer, "derive_one", lambda p, *a, **k: calls.append(os.path.basename(p)) or real(p, *a, **k)):
+                run_process(app)
+        self.assertIn("corrupt.jpg", calls)
+        self.assertTrue(indexer.is_permanent_error(ValueError("x")))
+        self.assertFalse(indexer.is_permanent_error(OSError(errno.ENOSPC, "x")))
+        self.assertTrue(indexer.is_permanent_error(OSError("image file is truncated")))
 
     def test_upload_counter_only_after_commit(self):
         d = tempfile.mkdtemp()

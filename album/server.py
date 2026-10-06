@@ -523,17 +523,37 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
 
-    def is_admin(request: Request, header=True):
-        """ALBUM_ADMIN_TOKEN chưa đặt = mở như cũ. Đặt rồi: cookie album_token (hoặc header X-Album-Token), so sánh thời gian hằng."""
+    # Cookie phiên KHÔNG chứa mã: HMAC-SHA256(khoá = mã chủ nhà, nhãn cố định) — ổn định qua restart, không suy ngược ra mã.
+    session_value = hmac.new(token.encode(), b"album-session-v1", hashlib.sha256).hexdigest() if token else ""
+
+    def admin_state(request: Request, header=True):
+        """'ok' | 'none' (không đưa thông tin xác thực → KHÔNG tính lượt thử) | 'bad' (đưa sai, đã tính) | 'limited' (quá ngưỡng).
+        Mọi thông tin xác thực được đưa ra (header X-Album-Token, cookie album_session) đều qua cùng bộ giới hạn với đăng nhập:
+        đặt chỗ lượt thử trước khi so, đúng thì hoàn lại. Cookie album_token (mã thô, bản cũ) không còn được chấp nhận."""
         if not token:
-            return True
-        want = token.encode()
-        got_all = [request.cookies.get("album_token")] + ([request.headers.get("x-album-token")] if header else [])
-        return any(got and hmac.compare_digest(got.encode(), want) for got in got_all)
+            return "ok"
+        got = []
+        if header and request.headers.get("x-album-token"):
+            got.append((request.headers["x-album-token"], token))
+        if request.cookies.get("album_session"):
+            got.append((request.cookies["album_session"], session_value))
+        if not got:
+            return "none"
+        ip = client_ip(request)
+        stamp = login_reserve(ip)
+        if stamp is None:
+            return "limited"
+        if any(hmac.compare_digest(a.encode(), b.encode()) for a, b in got):
+            login_refund(ip, stamp)
+            return "ok"
+        return "bad"
 
     def require_admin(request: Request):
-        if not is_admin(request):
-            raise HTTPException(401, "Cần mã chủ nhà (cookie album_token hoặc header X-Album-Token) để thực hiện thao tác này.")
+        st = admin_state(request)
+        if st == "limited":
+            raise HTTPException(429, "Nhập sai quá nhiều lần, hãy thử lại sau ít phút.")
+        if st != "ok":
+            raise HTTPException(401, "Cần đăng nhập chủ nhà (cookie phiên hoặc header X-Album-Token) để thực hiện thao tác này.")
 
     fails = {}  # ip -> [dấu thời gian các lần thử trong 60 s]; throttle đăng nhập trong RAM
     glob = {"ts": [], "locked_until": 0.0}
@@ -596,7 +616,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         login_refund(ip, stamp)
         https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
         resp = Response(status_code=204, headers={"Cache-Control": "no-store"})
-        resp.set_cookie("album_token", token, max_age=30 * 86400, path="/", httponly=True, samesite="strict", secure=https)
+        resp.set_cookie("album_session", session_value, max_age=30 * 86400, path="/", httponly=True, samesite="strict", secure=https)
         return resp
 
     @app.get("/api/gallery")
@@ -851,8 +871,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     @app.get("/manage")
     def manage(request: Request):
-        if not is_admin(request, header=False):  # trình duyệt điều hướng không gửi được header → chỉ nhận cookie
-            return static_page("manage-login.html", cdn, 401, fallback=LOGIN_FALLBACK)
+        st = admin_state(request, header=False)  # trình duyệt điều hướng không gửi được header → chỉ nhận cookie phiên
+        if st != "ok":
+            return static_page("manage-login.html", cdn, 429 if st == "limited" else 401, fallback=LOGIN_FALLBACK)
         return static_page("manage.html", cdn)
 
     # CSS/JS/font/hoạ tiết của giao diện: chỉ file tĩnh cục bộ, không nạp gì từ ngoài

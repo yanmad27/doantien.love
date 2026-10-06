@@ -18,13 +18,14 @@ CREATE TABLE IF NOT EXISTS failed (  -- ảnh không xử lý được: không t
 CREATE TABLE IF NOT EXISTS originals (  -- ảnh gốc tải lên qua web: tên đã chuẩn hoá + SHA-256 để chống trùng
   name TEXT PRIMARY KEY, sha256 TEXT UNIQUE, size INTEGER);
 CREATE TABLE IF NOT EXISTS derive_failed (  -- WebP không sinh được: không thử lại mỗi lượt Xử lý (trừ khi file gốc đổi); KHÔNG liên quan failed/rejected
-  id TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, reason TEXT);
+  id TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, reason TEXT, deriv_ver INTEGER);
 CREATE TABLE IF NOT EXISTS photo_meta (  -- bảng riêng (không thêm cột vào photos: INSERT positional của indexer + rollback về bản cũ)
   id TEXT PRIMARY KEY, taken REAL, v TEXT, color TEXT, deriv_ver INTEGER, w INTEGER, h INTEGER,
   size INTEGER, mtime_ns INTEGER,  -- size/mtime_ns của file gốc lúc tạo: đổi file thì tạo lại
   cam TEXT, sig BLOB, burst TEXT);  -- máy ảnh (Make|Model|Serial), chữ ký 16x16 xám từ thumb 240, nhóm chụp liên tiếp (id khung đầu; NULL = đứng một mình)
 """
-META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))  # thêm vào bảng photo_meta đã có từ bản trước (ALTER, an toàn)
+META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))
+EXTRA_COLUMNS = {"photo_meta": META_COLUMNS, "derive_failed": (("deriv_ver", "INTEGER"),)}  # thêm vào bảng photo_meta đã có từ bản trước (ALTER, an toàn)
 
 
 
@@ -73,10 +74,11 @@ def connect(data_dir, init=True):
         except sqlite3.OperationalError:
             pass  # đang có kết nối khác giữ khoá: để lần khởi động sau
         db.executescript(SCHEMA)
-        have = {r[1] for r in db.execute("PRAGMA table_info(photo_meta)")}
-        for col, typ in META_COLUMNS:
-            if col not in have:
-                db.execute(f"ALTER TABLE photo_meta ADD COLUMN {col} {typ}")
+        for table, cols in EXTRA_COLUMNS.items():
+            have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols:
+                if col not in have:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         db.commit()
     return db
 
