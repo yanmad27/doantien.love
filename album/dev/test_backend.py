@@ -325,7 +325,7 @@ class GateTests(unittest.TestCase):
         st, hz, gz, _ = call(self.app, "GET", "/api/gallery", headers={"Accept-Encoding": "gzip, br"})
         self.assertEqual(hz["content-encoding"], "gzip")
         self.assertEqual(gzip.decompress(gz), raw)
-        self.assertEqual(hz["cache-control"], "public, max-age=60")
+        self.assertEqual(hz["cache-control"], "no-cache")  # F: luôn hỏi lại bằng ETag để ẩn/hiện có hiệu lực ngay
         self.assertEqual(hz["content-type"], "application/json")
         self.assertTrue(hz["etag"].startswith('"') and not hz["etag"].startswith("W/"))
         st, h304, b304, _ = call(self.app, "GET", "/api/gallery", headers={"Accept-Encoding": "gzip", "If-None-Match": hz["etag"]})
@@ -583,7 +583,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(call(app, "POST", "/api/process", headers=ck)[0], 200)
         app.state.job.thread.join(60)
         for path in ("/api/process", "/api/stats", "/api/gallery"):
-            st, _, body, _ = call(app, "GET", path)
+            st, _, body, _ = call(app, "GET", path, headers=ck if path != "/api/gallery" else None)  # F: stats/process GET chỉ chủ nhà
             self.assertEqual(st, 200, path)
             seen.append(body)
         self.assertEqual(call(app, "POST", "/api/upload?name=a.jpg", headers={"X-Album-Token": "test-token"}, body=b"x" * 50)[0], 400)  # qua cổng token
@@ -1066,7 +1066,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(st, 200)
             return json.loads(b)
 
-        strip = lambda r: [{k: v for k, v in x.items() if k not in ("v", "w", "h", "c", "b")} for x in r["results"]]
+        strip = lambda r: [{k: v for k, v in x.items() if k not in ("v", "w", "h", "c", "b", "t")} for x in r["results"]]
         s_before = search()
         self.assertEqual(strip(s_before), strip(before_old))  # code mới = code cũ trên cùng chỉ mục
         self.assertTrue(all(x["v"] is None for x in s_before["results"]))

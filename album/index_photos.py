@@ -36,11 +36,15 @@ def main():
     root = os.path.abspath(a.photos)
     if not os.path.isdir(root):
         sys.exit(f"Không thấy thư mục ảnh: {root}")
+    owner_state = ([], [])
     if a.rebuild:
+        owner_state = store.keep_owner_state(store.db_path(a.data_dir))  # ảnh đã ẩn + cài đặt của chủ nhà sống sót qua --rebuild
         for f in (store.db_path(a.data_dir),):
-            if os.path.exists(f):
-                os.remove(f)
+            for suffix in ("", "-wal", "-shm"):  # -wal còn sót sẽ bị SQLite áp lên DB mới
+                if os.path.exists(f + suffix):
+                    os.remove(f + suffix)
     db = store.connect(a.data_dir)
+    store.restore_owner_state(db, *owner_state)
     old_root = db.execute("SELECT value FROM meta WHERE key='photos_root'").fetchone()
     if old_root and old_root[0] != root:
         sys.exit(f"Chỉ mục này lập cho {old_root[0]}, không phải {root}. "

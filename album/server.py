@@ -69,6 +69,9 @@ DEFAULT_APP_HOSTS = "album.doantien.love,localhost,127.0.0.1"
 PUBLIC_PREFIXES = ("/i/", "/thumbs/", "/previews/", "/static/")  # host ngoài (CDN) chỉ được GET/HEAD/OPTIONS các đường này
 PUBLIC_EXACT = ("/healthz", "/robots.txt")
 WEBP_NAME = re.compile(r"^([0-9a-f]{16})-([0-9a-f]{8})-(\d+)\.webp$")
+IMAGE_TOKEN_TTL = 24 * 3600  # giây: token ?t= cho ảnh đã ẩn trong kết quả tìm kiếm
+ADMIN_BODY_MAX = 256 * 1024
+ADMIN_MAX_IDS = 5000
 IMMUTABLE = "public, max-age=31536000, immutable"
 LEGACY_CACHE = "public, max-age=3600"  # /thumbs, /previews không đặt tên theo nội dung → chỉ cache ngắn
 INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
@@ -196,10 +199,10 @@ def safe_name(raw):
     return stem.rstrip(" .") + ext
 
 
-def load_session_secret(data_dir):
-    """32 byte ngẫu nhiên, lưu ở DATA_DIR/.session_secret (0600). Tạo nguyên tử (ghi file tạm rồi link) nên hai process/khởi động
+def load_session_secret(data_dir, name=".session_secret"):
+    """32 byte ngẫu nhiên, lưu ở DATA_DIR/.session_secret (0600; name=".image_secret" cho token ảnh). Tạo nguyên tử (ghi file tạm rồi link) nên hai process/khởi động
     chồng nhau cùng thấy một giá trị; file hỏng/sai độ dài thì tạo lại (mọi phiên cũ hết hiệu lực). Không bao giờ log hay phát ra."""
-    path = os.path.join(data_dir, ".session_secret")
+    path = os.path.join(data_dir, name)
     for _ in range(3):
         try:
             with open(path, "rb") as fh:
@@ -220,7 +223,7 @@ def load_session_secret(data_dir):
                 pass
         finally:
             os.remove(tmp)
-    raise RuntimeError("không tạo được .session_secret")
+    raise RuntimeError(f"không tạo được {name}")
 
 
 def cpu_budget():
@@ -377,7 +380,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     log.info("CPU khả dụng %d; luồng tìm kiếm=%s, luồng Xử lý=%s", cpu_budget(), threads or "tự động", process_threads or "dùng chung")
     app.state.job = job  # cho test: job.thread.join()
     cache = {"mtime": None, "sig": None, "t": None}  # t = (E, rows, photos) công bố bằng MỘT phép gán
-    gal = {"mtime": None, "ts": 0.0, "meta": {}, "raw": b"", "gz": b"", "mv": ""}
+    # gal["g"] là MỘT bản chụp bất biến (manifest + meta + ẩn + cài đặt), thay nguyên cả bản bằng một phép gán; người đọc lấy g = gallery_state() rồi chỉ dùng g
+    gal = {"g": dict(mtime=None, ts=0.0, meta={}, hidden=frozenset(), include_hidden=True, pub_b={}, pos={}, admin=b"", raw=b"", gz=b"", mv=""),
+           "fresh_at": 0.0}
     glock = threading.Lock()
     lock = threading.Lock()
     upload_lock = threading.Lock()
@@ -470,42 +475,77 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         finally:
             lock.release()
 
-    def gallery_state(fresh=False):
-        """Manifest + bảng meta trong RAM, dựng lại khi DB đổi (đọc dấu hiệu TRƯỚC khi truy vấn: ghi chen vào thì lần sau dựng lại).
-        Trong lúc Xử lý chạy: dựng lại tối đa mỗi GALLERY_REFRESH giây và luôn trả bản cũ thay vì chờ (fresh=True bỏ qua giãn cách)."""
+    def public_bursts(order):
+        """order: [(id, burst gốc)] của các khung HIỂN THỊ theo thứ tự manifest → {id: burst công khai}. Nhóm theo burst gốc;
+        burst công khai = id khung hiển thị đầu tiên; nhóm còn < 2 khung hiển thị → không có (None). Mọi id ra khỏi đây đều là ảnh hiện."""
+        groups = {}
+        for pid, b in order:
+            if b:
+                groups.setdefault(b, []).append(pid)
+        return {pid: ids[0] for ids in groups.values() if len(ids) >= 2 for pid in ids}
+
+    def build_gallery(m):
+        """MỘT SELECT (LEFT JOIN photo_hidden) + cài đặt trong cùng một giao dịch đọc → ảnh chụp nhất quán."""
+        meta, rows, arows, order, hidden, include = {}, [], [], [], set(), True
+        if m is not None:
+            db = store.connect_ro(data_dir)
+            try:
+                db.execute("BEGIN")
+                q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst, h.id IS NOT NULL "
+                     "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id LEFT JOIN photo_hidden h ON h.id=p.id "
+                     "ORDER BY m.taken IS NULL, m.taken, p.path")
+                for pid, w, h, t, v, c, name, b, hid in db.execute(q):
+                    if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
+                        continue
+                    t = None if t is None else round(t, 3)
+                    meta[pid] = (v, c, b, bool(hid), w, h)
+                    arows.append([pid, w, h, t, v, c, name, b, 1 if hid else 0])
+                    if hid:
+                        hidden.add(pid)
+                    else:
+                        rows.append([pid, w, h, t, v, c, name, None])
+                        order.append((pid, b))
+                r = db.execute("SELECT value FROM settings WHERE key=?", (store.SEARCH_HIDDEN_KEY,)).fetchone()
+                include = r is None or r[0] != "0"
+                db.rollback()
+            finally:
+                db.close()
+        pub = public_bursts(order)
+        for r in rows:
+            r[7] = pub.get(r[0])
+        photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+        mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
+        raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"photos":{photos_json}}}').encode()
+        n_hidden = len(hidden)
+        admin = json.dumps(dict(photos=arows, counts=dict(all=len(arows), shown=len(arows) - n_hidden, hidden=n_hidden),
+                                settings={store.SEARCH_HIDDEN_KEY: include}), ensure_ascii=False, separators=(",", ":")).encode()
+        # thứ tự manifest của MỌI khung (kể cả ẩn): search dùng để xếp khung đầu của nhóm burst ẩn
+        pos = {a[0]: i for i, a in enumerate(arows)}
+        return dict(mtime=m, ts=time.time(), meta=meta, hidden=hidden, include_hidden=include, pub_b=pub, pos=pos, admin=admin,
+                    raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
+
+    def gallery_state(fresh=False, force=False):
+        """Manifest công khai (chỉ ảnh hiện) + `meta` của MỌI ảnh trong RAM, dựng lại khi DB đổi (đọc dấu hiệu TRƯỚC khi truy vấn: ghi chen
+        vào thì lần sau dựng lại). Trong lúc Xử lý chạy: dựng lại tối đa mỗi GALLERY_REFRESH giây và luôn trả bản cũ thay vì chờ
+        (fresh=True bỏ qua giãn cách; force=True — sau khi chủ nhà ẩn/hiện — dựng lại NGAY, chờ khoá, bất kể Xử lý hay giãn cách)."""
         m = db_mtime()
-        have = bool(gal["raw"])
-        if have and gal["mtime"] == m:
-            return gal
-        if fresh:  # dựng lại "tươi" do /i/ gọi tối đa mỗi giây một lần (URL sai v không được khuếch đại thành truy vấn DB)
-            if time.time() - gal.get("fresh_at", 0.0) < 1.0:
+        g = gal["g"]
+        have = bool(g["raw"])
+        if have and g["mtime"] == m and not force:
+            return g
+        if fresh and not force:  # dựng lại "tươi" do /i/ gọi tối đa mỗi giây một lần (URL sai v không được khuếch đại thành truy vấn DB)
+            if time.time() - gal["fresh_at"] < 1.0:
                 fresh = False
             else:
                 gal["fresh_at"] = time.time()
-        if have and not fresh and job.running and time.time() - gal["ts"] < GALLERY_REFRESH:
-            return gal
-        if not glock.acquire(blocking=not have):
-            return gal
+        if have and not fresh and not force and job.running and time.time() - g["ts"] < GALLERY_REFRESH:
+            return g
+        if not glock.acquire(blocking=force or not have):
+            return g
         try:
-            if gal["mtime"] != m or not gal["raw"]:
-                meta, rows = {}, []
-                if m is not None:
-                    db = store.connect_ro(data_dir)
-                    try:
-                        q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst "
-                             "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id ORDER BY m.taken IS NULL, m.taken, p.path")
-                        for pid, w, h, t, v, c, name, b in db.execute(q):
-                            if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
-                                continue
-                            rows.append([pid, w, h, None if t is None else round(t, 3), v, c, name, b])
-                            meta[pid] = (v, c, b)
-                    finally:
-                        db.close()
-                photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-                mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
-                raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"photos":{photos_json}}}').encode()
-                gal.update(mtime=m, ts=time.time(), meta=meta, raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
-            return gal
+            if force or gal["g"]["mtime"] != m or not gal["g"]["raw"]:
+                gal["g"] = build_gallery(m)
+            return gal["g"]
         finally:
             glock.release()
 
@@ -525,28 +565,37 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         engine.embed(rgb, [face])
         t3 = time.perf_counter()
         E, rows, photos = index()
+        g = gallery_state()  # ẩn + cài đặt đọc từ bản chụp manifest (dựng lại khi DB đổi), KHÔNG từ cache ma trận theo faces_sig
+        meta, hidden, include = g["meta"], g["hidden"], g["include_hidden"]
         sims = E @ face.emb if len(E) else np.zeros(0, np.float32)
         best = {}
         for i in np.flatnonzero(sims >= SCORE_FLOOR):
             pid = rows[i]["photo_id"]
+            if pid not in meta or (pid in hidden and not include):  # ảnh ẩn bị loại TRƯỚC best/xếp hạng/cắt/đếm; ảnh chưa vào manifest chờ lượt dựng sau
+                continue
             if pid not in best or sims[i] > sims[best[pid]]:
                 best[pid] = i
-        meta = gallery_state()["meta"]
-        res = []
         ranked = sorted(best.items(), key=lambda kv: -sims[kv[1]])
-        for pid, i in ranked[:MAX_RESULTS]:
+        top = ranked[:MAX_RESULTS]
+        hid_hits = {}  # burst gốc -> các ảnh ẩn TRÚNG trong phản hồi này
+        for pid, _ in top:
+            if pid in hidden and meta[pid][2]:
+                hid_hits.setdefault(meta[pid][2], []).append(pid)
+        hb = {pid: min(ids, key=g["pos"].__getitem__) for ids in hid_hits.values() if len(ids) >= 2 for pid in ids}
+        exp = int(time.time()) + IMAGE_TOKEN_TTL
+        res = []
+        for pid, i in top:
             ph = photos[pid]
+            v, c, _, hid, w, h = meta[pid]
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", preview=f"previews/{pid}.jpg", width=ph["width"], height=ph["height"],
-                            n_faces=ph["n_faces"], bbox=[round(v, 1) for v in rows[i]["bbox"]],
-                            v=meta.get(pid, (None,) * 3)[0], w=ph["width"], h=ph["height"], c=meta.get(pid, (None,) * 3)[1],
-                            b=meta.get(pid, (None,) * 3)[2]))
+                            n_faces=ph["n_faces"], bbox=[round(x, 1) for x in rows[i]["bbox"]],
+                            v=v, w=w, h=h, c=c, b=hb.get(pid) if hid else g["pub_b"].get(pid), t=image_token(pid, exp)))
         t4 = time.perf_counter()
         return dict(
             query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
                        width=rgb.shape[1], height=rgb.shape[0], det_score=round(face.score, 3)),
             results=res, total_matches=len(ranked), truncated=len(ranked) > MAX_RESULTS,
-            indexed_photos=len(photos), indexed_faces=len(rows),
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
 
@@ -554,6 +603,18 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     # DATA_DIR/.session_secret (0600, tạo nguyên tử một lần, không route nào phát ra DATA_DIR) nên có cookie cũng không dò ngược ra mã
     # offline; ổn định qua restart (cùng file), đổi mã hoặc xoá file → cookie cũ vô hiệu.
     session_value = hmac.new(load_session_secret(data_dir) + b"\0" + token.encode(), b"album-session-v1", hashlib.sha256).hexdigest() if token else ""
+
+    image_secret = load_session_secret(data_dir, ".image_secret")  # luôn tạo (kể cả khi chưa đặt ALBUM_ADMIN_TOKEN)
+
+    def image_token(pid, exp):
+        """"<hết hạn>.<HMAC-SHA256 128 bit của id + hết hạn>": cho phép lấy bản gốc/xem/thumb của ảnh ĐÃ ẨN trong kết quả tìm kiếm của chính khách."""
+        return f"{exp}.{hmac.new(image_secret, f'{pid}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32]}"
+
+    def token_ok(pid, t):
+        if not t or not re.fullmatch(r"\d{1,12}\.[0-9a-f]{32}", t):
+            return False
+        exp = int(t.split(".")[0])
+        return exp >= time.time() and hmac.compare_digest(t.encode(), image_token(pid, exp).encode())
 
     def admin_state(request: Request, header=True):
         """'ok' | 'none' (không đưa thông tin xác thực → KHÔNG tính lượt thử) | 'bad' (đưa sai, đã tính) | 'limited' (quá ngưỡng).
@@ -656,7 +717,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         g = gallery_state()
         gz = "gzip" in request.headers.get("accept-encoding", "").lower()
         etag = f'"{g["mv"]}-gz"' if gz else f'"{g["mv"]}"'
-        hdr = {"ETag": etag, "Cache-Control": "public, max-age=60", "Vary": "Accept-Encoding"}
+        hdr = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}  # luôn hỏi lại (304 rẻ): ẩn/hiện có hiệu lực ngay
         inm = [t.strip().removeprefix("W/") for t in request.headers.get("if-none-match", "").split(",")]
         if etag in inm or "*" in inm:
             return Response(status_code=304, headers=hdr)
@@ -720,9 +781,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             sc["busy"] = False
 
     @app.get("/api/stats")
-    async def stats():
+    async def stats(request: Request):
         """Lúc rảnh: tính mới mỗi lần (quét thư mục + so sánh chỉ mục). Lúc đang Xử lý: trả giá trị đã nhớ (tối đa STATS_TTL
-        giây tuổi), việc quét chạy nền — không request nào chờ quét thư mục/khoá DB trong khi job đang ghi."""
+        giây tuổi), việc quét chạy nền — không request nào chờ quét thư mục/khoá DB trong khi job đang ghi. Chỉ chủ nhà."""
+        require_admin(request)
         if sc["v"] is not None and job.running:
             if time.time() - sc["ts"] > STATS_TTL and not sc["busy"]:
                 sc["busy"] = True
@@ -731,6 +793,103 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         v = await run_in_threadpool(compute_stats)
         sc.update(v=v, ts=time.time())
         return JSONResponse(v, headers={"Cache-Control": "no-store"})
+
+    # ---------- chủ nhà: ẩn/hiện ảnh + cài đặt tìm kiếm (mọi response no-store; require_admin chạy TRƯỚC khi đọc body) ----------
+    NOSTORE = {"Cache-Control": "no-store"}
+
+    def same_origin_or_403(request: Request):
+        """Trình duyệt gửi Origin/Sec-Fetch-Site trên POST: phải cùng origin (chống CSRF dù cookie SameSite=Strict). Không có cả hai
+        (curl, script của chủ nhà) → cho qua, vẫn cần cookie/header xác thực."""
+        sfs = request.headers.get("sec-fetch-site")
+        if sfs is not None and sfs != "same-origin":
+            raise HTTPException(403, "Yêu cầu khác origin.")
+        origin = request.headers.get("origin")
+        if origin is not None:
+            host = request.headers.get("host", "").strip().lower()
+            m = re.fullmatch(r"https?://([^/\s]+)", origin.strip().lower())
+            if not m or not host or m.group(1) != host:
+                raise HTTPException(403, "Yêu cầu khác origin.")
+
+    async def admin_json(request: Request):
+        require_admin(request)
+        same_origin_or_403(request)
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            raise HTTPException(400, "Cần Content-Type: application/json.")
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > ADMIN_BODY_MAX:
+            raise HTTPException(413, "Nội dung quá lớn.")
+        body = b""
+        async for c in request.stream():
+            body += c
+            if len(body) > ADMIN_BODY_MAX:
+                raise HTTPException(413, "Nội dung quá lớn.")
+        try:
+            data = json.loads(body)
+        except Exception:
+            raise HTTPException(400, "JSON không hợp lệ.")
+        if not isinstance(data, dict):
+            raise HTTPException(400, "Cần một đối tượng JSON.")
+        return data
+
+    @app.get("/api/admin/photos")
+    async def api_admin_photos(request: Request):
+        require_admin(request)
+        return Response((await run_in_threadpool(gallery_state))["admin"], media_type="application/json", headers=NOSTORE)
+
+    def set_visibility(ids, hide):
+        """MỘT giao dịch, idempotent; đếm bằng JOIN photos trong cùng giao dịch. id không có trong photos → "unknown", không ghi."""
+        db = store.connect(data_dir, init=False)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            known = [i for i in ids if db.execute("SELECT 1 FROM photos WHERE id=?", (i,)).fetchone()]
+            ks = set(known)
+            changed = 0
+            if hide:
+                now = time.time()
+                for i in known:
+                    changed += db.execute("INSERT OR IGNORE INTO photo_hidden VALUES (?,?)", (i, now)).rowcount
+            else:
+                for i in ids:
+                    n = db.execute("DELETE FROM photo_hidden WHERE id=?", (i,)).rowcount
+                    changed += n if i in ks else 0  # dòng mồ côi (ảnh đã bị xoá) cũng được dọn nhưng không tính
+            total = db.execute("SELECT count(*) FROM photos").fetchone()[0]
+            n_hidden = db.execute("SELECT count(*) FROM photos p JOIN photo_hidden h ON h.id=p.id").fetchone()[0]
+            db.commit()
+            return dict(changed=changed, unknown=len(ids) - len(known), counts=dict(all=total, shown=total - n_hidden, hidden=n_hidden))
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @app.post("/api/admin/visibility")
+    async def api_admin_visibility(request: Request):
+        data = await admin_json(request)
+        ids, hide = data.get("ids"), data.get("hidden")
+        if set(data) != {"ids", "hidden"} or not isinstance(hide, bool) or not isinstance(ids, list) \
+                or not 1 <= len(ids) <= ADMIN_MAX_IDS or not all(isinstance(i, str) and PHOTO_ID.match(i) for i in ids):
+            raise HTTPException(400, f'Cần {{"ids": [1..{ADMIN_MAX_IDS} mã 16 hex], "hidden": true|false}}.')
+        out = await run_in_threadpool(set_visibility, list(dict.fromkeys(ids)), hide)
+        await run_in_threadpool(gallery_state, force=True)  # CHẶN: dựng lại manifest công khai trước khi trả lời, kể cả khi đang Xử lý
+        return JSONResponse(out, headers=NOSTORE)
+
+    def set_include_hidden(on):
+        db = store.connect(data_dir, init=False)
+        try:
+            db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (store.SEARCH_HIDDEN_KEY, "1" if on else "0"))
+            db.commit()
+        finally:
+            db.close()
+
+    @app.post("/api/admin/settings")
+    async def api_admin_settings(request: Request):
+        data = await admin_json(request)
+        on = data.get(store.SEARCH_HIDDEN_KEY)
+        if set(data) != {store.SEARCH_HIDDEN_KEY} or not isinstance(on, bool):
+            raise HTTPException(400, f'Cần {{"{store.SEARCH_HIDDEN_KEY}": true|false}}.')
+        await run_in_threadpool(set_include_hidden, on)
+        await run_in_threadpool(gallery_state, force=True)
+        return JSONResponse({"settings": {store.SEARCH_HIDDEN_KEY: on}}, headers=NOSTORE)
 
     async def reject(request, status, msg):
         n = 0
@@ -840,7 +999,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         return dict(started=True, **job.status())
 
     @app.get("/api/process")
-    async def api_process_status():  # async + snapshot: chạy thẳng trên event loop, không qua threadpool, không khoá, không đĩa
+    async def api_process_status(request: Request):  # async + snapshot: chạy thẳng trên event loop, không qua threadpool, không khoá, không đĩa
+        require_admin(request)
         return JSONResponse(job.status(), headers={"Cache-Control": "no-store"})
 
     # ---------- ảnh: WebP đặt tên theo nội dung, thumbnail/bản xem cũ, bản gốc (host ngoài chỉ lấy được ba nhóm đầu: HostGate) ----------
@@ -861,31 +1021,41 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             raise HTTPException(404)
         return FileResponse(p, media_type="image/webp", headers={"Cache-Control": IMMUTABLE})
 
-    def photo_file(folder, pid, ext=".jpg"):
+    def gate_hidden(pid, request):
+        """Ảnh ẩn: 404 y hệt id không tồn tại (cùng HTTPException) trừ khi có ?t= hợp lệ cho đúng id này. True = vào bằng token."""
+        if pid in gallery_state()["hidden"]:
+            if not token_ok(pid, request.query_params.get("t")):
+                raise HTTPException(404)
+            return True
+        return False
+
+    def photo_file(folder, pid, request, ext=".jpg"):
         if not PHOTO_ID.match(pid):
             raise HTTPException(404)
+        by_token = gate_hidden(pid, request)
         p = os.path.join(folder, pid + ext)
         if not os.path.exists(p):
             raise HTTPException(404)
-        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": LEGACY_CACHE})
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "private, no-store" if by_token else LEGACY_CACHE})
 
     @app.api_route("/thumbs/{pid}.jpg", methods=["GET", "HEAD"])
-    def thumb(pid: str):
-        return photo_file(store.thumb_dir(data_dir), pid)
+    def thumb(pid: str, request: Request):
+        return photo_file(store.thumb_dir(data_dir), pid, request)
 
     @app.api_route("/previews/{pid}.jpg", methods=["GET", "HEAD"])
-    def preview(pid: str):
-        return photo_file(store.preview_dir(data_dir), pid)
+    def preview(pid: str, request: Request):
+        return photo_file(store.preview_dir(data_dir), pid, request)
 
     @app.get("/originals/{pid}")  # cùng origin, tải về dạng attachment; không qua CDN
-    def original(pid: str):
+    def original(pid: str, request: Request):
         _, _, photos = index()
         if pid not in photos:
             raise HTTPException(404)
+        by_token = gate_hidden(pid, request)
         path = os.path.join(store.originals_dir(data_dir), photos[pid]["path"])
         if not os.path.exists(path):
             raise HTTPException(404)
-        return FileResponse(path, filename=photos[pid]["path"], headers={"Cache-Control": "private, max-age=86400"})
+        return FileResponse(path, filename=photos[pid]["path"], headers={"Cache-Control": "private, no-store" if by_token else "private, max-age=86400"})
 
     @app.api_route("/healthz", methods=["GET", "HEAD"])
     async def healthz():

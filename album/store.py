@@ -23,7 +23,11 @@ CREATE TABLE IF NOT EXISTS photo_meta (  -- bảng riêng (không thêm cột v�
   id TEXT PRIMARY KEY, taken REAL, v TEXT, color TEXT, deriv_ver INTEGER, w INTEGER, h INTEGER,
   size INTEGER, mtime_ns INTEGER,  -- size/mtime_ns của file gốc lúc tạo: đổi file thì tạo lại
   cam TEXT, sig BLOB, burst TEXT);  -- máy ảnh (Make|Model|Serial), chữ ký 16x16 xám từ thumb 240, nhóm chụp liên tiếp (id khung đầu; NULL = đứng một mình)
+CREATE TABLE IF NOT EXISTS photo_hidden (  -- ảnh chủ nhà ẩn khỏi thư viện công khai. KHÔNG khoá ngoại: Xử lý/backfill/--prune/--rebuild không bao giờ sửa bảng này
+  id TEXT PRIMARY KEY, hidden_at REAL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);  -- search_includes_hidden: vắng = '1' (BẬT)
 """
+SEARCH_HIDDEN_KEY = "search_includes_hidden"
 META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))
 EXTRA_COLUMNS = {"photo_meta": META_COLUMNS, "derive_failed": (("deriv_ver", "INTEGER"),)}  # thêm vào bảng photo_meta đã có từ bản trước (ALTER, an toàn)
 
@@ -81,6 +85,29 @@ def connect(data_dir, init=True):
                     db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         db.commit()
     return db
+
+
+def keep_owner_state(db_file):
+    """(photo_hidden, settings) đọc từ DB cũ để --rebuild chép sang DB mới; ([], []) nếu chưa có DB/bảng."""
+    if not os.path.exists(db_file):
+        return [], []
+    db = sqlite3.connect(db_file, timeout=30)
+    try:
+        out = []
+        for q in ("SELECT id, hidden_at FROM photo_hidden", "SELECT key, value FROM settings"):
+            try:
+                out.append(db.execute(q).fetchall())
+            except sqlite3.OperationalError:  # DB từ bản trước chưa có bảng
+                out.append([])
+        return out[0], out[1]
+    finally:
+        db.close()
+
+
+def restore_owner_state(db, hidden, settings):
+    db.executemany("INSERT OR IGNORE INTO photo_hidden VALUES (?,?)", hidden)
+    db.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", settings)
+    db.commit()
 
 
 def connect_ro(data_dir, timeout=30):
