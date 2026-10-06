@@ -47,28 +47,29 @@ def pending_photos(db, root, det_size, rels=None):
 
 
 class Inflight:
-    """Ghi bền (JSON) danh sách file đang giải mã/suy luận: nếu process chết giữa chừng (OOM), lần sau biết
-    file nào là thủ phạm và không lặp lại vô hạn."""
+    """Ghi bền (JSON {tên: số lần}) các file đang giải mã/suy luận. Một lần process bị dừng khi deploy (SIGTERM/SIGKILL)
+    không được quy cho file: chỉ file nằm trong marker ở hai lần chết liền nhau mới bị loại (xem recover_crashed)."""
 
     def __init__(self, path):
-        self.path, self.names, self.lock = path, set(), threading.Lock()
+        self.path, self.lock = path, threading.Lock()
+        self.counts = load_marker(path)
 
     def _write(self):
-        if self.names:
+        if self.counts:
             with open(self.path + ".part", "w") as f:
-                json.dump(sorted(self.names), f)
+                json.dump(self.counts, f)
             os.replace(self.path + ".part", self.path)
         elif os.path.exists(self.path):
             os.remove(self.path)
 
     def add(self, rel):
         with self.lock:
-            self.names.add(rel)
+            self.counts[rel] = self.counts.get(rel, 0) + 1
             self._write()
 
     def remove(self, rel):
         with self.lock:
-            self.names.discard(rel)
+            self.counts.pop(rel, None)
             self._write()
 
 
@@ -85,24 +86,55 @@ def mark_failed(db, root, rel, reason):
         pass
 
 
-def recover_crashed(db, root, data_dir):
-    """File còn nằm trong marker = lần chạy trước chết khi đang xử lý nó → chuyển sang rejected/. Trả danh sách tên."""
-    mp = marker_path(data_dir)
-    if not os.path.exists(mp):
-        return []
+CRASH_REASON = "làm sập khi giải mã (2 lần)"
+OLD_CRASH_REASON = "làm sập khi giải mã"  # chính sách cũ: loại ngay lần chết đầu tiên → khôi phục một lần lúc khởi động
+MAX_STRIKES = 2
+
+
+def load_marker(mp):
     try:
-        names = json.load(open(mp))
+        d = json.load(open(mp))
     except (OSError, ValueError):
-        names = []
+        return {}
+    return {k: 1 for k in d} if isinstance(d, list) else dict(d)
+
+
+def recover_crashed(db, root, data_dir):
+    """File nằm trong marker = đang xử lý lúc process chết. Mới một lần → giữ nguyên để thử lại (deploy/SIGTERM không
+    phải lỗi của file); đủ MAX_STRIKES lần → chuyển sang rejected/. Trả danh sách tên bị loại."""
+    mp = marker_path(data_dir)
+    counts = load_marker(mp)
     moved = []
-    os.makedirs(store.rejected_dir(data_dir), exist_ok=True)
-    for rel in names:
+    for rel in list(counts):
         src = os.path.join(root, rel)
-        if os.path.exists(src):
+        if not os.path.exists(src):
+            del counts[rel]
+        elif counts[rel] >= MAX_STRIKES:
+            os.makedirs(store.rejected_dir(data_dir), exist_ok=True)
             os.replace(src, os.path.join(store.rejected_dir(data_dir), os.path.basename(rel)))
             moved.append(rel)
-    os.remove(mp)
+            del counts[rel]
+    if counts:
+        with open(mp + ".part", "w") as f:
+            json.dump(counts, f)
+        os.replace(mp + ".part", mp)
+    elif os.path.exists(mp):
+        os.remove(mp)
     return moved
+
+
+def restore_rejected(db, root, data_dir):
+    """Một lần: ảnh bị loại oan bởi chính sách cũ (reason == OLD_CRASH_REASON; không đụng ảnh hỏng khi giải mã) → về originals/."""
+    n = 0
+    for (name,) in db.execute("SELECT path FROM failed WHERE reason=?", (OLD_CRASH_REASON,)).fetchall():
+        src, dst = os.path.join(store.rejected_dir(data_dir), name), os.path.join(root, name)
+        if os.path.exists(src) and not os.path.exists(dst) and \
+                db.execute("SELECT 1 FROM originals WHERE name=?", (name,)).fetchone():
+            os.replace(src, dst)
+            db.execute("DELETE FROM failed WHERE path=?", (name,))
+            n += 1
+    db.commit()
+    return n
 
 
 def make_derivatives(rgb, data_dir, pid):

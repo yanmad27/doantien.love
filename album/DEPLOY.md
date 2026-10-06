@@ -119,3 +119,4 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 2. `/robots.txt` có `Disallow: /`, response có `X-Robots-Tag: noindex, nofollow`.
 3. Tải 3–5 ảnh, bấm Xử lý, tìm bằng selfie, bấm một kết quả mở được ảnh.
 4. Redeploy một lần, kiểm tra ảnh/chỉ mục còn nguyên. `docker stats` xem RSS khi Xử lý (so với mục 5).
+5. Đừng redeploy khi đang Xử lý (`GET /api/process` có `state:"running"`): redeploy làm gián đoạn lượt đó (ảnh đang xử lý được thử lại, chỉ bị loại nếu chết hai lần liền).

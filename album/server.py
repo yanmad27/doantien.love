@@ -26,7 +26,7 @@ from starlette.concurrency import run_in_threadpool
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
 from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, mark_failed, pending_photos,
-                     recover_crashed)
+                     recover_crashed, restore_rejected, CRASH_REASON)
 
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -108,7 +108,7 @@ class ProcessJob:
         """File làm process chết ở lần trước (OOM khi giải mã…) → chuyển sang DATA_DIR/rejected/ và báo trong trạng thái."""
         moved = recover_crashed(db, store.originals_dir(self.data_dir), self.data_dir)
         for rel in moved:
-            mark_failed(db, store.rejected_dir(self.data_dir), os.path.basename(rel), "làm sập khi giải mã")
+            mark_failed(db, store.rejected_dir(self.data_dir), os.path.basename(rel), CRASH_REASON)
         if moved:
             with self.lock:
                 self.s["rejected"] = self.s["rejected"] + moved
@@ -169,6 +169,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     quota_lock = threading.Lock()
     _db = store.connect(data_dir)  # tạo bảng một lần ở đây; lần chạy trước chết giữa lúc xử lý một ảnh → loại ảnh đó ngay
     job.recover(_db)
+    restore_rejected(_db, store.originals_dir(data_dir), data_dir)
     stored = {"bytes": _db.execute("SELECT COALESCE(SUM(size),0) FROM originals").fetchone()[0]}  # tổng ảnh gốc, giữ trong RAM
     _db.close()
 
@@ -345,10 +346,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             db = store.connect(data_dir, init=False)
             try:
                 dup = db.execute("SELECT name FROM originals WHERE sha256=?", (digest,)).fetchone()
-                if dup:
-                    if not os.path.exists(os.path.join(store.originals_dir(data_dir), dup[0])):
-                        raise HTTPException(400, "Ảnh này đã bị loại trước đó vì không xử lý được.")
+                if dup and os.path.exists(os.path.join(store.originals_dir(data_dir), dup[0])):
                     return dict(status="duplicate", name=dup[0])
+                if dup:  # bản gốc đã bị loại (rejected/) hoặc mất: cho tải lại, xoá dấu vết để xử lý lại
+                    old = db.execute("SELECT size FROM originals WHERE sha256=?", (digest,)).fetchone()
+                    db.execute("DELETE FROM originals WHERE sha256=?", (digest,))
+                    db.execute("DELETE FROM failed WHERE path=?", (dup[0],))
+                    stored["bytes"] -= old[0] if old else 0
                 final = fname
                 root = store.originals_dir(data_dir)
                 if db.execute("SELECT 1 FROM originals WHERE name=?", (final,)).fetchone() or \
@@ -357,6 +361,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     final = f"{stem}-{digest[:8]}{ext}"  # cùng tên, khác nội dung: không ghi đè
                 os.replace(part, os.path.join(root, final))
                 db.execute("INSERT INTO originals VALUES (?,?,?)", (final, digest, size))
+                db.execute("DELETE FROM failed WHERE path=?", (final,))
                 db.commit()
                 stored["bytes"] += size
             finally:
