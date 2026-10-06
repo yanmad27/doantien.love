@@ -125,6 +125,7 @@ class FaceEngine:
         if os.environ.get("ALBUM_LOW_MEM"):  # không giữ arena/mẫu cấp phát theo shape: RSS thấp hơn, chậm hơn chút
             so.enable_cpu_mem_arena = False
             so.enable_mem_pattern = False
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")  # luồng ORT không busy-wait: dưới hạn mức CPU cgroup, vòng quay rỗng đốt quota của tìm kiếm
         if threads:
             so.intra_op_num_threads = threads
         providers = providers or ["CPUExecutionProvider"]
