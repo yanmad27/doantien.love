@@ -419,9 +419,10 @@ class GateTests(unittest.TestCase):
         frame("a1.jpg", 10, sub="100")
         frame("a2.jpg", 10, sub="270", shade=102)           # +0.17 s, gần như y hệt → cùng nhóm
         frame("a3.jpg", 11, sub="100", shade=104)           # +0.83 s so với a2 → nối chuỗi
-        frame("b1.jpg", 11, sub="150", shade=240)           # khác hẳn về điểm ảnh → không nhóm
+        frame("b1.jpg", 20, sub="100", shade=240)           # b1,b2 cách 0.1 s nhưng khác hẳn về điểm ảnh → không nhóm
+        frame("b2.jpg", 20, sub="200", shade=30)
         frame("c1.jpg", 10, sub="120", make="Other")        # máy khác → không nhóm
-        frame("d1.jpg", 13, shade=104)                      # cách 2 s → không nhóm
+        frame("d1.jpg", 15, shade=104)                      # cách xa → không nhóm
         frame("e1.jpg", 10, sub="130", size=(800, 1200))    # kích thước khác
         Image.new("RGB", (1200, 800), (100, 100, 100)).save(os.path.join(o, "noexif.jpg"))
         app = app_with(d)
@@ -433,15 +434,101 @@ class GateTests(unittest.TestCase):
         self.assertEqual(grp["a1.jpg"], ids["a1.jpg"])      # id khung đầu
         self.assertEqual(grp["a2.jpg"], grp["a1.jpg"])
         self.assertEqual(grp["a3.jpg"], grp["a1.jpg"])
-        for n in ("b1.jpg", "c1.jpg", "d1.jpg", "e1.jpg", "noexif.jpg"):
+        for n in ("b1.jpg", "b2.jpg", "c1.jpg", "d1.jpg", "e1.jpg", "noexif.jpg"):
             self.assertIsNone(grp[n], n)
-        self.assertEqual(len(g["photos"]), 8)               # đếm/liệt kê không đổi
+        self.assertEqual(len(g["photos"]), 9)               # đếm/liệt kê không đổi
         self.assertTrue(all(len(p) == 8 for p in g["photos"]))
-        # tính lại là idempotent
+        # tính lại là idempotent + thống kê
         db = sqlite3.connect(store.db_path(d))
-        self.assertEqual(indexer.compute_bursts(db), 1)
-        self.assertEqual(db.execute("SELECT count(*) FROM photo_meta WHERE burst IS NOT NULL").fetchone()[0], 3)
+        st = indexer.burst_stats(db)
+        self.assertEqual((st["groups"], st["frames_in_groups"], st["largest"], st["histogram"]), (1, 3, 3, {3: 1}))
+        self.assertEqual(st["tiles"], 9 - 2)
+        out = subprocess.run([sys.executable, os.path.join(HERE, "burst_stats.py"), d], capture_output=True, text=True, check=True).stdout
+        self.assertIn("nhóm: 1", out)
+        self.assertIn("a1.jpg a2.jpg a3.jpg", out)
+        # khung mới thêm sau, chen vào giữa chuỗi → nhập vào nhóm cũ; khung sớm hơn → id nhóm đổi thành khung đầu mới (xác định theo thời gian)
+        frame("a0.jpg", 10, sub="010", shade=101)  # sớm hơn a1 (0.09 s)
+        frame("a4.jpg", 12, sub="000", shade=106)  # +0.9 s sau a3 (11.100) → nối chuỗi
+        run_process(app)
+        g2 = json.loads(call(app, "GET", "/api/gallery")[2])
+        by2 = {p[6]: p[7] for p in g2["photos"]}
+        first = store.photo_id("a0.jpg")
+        self.assertEqual({n: by2[n] for n in ("a0.jpg", "a1.jpg", "a2.jpg", "a3.jpg", "a4.jpg")}, {n: first for n in ("a0.jpg", "a1.jpg", "a2.jpg", "a3.jpg", "a4.jpg")})
+        self.assertEqual(len(g2["photos"]), 11)
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(indexer.burst_stats(db)["largest"], 5)
         db.close()
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(indexer.compute_bursts(db), 1)  # idempotent
+        self.assertEqual(db.execute("SELECT count(*) FROM photo_meta WHERE burst IS NOT NULL").fetchone()[0], 5)
+        db.close()
+
+    def test_status_endpoints_never_wait_for_locks(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d)
+        job = app.state.job
+        job.lock.acquire()  # job đang "giữ khoá" ghi trạng thái: người đọc không được chờ
+        try:
+            import time as _t
+            for path in ("/healthz", "/api/process"):
+                t = _t.perf_counter()
+                st, _, body, _ = call(app, "GET", path)
+                self.assertEqual(st, 200)
+                self.assertLess(_t.perf_counter() - t, 0.5, path)
+        finally:
+            job.lock.release()
+
+    def test_concurrent_reads_do_not_break_writer(self):
+        """Hồi quy: kết nối mode=ro mở/đóng liên tục trong lúc job ghi làm mọi lần ghi báo 'disk I/O error'."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        o = os.path.join(d, "originals")
+        os.makedirs(o)
+        for i in range(30):
+            make_jpeg(os.path.join(o, f"p{i:02d}.jpg"), (900, 600), taken="2026:05:01 12:00:%02d" % i, color=(i * 8, 90, 60))
+        app = app_with(d)
+        stop = threading.Event()
+        errs = []
+
+        def hammer():
+            while not stop.is_set():
+                for path in ("/api/stats", "/api/gallery", "/healthz", "/api/process"):
+                    st = call(app, "GET", path)[0]
+                    if st != 200:
+                        errs.append((path, st))
+
+        ths = [threading.Thread(target=hammer) for _ in range(4)]
+        [t.start() for t in ths]
+        st, _ = run_process(app)
+        stop.set()
+        [t.join() for t in ths]
+        s = json.loads(call(app, "GET", "/api/process")[2])
+        self.assertEqual((s["state"], s["failed"], s["derive_failed"]), ("done", 0, 0), s["errors"])
+        self.assertEqual(errs, [])
+        self.assertEqual(len(json.loads(call(app, "GET", "/api/gallery")[2])["photos"]), 30)
+
+    def test_process_uses_own_engine_and_budget(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        made = []
+
+        class E(FakeEngine):
+            def __init__(self, model_dir, providers=None, threads=0):
+                made.append(threads)
+
+        os.makedirs(os.path.join(d, "originals"))
+        make_jpeg(os.path.join(d, "originals", "x.jpg"))
+        with mock.patch.object(server, "FaceEngine", E):
+            app = server.create_app(d, "unused", ["CPUExecutionProvider"], threads=2, process_threads=3)
+            self.assertEqual(made, [2])
+            run_process(app)
+            self.assertEqual(made, [2, 3])  # engine riêng, 3 luồng, tạo khi bắt đầu lượt
+            made.clear()
+            app0 = server.create_app(d, "unused", ["CPUExecutionProvider"], threads=2, process_threads=0)
+            run_process(app0)
+            self.assertEqual(made, [2])  # 0 = dùng chung
+        self.assertGreaterEqual(server.cpu_budget(), 1)
 
     def test_max_results_default_covers_album(self):
         self.assertGreaterEqual(server.MAX_RESULTS, 3000)

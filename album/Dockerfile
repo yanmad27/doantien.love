@@ -27,8 +27,8 @@ RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
 USER app
 
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD ["python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8000'), timeout=8).read()"]
+HEALTHCHECK --interval=30s --timeout=20s --start-period=60s --retries=3 \
+    CMD ["python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8000'), timeout=18).read()"]
 
 # một worker duy nhất (job Xử lý và chỉ mục nằm trong RAM của process này)
 CMD ["python", "server.py"]

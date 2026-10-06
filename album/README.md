@@ -45,6 +45,7 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 - **Chặn theo Host:** chỉ host trong `ALBUM_APP_HOSTS` thấy cả app; host khác (tên miền CDN) chỉ GET/HEAD/OPTIONS `/i/`, `/thumbs/`, `/previews/`, `/static/`, `/healthz`, `/robots.txt`, còn lại 404 `no-store` (chạy trước khi đọc body).
 - **Mã chủ nhà tuỳ chọn:** đặt `ALBUM_ADMIN_TOKEN` thì `/manage` cần cookie `album_token` (không có → 401 + trang đăng nhập; `POST /api/admin-login` đặt cookie HttpOnly/SameSite=Strict, chống dò 10 lần sai/phút/IP), còn `POST /api/upload` và `POST /api/process` nhận cookie hoặc header `X-Album-Token`; `GET /api/process`, `/api/stats` vẫn mở. Chưa đặt = mở như trước.
 - `ALBUM_CDN_ORIGIN` điền vào `cdn` của manifest (và `<link rel=preconnect>` thay cho `<!--__CDN_PRECONNECT__-->` trong HTML); để trống = cùng origin (công tắc tắt CDN).
+- Nhóm chụp liên tiếp (`b`): `.venv/bin/python dev/burst_stats.py DATA_DIR` in số nhóm, histogram kích thước, nhóm lớn nhất. Đo độ trễ khi Xử lý: `dev/load_process.py`.
 - Kiểm: `.venv/bin/python -m unittest discover -s dev -p 'test_*.py'` (test migration cần model + `/tmp/album-test/photos`, tự bỏ qua nếu thiếu).
 
 ## Cấu hình (biến môi trường hoặc tham số dòng lệnh)
@@ -58,7 +59,9 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 | `ALBUM_MIN_FREE_MB` | `--min-free-mb` | `5120` |
 | `ALBUM_MAX_TOTAL_GB` | `--max-total-gb` | `20` (`0`/trống = không giới hạn tổng) |
 | `ALBUM_INDEX_WINDOW` | — | `1` (tuần tự; `2` = giải mã trước một ảnh, nhanh hơn nhưng tốn RAM) |
-| `ALBUM_THREADS` | `--threads` | `0` (theo số lõi; container đặt `2`) |
+| `ALBUM_THREADS` | `--threads` | `0` (theo số lõi; container đặt `2`) — luồng ORT của tìm kiếm |
+| `ALBUM_PROCESS_THREADS` | `--process-threads` | lõi CPU khả dụng − 2 — luồng ORT của Xử lý (model riêng); `0` = dùng chung |
+| `ALBUM_MAX_RESULTS` | — | `5000` |
 | `ALBUM_LOW_MEM` | — | chưa đặt; `1` = tắt arena onnxruntime (RAM đỉnh thấp hơn; container đặt sẵn) |
 | `ALBUM_APP_HOSTS` | — | `album.doantien.love,localhost,127.0.0.1` (host được dùng cả app) |
 | `ALBUM_CDN_ORIGIN` | — | trống = cùng origin; vd. `https://img.rsrm.dev` |

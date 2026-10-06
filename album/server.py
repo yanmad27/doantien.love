@@ -58,6 +58,9 @@ MAX_BODY_SLOTS = 8        # số body selfie đang nhận cùng lúc (mỗi cái
 DISK_CHECK_EVERY = 8 * 1024 * 1024
 PHOTO_ID = re.compile(r"^[0-9a-f]{16}$")
 DERIVE_WORKERS = int(os.environ.get("ALBUM_DERIVE_WORKERS", 2))  # số ảnh sinh WebP cùng lúc (JPEG giải mã thu nhỏ nên nhẹ RAM)
+GALLERY_REFRESH = 3.0   # giây: giãn cách dựng lại manifest khi đang Xử lý
+STATS_TTL = 10.0        # giây: /api/stats dùng giá trị đã nhớ khi đang Xử lý
+DISK_TTL = 5.0         # giây: làm mới số liệu đĩa của /healthz
 LOGIN_MAX_FAILS = 10  # lần nhập sai mỗi phút mỗi IP
 LOGIN_FALLBACK = ("<!doctype html><meta charset=utf-8><title>Đăng nhập</title><p>Cần mã chủ nhà. "
                   "Gửi POST /api/admin-login {\"token\": …} để nhận cookie.</p>")  # khi static/manage-login.html chưa có
@@ -187,19 +190,48 @@ def safe_name(raw):
     return stem.rstrip(" .") + ext
 
 
-class ProcessJob:
-    """Một lượt "Xử lý" chạy nền trong process server, dùng lại model đã nạp. Chỉ một lượt một lúc."""
+def cpu_budget():
+    """Số lõi THỰC được dùng: min(affinity, hạn mức cgroup CPU). os.cpu_count() trong container trả số lõi của máy chủ, nên
+    đặt số luồng theo nó sẽ vượt hạn mức CPU và bị throttle (cả process đứng từng đợt)."""
+    n = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    try:
+        q, per = open("/sys/fs/cgroup/cpu.max").read().split()[:2]  # cgroup v2: "600000 100000" | "max 100000"
+        if q != "max":
+            n = min(n, max(1, -(-int(q) // int(per))))
+    except (OSError, ValueError):
+        try:  # cgroup v1
+            q = int(open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read())
+            per = int(open("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read())
+            if q > 0:
+                n = min(n, max(1, -(-q // per)))
+        except (OSError, ValueError):
+            pass
+    return max(1, n)
 
-    def __init__(self, data_dir, engine, det_size, min_face):
-        self.data_dir, self.engine, self.det_size, self.min_face = data_dir, engine, det_size, min_face
-        self.lock = threading.Lock()
+
+class ProcessJob:
+    """Một lượt "Xử lý" chạy nền trong process server. Chỉ một lượt một lúc. Có engine (model) RIÊNG với ngân sách luồng riêng
+    (ALBUM_PROCESS_THREADS) để tìm kiếm của khách luôn còn phần CPU; engine_factory=None → dùng chung engine của tìm kiếm.
+
+    status() không bao giờ chờ khoá: trả bản chụp (snapshot) được job tự cập nhật, nên GET /api/process và /healthz O(1)."""
+
+    def __init__(self, data_dir, engine_factory, det_size, min_face):
+        self.data_dir, self.engine_factory, self.det_size, self.min_face = data_dir, engine_factory, det_size, min_face
+        self.lock = threading.Lock()  # chỉ để tuần tự hoá các lần GHI trạng thái; người đọc không dùng
         self.thread = None
         self.s = dict(state="idle", phase=None, total=0, done=0, failed=0, derive_failed=0, faces=0, current=None,
                       errors=[], rejected=[], started_at=None, finished_at=None, elapsed=0.0)
+        self._publish()
+
+    def _publish(self):
+        self._snap = dict(self.s, errors=list(self.s["errors"]), rejected=list(self.s["rejected"]))  # gán tham chiếu = nguyên tử
+
+    @property
+    def running(self):
+        return self._snap["state"] == "running"
 
     def status(self):
-        with self.lock:
-            s = dict(self.s, errors=list(self.s["errors"]), rejected=list(self.s["rejected"]))
+        s = dict(self._snap)
         if s["state"] == "running":
             s["elapsed"] = time.time() - s["started_at"]
         return s
@@ -211,6 +243,7 @@ class ProcessJob:
                 return False
             self.s = dict(state="running", phase="index", total=0, done=0, failed=0, derive_failed=0, faces=0, current=None,
                           errors=[], rejected=self.s["rejected"], started_at=time.time(), finished_at=None, elapsed=0.0)
+            self._publish()
         self.thread = threading.Thread(target=self._run, daemon=True, name="process")
         self.thread.start()
         return True
@@ -227,14 +260,18 @@ class ProcessJob:
         if moved:
             with self.lock:
                 self.s["rejected"] = self.s["rejected"] + moved
+                self._publish()
         return moved
 
     def _upd(self, **kw):
         with self.lock:
             self.s.update(kw)
+            self._publish()
 
     def _run(self):
+        engine = None
         try:
+            engine = self.engine_factory()
             db = store.connect(self.data_dir, init=False)  # kết nối riêng của luồng này (bảng đã tạo lúc khởi động)
             root = store.originals_dir(self.data_dir)
             self.recover(db)
@@ -250,8 +287,9 @@ class ProcessJob:
                         self.s["errors"] = (self.s["errors"] + [f"{rel}: {self._clean(info['err'])}"])[-20:]
                     else:
                         self.s["faces"] += info["faces"]
+                    self._publish()
 
-            index_photos(db, self.engine, root, self.data_dir, todo, self.det_size, self.min_face,
+            index_photos(db, engine, root, self.data_dir, todo, self.det_size, self.min_face,
                          window=INDEX_WINDOW, workers=1, max_pixels=UPLOAD_MAX_PIXELS, on_progress=progress)
             # Giai đoạn 2: WebP + metadata cho ảnh mới và ảnh đã lập chỉ mục từ bản cũ. Không dò mặt, không động tới decoding.json.
             self._upd(phase="derive", total=len(pending_derive(db)), done=0, current=None)
@@ -263,6 +301,7 @@ class ProcessJob:
                     if err is not None:
                         self.s["derive_failed"] += 1
                         self.s["errors"] = (self.s["errors"] + [f"WebP {rel}: {self._clean(err)}"])[-20:]
+                    self._publish()
 
             derive_pending(db, root, self.data_dir, workers=DERIVE_WORKERS, max_pixels=UPLOAD_MAX_PIXELS, on_progress=dprogress)
             compute_bursts(db)
@@ -273,11 +312,13 @@ class ProcessJob:
             log.exception("xử lý lỗi")
             self._upd(state="error", phase=None, current=None, finished_at=time.time(), elapsed=time.time() - self.s["started_at"],
                       errors=self.s["errors"] + [f"Lỗi chung: {self._clean(e)}"])
+        finally:
+            engine = None  # engine riêng của lượt này được giải phóng (trả RAM của model thứ hai)
 
 
 def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                max_upload=60 * 1024 * 1024, det_size=DEFAULT_DET_SIZE, min_free=5120 * 1024 * 1024,
-               max_total=20 * 1024 ** 3, app_hosts=None, cdn_origin=None, admin_token=None):
+               max_total=20 * 1024 ** 3, app_hosts=None, cdn_origin=None, admin_token=None, process_threads=None):
     require_webp()
     max_total = max_total or None  # 0/None = không giới hạn tổng dung lượng (vẫn giữ ngưỡng đĩa trống)
     if app_hosts is None:
@@ -292,11 +333,18 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     for d in (store.originals_dir(data_dir), store.thumb_dir(data_dir), store.preview_dir(data_dir),
               os.path.join(data_dir, "tmp")):
         os.makedirs(d, exist_ok=True)
-    engine = FaceEngine(model_dir, providers=providers, threads=threads)
-    job = ProcessJob(data_dir, engine, det_size, DEFAULT_MIN_FACE)
+    engine_cls = FaceEngine
+    engine = engine_cls(model_dir, providers=providers, threads=threads)
+    if process_threads is None:
+        process_threads = int(env("ALBUM_PROCESS_THREADS", default=max(1, cpu_budget() - 2)))
+    # Xử lý có model + ngân sách luồng riêng (tạo khi bắt đầu lượt, bỏ khi xong): tìm kiếm của khách (ALBUM_THREADS) không bị job chiếm hết CPU.
+    # ALBUM_PROCESS_THREADS=0 → dùng chung engine với tìm kiếm (tiết kiệm RAM, nhưng hai bên tranh nhau cùng nhóm luồng).
+    job = ProcessJob(data_dir, (lambda: engine_cls(model_dir, providers=providers, threads=process_threads)) if process_threads > 0
+                     else (lambda: engine), det_size, DEFAULT_MIN_FACE)
+    log.info("CPU khả dụng %d; luồng tìm kiếm=%s, luồng Xử lý=%s", cpu_budget(), threads or "tự động", process_threads or "dùng chung")
     app.state.job = job  # cho test: job.thread.join()
     cache = {"mtime": None, "sig": None, "E": None, "rows": None, "photos": None}
-    gal = {"mtime": None, "meta": {}, "raw": b"", "gz": b"", "mv": ""}
+    gal = {"mtime": None, "ts": 0.0, "meta": {}, "raw": b"", "gz": b"", "mv": ""}
     glock = threading.Lock()
     lock = threading.Lock()
     upload_lock = threading.Lock()
@@ -317,6 +365,23 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     def stored_bytes():
         return stored["bytes"]
 
+    disk = {"free": 0, "total": 0, "ts": 0.0, "busy": False}
+
+    def refresh_disk():
+        try:
+            du = shutil.disk_usage(data_dir)
+            disk.update(free=du.free, total=du.total, ts=time.time())
+        finally:
+            disk["busy"] = False
+
+    refresh_disk()
+
+    def disk_state():
+        if time.time() - disk["ts"] > DISK_TTL and not disk["busy"]:
+            disk["busy"] = True
+            threading.Thread(target=refresh_disk, daemon=True).start()
+        return disk
+
     class Busy(Exception):
         pass
 
@@ -329,13 +394,23 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             search_slots.release()
 
     def db_mtime():
+        """Dấu hiệu DB đã đổi. WAL: commit chỉ ghi vào -wal (mtime/kích thước của nó đổi), file chính đổi khi checkpoint."""
         p = store.db_path(data_dir)
-        return os.stat(p).st_mtime_ns if os.path.exists(p) else None
+        try:
+            sig = [os.stat(p).st_mtime_ns]
+        except OSError:
+            return None
+        try:
+            w = os.stat(p + "-wal")
+            sig += [w.st_mtime_ns, w.st_size]
+        except OSError:
+            pass
+        return tuple(sig)
 
     def faces_sig():
-        """Chữ ký phần ảnh/khuôn mặt của chỉ mục: ghi photo_meta (sinh WebP) làm đổi mtime của DB nhưng không đổi chữ ký
+        """Chữ ký phần ảnh/khuôn mặt của chỉ mục: ghi photo_meta (sinh WebP) làm đổi DB nhưng không đổi chữ ký
         này, nên tìm kiếm không phải nạp lại ma trận embedding sau mỗi ảnh khi backfill."""
-        db = sqlite3.connect(f"file:{store.db_path(data_dir)}?mode=ro", uri=True, timeout=30)
+        db = store.connect_ro(data_dir)
         try:
             return (db.execute("SELECT count(*), total(mtime_ns), total(det_size), total(n_faces), total(width) FROM photos").fetchone(),
                     db.execute("SELECT count(*) FROM faces").fetchone())
@@ -343,8 +418,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             db.close()
 
     def index():
+        """Ma trận khuôn mặt trong RAM. Có một bản rồi mà đang có luồng khác nạp lại → trả bản cũ ngay, không chờ khoá
+        (request không bao giờ xếp hàng sau một lượt nạp)."""
         m = db_mtime()
-        with lock:
+        if cache["E"] is not None and cache["mtime"] == m:
+            return cache["E"], cache["rows"], cache["photos"]
+        if not lock.acquire(blocking=cache["E"] is None):
+            return cache["E"], cache["rows"], cache["photos"]
+        try:
             if cache["mtime"] != m or cache["E"] is None:
                 sig = faces_sig() if m is not None else None
                 if cache["E"] is None or sig is None or sig != cache["sig"]:
@@ -352,15 +433,25 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     cache["sig"] = sig
                 cache["mtime"] = m
             return cache["E"], cache["rows"], cache["photos"]
+        finally:
+            lock.release()
 
-    def gallery_state():
-        """Manifest + bảng meta trong RAM, dựng lại khi DB đổi (đọc mtime TRƯỚC khi truy vấn: ghi chen vào thì lần sau dựng lại)."""
+    def gallery_state(fresh=False):
+        """Manifest + bảng meta trong RAM, dựng lại khi DB đổi (đọc dấu hiệu TRƯỚC khi truy vấn: ghi chen vào thì lần sau dựng lại).
+        Trong lúc Xử lý chạy: dựng lại tối đa mỗi GALLERY_REFRESH giây và luôn trả bản cũ thay vì chờ (fresh=True bỏ qua giãn cách)."""
         m = db_mtime()
-        with glock:
+        have = bool(gal["raw"])
+        if have and gal["mtime"] == m:
+            return gal
+        if have and not fresh and job.running and time.time() - gal["ts"] < GALLERY_REFRESH:
+            return gal
+        if not glock.acquire(blocking=not have):
+            return gal
+        try:
             if gal["mtime"] != m or not gal["raw"]:
                 meta, rows = {}, []
                 if m is not None:
-                    db = sqlite3.connect(f"file:{store.db_path(data_dir)}?mode=ro", uri=True, timeout=30)
+                    db = store.connect_ro(data_dir)
                     try:
                         q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst "
                              "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id ORDER BY m.taken IS NULL, m.taken, p.path")
@@ -374,8 +465,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
                 mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
                 raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"photos":{photos_json}}}').encode()
-                gal.update(mtime=m, meta=meta, raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
+                gal.update(mtime=m, ts=time.time(), meta=meta, raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
             return gal
+        finally:
+            glock.release()
 
     def search(body):
         t0 = time.perf_counter()
@@ -517,20 +610,42 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             return JSONResponse({"error": out or "no_face"}, status_code=422)
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/stats")
-    def stats():
+    def compute_stats():
         _, rows, photos = index()
-        db = store.connect(data_dir, init=False)
+        db = store.connect_ro(data_dir)
         try:
             todo, _ = pending_photos(db, store.originals_dir(data_dir), det_size)
             n_derive = len(pending_derive(db))
             n_orig = len(find_photos(store.originals_dir(data_dir)))
         finally:
             db.close()
-        du = shutil.disk_usage(data_dir)
+        du = disk_state()
         return dict(photos=len(photos), faces=len(rows), originals=n_orig, pending=len(todo), pending_derive=n_derive,
-                    max_upload_mb=max_upload // 2**20, disk_free=du.free, disk_total=du.total,
+                    max_upload_mb=max_upload // 2**20, disk_free=du["free"], disk_total=du["total"],
                     stored_bytes=stored_bytes(), max_total_bytes=max_total)
+
+    sc = {"v": None, "ts": 0.0, "busy": False}
+
+    def refresh_stats():
+        try:
+            sc.update(v=compute_stats(), ts=time.time())
+        except Exception:
+            log.exception("stats lỗi")
+        finally:
+            sc["busy"] = False
+
+    @app.get("/api/stats")
+    async def stats():
+        """Lúc rảnh: tính mới mỗi lần (quét thư mục + so sánh chỉ mục). Lúc đang Xử lý: trả giá trị đã nhớ (tối đa STATS_TTL
+        giây tuổi), việc quét chạy nền — không request nào chờ quét thư mục/khoá DB trong khi job đang ghi."""
+        if sc["v"] is not None and job.running:
+            if time.time() - sc["ts"] > STATS_TTL and not sc["busy"]:
+                sc["busy"] = True
+                threading.Thread(target=refresh_stats, daemon=True).start()
+            return sc["v"]
+        v = await run_in_threadpool(compute_stats)
+        sc.update(v=v, ts=time.time())
+        return v
 
     async def reject(request, status, msg):
         n = 0
@@ -634,7 +749,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         return dict(started=True, **job.status())
 
     @app.get("/api/process")
-    def api_process_status():
+    async def api_process_status():  # async + snapshot: chạy thẳng trên event loop, không qua threadpool, không khoá, không đĩa
         return JSONResponse(job.status(), headers={"Cache-Control": "no-store"})
 
     # ---------- ảnh: WebP đặt tên theo nội dung, thumbnail/bản xem cũ, bản gốc (host ngoài chỉ lấy được ba nhóm đầu: HostGate) ----------
@@ -647,7 +762,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             raise HTTPException(404)
         v = gallery_state()["meta"].get(m.group(1), (None,))[0]
         if v is None or v != m.group(2):
-            raise HTTPException(404)
+            v = gallery_state(fresh=True)["meta"].get(m.group(1), (None,))[0]  # bản nhớ có thể cũ hơn manifest khách đã nhận
+            if v is None or v != m.group(2):
+                raise HTTPException(404)
         p = os.path.join(store.deriv_dir(data_dir), fname)
         if not os.path.exists(p):
             raise HTTPException(404)
@@ -680,9 +797,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         return FileResponse(path, filename=photos[pid]["path"], headers={"Cache-Control": "private, max-age=86400"})
 
     @app.api_route("/healthz", methods=["GET", "HEAD"])
-    def healthz():
-        du = shutil.disk_usage(data_dir)  # không chứa dữ liệu ảnh; deploy dùng để kiểm đĩa trước khi tải ảnh
-        return dict(ok=True, disk_free=du.free, disk_total=du.total)
+    async def healthz():
+        """O(1): đọc số liệu đĩa đã nhớ (làm mới nền mỗi DISK_TTL giây), không threadpool, không khoá, không đụng DB/thư mục ảnh."""
+        du = disk_state()
+        return dict(ok=True, disk_free=du["free"], disk_total=du["total"])
 
     @app.api_route("/robots.txt", methods=["GET", "HEAD"])
     def robots():
@@ -722,6 +840,8 @@ def main():
     ap.add_argument("--providers", default=env("ALBUM_PROVIDERS", default="CPUExecutionProvider"))
     ap.add_argument("--threads", type=int, default=int(env("ALBUM_THREADS", default=0)),
                     help="số luồng onnxruntime (0 = theo số lõi)")
+    ap.add_argument("--process-threads", type=int, default=int(env("ALBUM_PROCESS_THREADS", default=-1)),
+                    help="số luồng onnxruntime của Xử lý (model riêng); mặc định = lõi CPU khả dụng − 2; 0 = dùng chung với tìm kiếm")
     ap.add_argument("--max-upload-mb", type=int, default=int(env("ALBUM_MAX_UPLOAD_MB", default=60)))
     ap.add_argument("--min-free-mb", type=int, default=int(env("ALBUM_MIN_FREE_MB", default=5120)),
                     help="từ chối tải lên khi ổ đĩa của DATA_DIR còn trống ít hơn mức này")
@@ -738,7 +858,8 @@ def main():
         sys.exit(f"LỖI: không ghi được vào DATA_DIR={data_dir} ({e}). Volume phải cho phép user của container ghi (xem DEPLOY.md).")
     app = create_app(data_dir, a.model_dir, a.providers.split(","), threads=a.threads,
                      max_upload=a.max_upload_mb * 1024 * 1024, min_free=a.min_free_mb * 1024 * 1024,
-                     max_total=int(a.max_total_gb * 1024 ** 3) if a.max_total_gb > 0 else None)
+                     max_total=int(a.max_total_gb * 1024 ** 3) if a.max_total_gb > 0 else None,
+                     process_threads=None if a.process_threads < 0 else a.process_threads)
     uvicorn.run(app, host=a.host, port=a.port, log_level="warning", workers=1)
 
 

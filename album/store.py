@@ -66,6 +66,10 @@ def connect(data_dir, init=True):
     os.makedirs(thumb_dir(data_dir), exist_ok=True)
     db = sqlite3.connect(db_path(data_dir), timeout=30)
     if init:
+        try:  # WAL: người đọc (manifest, thống kê, tìm kiếm) không bao giờ chờ người ghi (Xử lý/tải lên) commit + fsync; bản cũ vẫn đọc được DB này
+            db.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass  # đang có kết nối khác giữ khoá: để lần khởi động sau
         db.executescript(SCHEMA)
         have = {r[1] for r in db.execute("PRAGMA table_info(photo_meta)")}
         for col, typ in META_COLUMNS:
@@ -75,11 +79,19 @@ def connect(data_dir, init=True):
     return db
 
 
+def connect_ro(data_dir, timeout=30):
+    """Kết nối chỉ đọc cho request. KHÔNG dùng URI mode=ro: mở/đóng kết nối mode=ro trong cùng process làm mọi lần ghi của
+    kết nối khác báo 'disk I/O error' (tái hiện được với SQLite 3.51/macOS); kết nối thường + query_only thì an toàn."""
+    db = sqlite3.connect(db_path(data_dir), timeout=timeout)
+    db.execute("PRAGMA query_only=ON")
+    return db
+
+
 def load_matrix(data_dir):
     """Trả về (E [N,512] float32, rows [N] -> dict mô tả khuôn mặt, photos {id: dict})."""
     if not os.path.exists(db_path(data_dir)):
         return np.zeros((0, 512), np.float32), [], {}
-    db = sqlite3.connect(f"file:{db_path(data_dir)}?mode=ro", uri=True, timeout=30)
+    db = connect_ro(data_dir)
     photos = {r[0]: dict(id=r[0], path=r[1], width=r[2], height=r[3], n_faces=r[4])
               for r in db.execute("SELECT id, path, width, height, n_faces FROM photos")}
     embs, rows = [], []

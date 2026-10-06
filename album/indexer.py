@@ -447,12 +447,16 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
 
 
 def compute_bursts(db):
-    """Gán photo_meta.burst = id khung đầu cho các khung chụp liên tiếp (ít nhất 2 khung), còn lại NULL. Chỉ là DỮ LIỆU:
-    không đổi cách liệt kê/đếm. Trong từng (máy ảnh, kích thước), theo thời gian chụp: khung nối vào khung liền trước khi
-    cách ≤ BURST_MAX_GAP giây VÀ sai khác điểm ảnh trung bình < BURST_MAX_DIFF (chuỗi nối tiếp). Ảnh không có giờ chụp thì không thuộc nhóm nào.
-    Chạy lại được bất cứ lúc nào (tính lại toàn bộ trong một giao dịch); trả số nhóm."""
-    rows = db.execute("SELECT id, taken, cam, w, h, sig FROM photo_meta WHERE taken IS NOT NULL AND sig IS NOT NULL "
-                      "ORDER BY cam, w, h, taken, id").fetchall()
+    """Gán photo_meta.burst = id khung ĐẦU của nhóm chụp liên tiếp (≥ 2 khung), còn lại NULL.
+
+    Xác định (không phụ thuộc thứ tự xử lý): trong từng (máy ảnh, kích thước) — máy ảnh = Make|Model (+ số seri thân máy nếu
+    EXIF có, để hai thân máy cùng model chụp xen kẽ không cắt chuỗi của nhau) — duyệt theo (giờ chụp, tên file); khung nối vào
+    khung liền trước khi cách 0..BURST_MAX_GAP giây VÀ sai khác điểm ảnh trung bình < BURST_MAX_DIFF trên chữ ký xám 16x16
+    của thumb 240 (chuỗi nối tiếp: so với khung liền trước, không phải khung đầu). Ảnh không có giờ chụp không thuộc nhóm nào.
+    Tính lại toàn bộ mỗi lần (rẻ: chỉ đọc DB) nên khung mới thêm vào sau tự nhập vào nhóm cũ; chỉ UPDATE những dòng đổi.
+    Chỉ là DỮ LIỆU, không đổi cách liệt kê/đếm. Trả số nhóm."""
+    rows = db.execute("SELECT m.id, m.taken, m.cam, m.w, m.h, m.sig FROM photo_meta m JOIN photos p ON p.id=m.id "
+                      "WHERE m.taken IS NOT NULL AND m.sig IS NOT NULL ORDER BY m.cam, m.w, m.h, m.taken, p.path").fetchall()
     groups, cur, prev = [], [], None
     for pid, taken, cam, w, h, sig in rows:
         arr = np.frombuffer(sig, np.uint8).astype(np.int16)
@@ -466,8 +470,28 @@ def compute_bursts(db):
         prev = ((cam, w, h), taken, arr)
     if len(cur) > 1:
         groups.append(cur)
-    db.execute("UPDATE photo_meta SET burst=NULL WHERE burst IS NOT NULL")
-    for g in groups:
-        db.executemany("UPDATE photo_meta SET burst=? WHERE id=?", [(g[0], pid) for pid in g])
+    want = {pid: g[0] for g in groups for pid in g}
+    have = dict(db.execute("SELECT id, burst FROM photo_meta WHERE burst IS NOT NULL").fetchall())
+    for pid in have.keys() - want.keys():
+        db.execute("UPDATE photo_meta SET burst=NULL WHERE id=?", (pid,))
+    for pid, b in want.items():
+        if have.get(pid) != b:
+            db.execute("UPDATE photo_meta SET burst=? WHERE id=?", (b, pid))
     db.commit()
     return len(groups)
+
+
+def burst_stats(db):
+    """Thống kê nhóm chụp liên tiếp: số nhóm, số khung trong nhóm, histogram kích thước, nhóm lớn nhất (tên file các khung)."""
+    groups = {}
+    for b, path in db.execute("SELECT m.burst, p.path FROM photo_meta m JOIN photos p ON p.id=m.id "
+                              "WHERE m.burst IS NOT NULL ORDER BY m.taken, p.path"):
+        groups.setdefault(b, []).append(path)
+    hist = {}
+    for g in groups.values():
+        hist[len(g)] = hist.get(len(g), 0) + 1
+    total = db.execute("SELECT count(*) FROM photos").fetchone()[0]
+    big = max(groups.values(), key=len) if groups else []
+    return dict(photos=total, groups=len(groups), frames_in_groups=sum(len(g) for g in groups.values()),
+                tiles=total - sum(len(g) - 1 for g in groups.values()), histogram=dict(sorted(hist.items())),
+                largest=len(big), largest_frames=big)
