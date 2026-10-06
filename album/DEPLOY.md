@@ -78,7 +78,9 @@ Các chặn trong app tính theo mức này: ảnh tải lên ≤ 64 MP, selfie 
 
 Đỉnh do ảnh lớn nhất quyết định (ảnh 45 MP: ~135 MB mảng + bộ nhớ trung gian của model dò ở 1600 px; PNG giải mã nặng hơn JPEG cùng số điểm ảnh). Tìm kiếm trong lúc đang Xử lý vẫn chạy, chậm hơn. Nếu bị OOM-kill: tăng giới hạn.
 
-Tốc độ: ~0.8 giây/ảnh ≤ 4000 px; ảnh 24 MP ~1.5 s, 45 MP ~2.5 s (CPU hiện đại, nhiều lõi). 1000 ảnh ≈ 15–25 phút.
+Backfill WebP (giai đoạn `derive`, không dò mặt): đo trên Mac 8 lõi, 1900 ảnh (gồm 7 ảnh 24–45 MP): 2 luồng 0.107 s/ảnh (204 s tổng), 1 luồng 0.19 s/ảnh (361 s); RSS đỉnh +~0.2 GB so với lúc nhàn rỗi. Ảnh JPEG dùng giải mã thu nhỏ nên 45 MP chỉ ~0.3 s.
+
+Tốc độ dò mặt: ~0.8 giây/ảnh ≤ 4000 px; ảnh 24 MP ~1.5 s, 45 MP ~2.5 s (CPU hiện đại, nhiều lõi). 1000 ảnh ≈ 15–25 phút.
 
 ## 6. Dung lượng đĩa mỗi ảnh
 
@@ -90,9 +92,10 @@ Tốc độ: ~0.8 giây/ảnh ≤ 4000 px; ảnh 24 MP ~1.5 s, 45 MP ~2.5 s (CPU
 | Bản xem 2000 px (JPEG q85) | ~0.5 MB (ảnh mẫu), có thể ~0.3–1 MB |
 | Thumbnail 640 px | ~60 KB |
 | Chỉ mục (embedding + bbox, `index.db`) | ~30 KB (≈ 1 KB/khuôn mặt, ~15 mặt/ảnh nhóm) |
-| **Ngoài ảnh gốc** | **~0.6 MB/ảnh** |
+| Bộ WebP `i/` (240 + 480 + 2000 px, q78) | ~190 KB (đo trên 1900 ảnh thử 1.2–45 MP; ảnh thật nhiều chi tiết có thể 250–400 KB) |
+| **Ngoài ảnh gốc** | **~0.8 MB/ảnh** (~1.0–1.2 MB nếu giữ cả JPEG cũ + WebP của ảnh nhiều chi tiết) |
 
-Ví dụ: 1000 ảnh × 15 MB gốc ≈ 15 GB + 0.6 GB — đặt `ALBUM_MAX_TOTAL_GB` ≥ con số này (mặc định 20) và để đĩa còn trống ≥ `ALBUM_MIN_FREE_MB`. Cần thêm chỗ trống cho tệp tạm lúc tải lên (một ảnh một lúc). Trước khi tải ảnh, kiểm tra đĩa của host:
+Ví dụ: 1000 ảnh × 15 MB gốc ≈ 15 GB + 0.8 GB — đặt `ALBUM_MAX_TOTAL_GB` ≥ con số này (mặc định 20) và để đĩa còn trống ≥ `ALBUM_MIN_FREE_MB`. Cần thêm chỗ trống cho tệp tạm lúc tải lên (một ảnh một lúc). Trước khi tải ảnh, kiểm tra đĩa của host:
 
 ```sh
 curl -s https://album.doantien.love/healthz    # {"ok":true,"disk_free":…,"disk_total":…} (byte, của ổ chứa DATA_DIR)
