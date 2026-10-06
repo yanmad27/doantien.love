@@ -289,7 +289,9 @@ def exif_camera(im):
 
 SIG_SIDE = 16
 BURST_MAX_GAP = 1.0   # giây giữa hai khung liền nhau
-BURST_MAX_DIFF = 6.0  # sai khác điểm ảnh trung bình (0..255) trên chữ ký xám 16x16
+BURST_MAX_DIFF = 6.0  # sai khác điểm ảnh trung bình (0..255) trên chữ ký xám 16x16, so với khung liền trước
+BURST_FIRST_DIFF = 12.0  # ... và so với khung ĐẦU của nhóm (chống trôi dần: cảnh đổi chậm không thành một nhóm khổng lồ)
+BURST_MAX_SPAN = 5.0     # tổng thời gian tối đa của một nhóm (giây)
 
 
 def exif_taken(im):
@@ -384,8 +386,15 @@ def pending_derive(db):
     """Ảnh đã lập chỉ mục mà chưa có photo_meta hợp lệ: thiếu, khác DERIV_VERSION, hoặc file gốc đã đổi từ lúc sinh."""
     return db.execute(
         "SELECT p.id, p.path, p.size, p.mtime_ns FROM photos p LEFT JOIN photo_meta m ON m.id=p.id "
-        "WHERE m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns OR m.sig IS NULL ORDER BY p.path",
+        "WHERE (m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns OR m.sig IS NULL) "
+        "AND NOT EXISTS (SELECT 1 FROM derive_failed f WHERE f.id=p.id AND f.size=p.size AND f.mtime_ns=p.mtime_ns) ORDER BY p.path",
         (DERIV_VERSION,)).fetchall()
+
+
+def known_derive_failures(db):
+    """Số ảnh đang có bản ghi lỗi sinh WebP còn hiệu lực (file gốc chưa đổi từ lúc lỗi)."""
+    return db.execute("SELECT count(*) FROM derive_failed f JOIN photos p ON p.id=f.id "
+                      "WHERE f.size=p.size AND f.mtime_ns=p.mtime_ns").fetchone()[0]
 
 
 def drop_stale_derivatives(data_dir, pid, keep_v=None):
@@ -435,10 +444,15 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                            (pid, m["taken"], m["v"], m["color"], DERIV_VERSION, m["w"], m["h"], size, mtime_ns, m["cam"], m["sig"]))
                 db.commit()
+                db.execute("DELETE FROM derive_failed WHERE id=?", (pid,))
+                db.commit()
                 drop_stale_derivatives(data_dir, pid, m["v"])
                 st["ok"] += 1
             else:
                 log.warning("WebP bỏ qua %s: %s: %s", rel, type(err).__name__, err)
+                db.execute("INSERT OR REPLACE INTO derive_failed VALUES (?,?,?,?)",
+                           (pid, size, mtime_ns, f"{type(err).__name__}: {err}"[:300]))
+                db.commit()
                 st["bad"] += 1
             if on_progress:
                 on_progress(i, len(todo), rel, err)
@@ -449,6 +463,7 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
 def compute_bursts(db):
     """Gán photo_meta.burst = id khung ĐẦU của nhóm chụp liên tiếp (≥ 2 khung), còn lại NULL.
 
+    Giới hạn chống trôi: khung cũng phải khác khung ĐẦU nhóm < BURST_FIRST_DIFF và cả nhóm kéo dài ≤ BURST_MAX_SPAN giây.
     Xác định (không phụ thuộc thứ tự xử lý): trong từng (máy ảnh, kích thước) — máy ảnh = Make|Model (+ số seri thân máy nếu
     EXIF có, để hai thân máy cùng model chụp xen kẽ không cắt chuỗi của nhau) — duyệt theo (giờ chụp, tên file); khung nối vào
     khung liền trước khi cách 0..BURST_MAX_GAP giây VÀ sai khác điểm ảnh trung bình < BURST_MAX_DIFF trên chữ ký xám 16x16
@@ -457,16 +472,17 @@ def compute_bursts(db):
     Chỉ là DỮ LIỆU, không đổi cách liệt kê/đếm. Trả số nhóm."""
     rows = db.execute("SELECT m.id, m.taken, m.cam, m.w, m.h, m.sig FROM photo_meta m JOIN photos p ON p.id=m.id "
                       "WHERE m.taken IS NOT NULL AND m.sig IS NOT NULL ORDER BY m.cam, m.w, m.h, m.taken, p.path").fetchall()
-    groups, cur, prev = [], [], None
+    groups, cur, prev, first = [], [], None, None
     for pid, taken, cam, w, h, sig in rows:
         arr = np.frombuffer(sig, np.uint8).astype(np.int16)
         if prev and prev[0] == (cam, w, h) and 0 <= taken - prev[1] <= BURST_MAX_GAP \
-                and np.abs(arr - prev[2]).mean() < BURST_MAX_DIFF:
+                and np.abs(arr - prev[2]).mean() < BURST_MAX_DIFF \
+                and taken - first[0] <= BURST_MAX_SPAN and np.abs(arr - first[1]).mean() < BURST_FIRST_DIFF:
             cur.append(pid)
         else:
             if len(cur) > 1:
                 groups.append(cur)
-            cur = [pid]
+            cur, first = [pid], (taken, arr)
         prev = ((cam, w, h), taken, arr)
     if len(cur) > 1:
         groups.append(cur)

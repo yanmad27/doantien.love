@@ -36,7 +36,7 @@ from starlette.staticfiles import StaticFiles
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
 from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, DERIV_VERSION, WEBP_SIZES, CRASH_REASON, compute_bursts, derive_pending,
-                     find_photos, index_photos, mark_failed, pending_derive, pending_photos, recover_crashed,
+                     find_photos, index_photos, known_derive_failures, mark_failed, pending_derive, pending_photos, recover_crashed,
                      require_webp, restore_rejected)
 
 # Container (python:slim) không có /etc/mime.types: .webp/.woff2 sẽ thành text/plain, cùng nosniff → trình duyệt chặn ảnh chéo origin (ORB).
@@ -61,7 +61,8 @@ DERIVE_WORKERS = int(os.environ.get("ALBUM_DERIVE_WORKERS", 2))  # số ảnh si
 GALLERY_REFRESH = 3.0   # giây: giãn cách dựng lại manifest khi đang Xử lý
 STATS_TTL = 10.0        # giây: /api/stats dùng giá trị đã nhớ khi đang Xử lý
 DISK_TTL = 5.0         # giây: làm mới số liệu đĩa của /healthz
-LOGIN_MAX_FAILS = 10  # lần nhập sai mỗi phút mỗi IP
+LOGIN_MAX_FAILS = 10  # lượt thử mỗi phút mỗi IP
+LOGIN_GLOBAL_MAX = 30  # lượt thử mỗi phút trên mọi IP; vượt → 429 cho tất cả trong 60 s
 LOGIN_FALLBACK = ("<!doctype html><meta charset=utf-8><title>Đăng nhập</title><p>Cần mã chủ nhà. "
                   "Gửi POST /api/admin-login {\"token\": …} để nhận cookie.</p>")  # khi static/manage-login.html chưa có
 DEFAULT_APP_HOSTS = "album.doantien.love,localhost,127.0.0.1"
@@ -76,6 +77,11 @@ INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải
 class CachedStatic(StaticFiles):
     """File tĩnh của giao diện, cache dài: HTML gắn ?v=<mã nội dung> (xem static_version) nên URL đổi khi nội dung đổi;
     font đặt tên theo kiểu chữ + subset (đổi font thì đổi tên file)."""
+
+    async def get_response(self, path, scope):
+        if path.lower().endswith((".html", ".htm")):  # HTML chỉ phát qua các route có templating (static_page), không qua /static ở bất kỳ host nào
+            raise HTTPException(404)
+        return await super().get_response(path, scope)
 
     def file_response(self, full_path, stat_result, scope, status_code=200):
         resp = super().file_response(full_path, stat_result, scope, status_code)
@@ -292,7 +298,7 @@ class ProcessJob:
             index_photos(db, engine, root, self.data_dir, todo, self.det_size, self.min_face,
                          window=INDEX_WINDOW, workers=1, max_pixels=UPLOAD_MAX_PIXELS, on_progress=progress)
             # Giai đoạn 2: WebP + metadata cho ảnh mới và ảnh đã lập chỉ mục từ bản cũ. Không dò mặt, không động tới decoding.json.
-            self._upd(phase="derive", total=len(pending_derive(db)), done=0, current=None)
+            self._upd(phase="derive", total=len(pending_derive(db)), done=0, current=None, derive_failed=known_derive_failures(db))
 
             def dprogress(i, n, rel, err):
                 with self.lock:
@@ -343,7 +349,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                      else (lambda: engine), det_size, DEFAULT_MIN_FACE)
     log.info("CPU khả dụng %d; luồng tìm kiếm=%s, luồng Xử lý=%s", cpu_budget(), threads or "tự động", process_threads or "dùng chung")
     app.state.job = job  # cho test: job.thread.join()
-    cache = {"mtime": None, "sig": None, "E": None, "rows": None, "photos": None}
+    cache = {"mtime": None, "sig": None, "t": None}  # t = (E, rows, photos) công bố bằng MỘT phép gán
     gal = {"mtime": None, "ts": 0.0, "meta": {}, "raw": b"", "gz": b"", "mv": ""}
     glock = threading.Lock()
     lock = threading.Lock()
@@ -418,21 +424,22 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             db.close()
 
     def index():
-        """Ma trận khuôn mặt trong RAM. Có một bản rồi mà đang có luồng khác nạp lại → trả bản cũ ngay, không chờ khoá
-        (request không bao giờ xếp hàng sau một lượt nạp)."""
+        """(E, rows, photos) trong RAM — luôn là MỘT bộ nhất quán (công bố bằng một phép gán, mỗi request đọc một lần). Có một bản
+        rồi mà đang có luồng khác nạp lại → trả bản cũ ngay, không chờ khoá (request không bao giờ xếp hàng sau một lượt nạp)."""
         m = db_mtime()
-        if cache["E"] is not None and cache["mtime"] == m:
-            return cache["E"], cache["rows"], cache["photos"]
-        if not lock.acquire(blocking=cache["E"] is None):
-            return cache["E"], cache["rows"], cache["photos"]
+        t = cache["t"]
+        if t is not None and cache["mtime"] == m:
+            return t
+        if not lock.acquire(blocking=t is None):
+            return t
         try:
-            if cache["mtime"] != m or cache["E"] is None:
+            if cache["mtime"] != m or cache["t"] is None:
                 sig = faces_sig() if m is not None else None
-                if cache["E"] is None or sig is None or sig != cache["sig"]:
-                    cache["E"], cache["rows"], cache["photos"] = store.load_matrix(data_dir)
+                if cache["t"] is None or sig is None or sig != cache["sig"]:
+                    cache["t"] = store.load_matrix(data_dir)
                     cache["sig"] = sig
                 cache["mtime"] = m
-            return cache["E"], cache["rows"], cache["photos"]
+            return cache["t"]
         finally:
             lock.release()
 
@@ -443,6 +450,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         have = bool(gal["raw"])
         if have and gal["mtime"] == m:
             return gal
+        if fresh:  # dựng lại "tươi" do /i/ gọi tối đa mỗi giây một lần (URL sai v không được khuếch đại thành truy vấn DB)
+            if time.time() - gal.get("fresh_at", 0.0) < 1.0:
+                fresh = False
+            else:
+                gal["fresh_at"] = time.time()
         if have and not fresh and job.running and time.time() - gal["ts"] < GALLERY_REFRESH:
             return gal
         if not glock.acquire(blocking=not have):
@@ -523,30 +535,52 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         if not is_admin(request):
             raise HTTPException(401, "Cần mã chủ nhà (cookie album_token hoặc header X-Album-Token) để thực hiện thao tác này.")
 
-    fails = {}  # ip -> [thời điểm sai]; throttle đăng nhập trong RAM
+    fails = {}  # ip -> [dấu thời gian các lần thử trong 60 s]; throttle đăng nhập trong RAM
+    glob = {"ts": [], "locked_until": 0.0}
     fails_lock = threading.Lock()
 
     def client_ip(request: Request):
         xff = request.headers.get("x-forwarded-for", "")
         return xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "?")  # mục ngoài cùng bên phải do proxy tin cậy thêm
 
-    def throttled(ip, record=False):
+    def login_reserve(ip):
+        """Đặt chỗ MỘT lượt thử TRƯỚC khi so mã (đúng thì hoàn lại): nhiều kết nối đồng thời không lọt qua ngưỡng. Mỗi IP tối đa
+        LOGIN_MAX_FAILS lượt/phút; toàn cục tối đa LOGIN_GLOBAL_MAX lượt/phút, vượt thì khoá cả hệ thống 60 s. None = bị chặn."""
         now = time.time()
         with fails_lock:
+            if now < glob["locked_until"]:
+                return None
             for k in [k for k, v in fails.items() if not v or now - v[-1] > 60]:
                 del fails[k]
             ts = [t for t in fails.get(ip, []) if now - t < 60]
-            if record:
-                ts.append(now)
+            glob["ts"] = [t for t in glob["ts"] if now - t < 60]
+            if len(ts) >= LOGIN_MAX_FAILS:
+                fails[ip] = ts
+                return None
+            if len(glob["ts"]) >= LOGIN_GLOBAL_MAX:
+                glob["locked_until"] = now + 60
+                return None
+            stamp = now
+            while stamp in glob["ts"]:  # dấu duy nhất để hoàn lại đúng lượt
+                stamp += 1e-6
+            ts.append(stamp)
             fails[ip] = ts
-            return len(ts) >= LOGIN_MAX_FAILS if not record else len(ts) > LOGIN_MAX_FAILS
+            glob["ts"].append(stamp)
+            return stamp
+
+    def login_refund(ip, stamp):
+        with fails_lock:
+            for lst in (fails.get(ip, []), glob["ts"]):
+                if stamp in lst:
+                    lst.remove(stamp)
 
     @app.post("/api/admin-login")
     async def api_admin_login(request: Request):
         if not token:
             raise HTTPException(404)
         ip = client_ip(request)
-        if throttled(ip):
+        stamp = login_reserve(ip)
+        if stamp is None:
             raise HTTPException(429, "Nhập sai quá nhiều lần, hãy thử lại sau ít phút.")
         body = b""
         async for c in request.stream():
@@ -558,9 +592,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         except Exception:
             given = None
         if not isinstance(given, str) or not hmac.compare_digest(given.encode(), token.encode()):
-            if throttled(ip, record=True):
-                raise HTTPException(429, "Nhập sai quá nhiều lần, hãy thử lại sau ít phút.")
-            raise HTTPException(401, "Mã không đúng.")
+            raise HTTPException(401, "Mã không đúng.")  # lượt thử đã tính, không hoàn
+        login_refund(ip, stamp)
         https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
         resp = Response(status_code=204, headers={"Cache-Control": "no-store"})
         resp.set_cookie("album_token", token, max_age=30 * 86400, path="/", httponly=True, samesite="strict", secure=https)
@@ -642,10 +675,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             if time.time() - sc["ts"] > STATS_TTL and not sc["busy"]:
                 sc["busy"] = True
                 threading.Thread(target=refresh_stats, daemon=True).start()
-            return sc["v"]
+            return JSONResponse(sc["v"], headers={"Cache-Control": "no-store"})
         v = await run_in_threadpool(compute_stats)
         sc.update(v=v, ts=time.time())
-        return v
+        return JSONResponse(v, headers={"Cache-Control": "no-store"})
 
     async def reject(request, status, msg):
         n = 0
@@ -714,6 +747,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         with upload_lock:
             db = store.connect(data_dir, init=False)
             try:
+                freed = 0
                 dup = db.execute("SELECT name FROM originals WHERE sha256=?", (digest,)).fetchone()
                 if dup and os.path.exists(os.path.join(store.originals_dir(data_dir), dup[0])):
                     return dict(status="duplicate", name=dup[0])
@@ -721,7 +755,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     old = db.execute("SELECT size FROM originals WHERE sha256=?", (digest,)).fetchone()
                     db.execute("DELETE FROM originals WHERE sha256=?", (digest,))
                     db.execute("DELETE FROM failed WHERE path=?", (dup[0],))
-                    stored["bytes"] -= old[0] if old else 0
+                    freed = old[0] if old else 0
                 final = fname
                 root = store.originals_dir(data_dir)
                 # trùng tên KHÔNG phân biệt hoa/thường (X.jpg ~ x.jpg: ổ đĩa không phân biệt thì sẽ ghi đè nhau) mà khác nội dung
@@ -731,10 +765,15 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     stem, ext = os.path.splitext(fname)
                     final = f"{stem}-{digest[:8]}{ext}"  # cùng tên, khác nội dung: không ghi đè
                 os.replace(part, os.path.join(root, final))
-                db.execute("INSERT INTO originals VALUES (?,?,?)", (final, digest, size))
-                db.execute("DELETE FROM failed WHERE path=?", (final,))
-                db.commit()
-                stored["bytes"] += size
+                try:
+                    db.execute("INSERT INTO originals VALUES (?,?,?)", (final, digest, size))
+                    db.execute("DELETE FROM failed WHERE path=?", (final,))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    os.remove(os.path.join(root, final))  # không để file mồ côi không có dòng trong DB
+                    raise
+                stored["bytes"] += size - freed  # chỉ cộng/trừ khi commit đã thành công
             finally:
                 db.close()
         return dict(status="ok", name=final, renamed=final != fname, width=w, height=hgt)
@@ -754,11 +793,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     # ---------- ảnh: WebP đặt tên theo nội dung, thumbnail/bản xem cũ, bản gốc (host ngoài chỉ lấy được ba nhóm đầu: HostGate) ----------
     @app.api_route("/i/{fname}", methods=["GET", "HEAD"])
-    def deriv(fname: str):
+    def deriv(fname: str, request: Request):
         """/i/{id}-{v}-{size}.webp: chỉ 200 khi id tồn tại, v đúng bản hiện tại và size hợp lệ — mọi URL khác 404 (no-store
         do middleware), nên CDN không bao giờ cache URL đoán mò hay bản cũ."""
         m = WEBP_NAME.match(fname)
-        if not m or int(m.group(3)) not in WEBP_SIZES:
+        if not m or int(m.group(3)) not in WEBP_SIZES or request.url.query:  # query lạ = khoá cache khác trên CDN: không phục vụ
             raise HTTPException(404)
         v = gallery_state()["meta"].get(m.group(1), (None,))[0]
         if v is None or v != m.group(2):
@@ -800,7 +839,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     async def healthz():
         """O(1): đọc số liệu đĩa đã nhớ (làm mới nền mỗi DISK_TTL giây), không threadpool, không khoá, không đụng DB/thư mục ảnh."""
         du = disk_state()
-        return dict(ok=True, disk_free=du["free"], disk_total=du["total"])
+        return JSONResponse(dict(ok=True, disk_free=du["free"], disk_total=du["total"]), headers={"Cache-Control": "no-store"})
 
     @app.api_route("/robots.txt", methods=["GET", "HEAD"])
     def robots():

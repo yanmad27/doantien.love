@@ -26,7 +26,7 @@ Không có bí mật nào. Tất cả đều có mặc định trong image; ch�
 | `ALBUM_MIN_FREE_MB` | `5120` | Đĩa host dùng chung với app khác: dưới mức trống này (kiểm lúc bắt đầu và mỗi 8 MB khi đang nhận), app từ chối tải ảnh lên (HTTP 507, thông báo tiếng Việt) |
 | `ALBUM_MAX_TOTAL_GB` | `20` | **Hạn mức tổng** dung lượng ảnh gốc trong album (tính cả phần đã đặt chỗ cho các upload đang chạy). Hết hạn mức → 507. Đặt theo đĩa thực có. **`0` hoặc để trống = không giới hạn tổng** (`/api/stats` trả `max_total_bytes: null`); ngưỡng đĩa trống `ALBUM_MIN_FREE_MB` vẫn áp dụng |
 | `ALBUM_THREADS` | `2` | Số luồng onnxruntime của **tìm kiếm** của khách (image đặt sẵn 2 để không chiếm hết CPU của VPS dùng chung) |
-| `ALBUM_PROCESS_THREADS` | lõi CPU khả dụng − 2 (tối thiểu 1; đọc hạn mức cgroup, không phải số lõi của máy chủ) | Số luồng onnxruntime của **Xử lý**, trong một model riêng (tạo khi bắt đầu lượt, bỏ khi xong; +~0.25 GB RAM đỉnh). `0` = dùng chung model với tìm kiếm (tiết kiệm RAM nhưng tranh nhau CPU) |
+| `ALBUM_PROCESS_THREADS` | lõi CPU khả dụng − 2 (tối thiểu 1; đọc hạn mức cgroup, không phải số lõi của máy chủ) | Số luồng onnxruntime của **Xử lý**, trong một model riêng (tạo khi bắt đầu lượt, bỏ khi xong; đo trên macOS đỉnh RSS cao hơn ~0.8 GB so với dùng chung model, hãy giữ Memory limit ≥ 4 GiB khi dùng model riêng). `0` = dùng chung model với tìm kiếm (tiết kiệm RAM nhưng tranh nhau CPU) |
 | `ALBUM_MAX_RESULTS` | `5000` | Số kết quả tối đa mỗi lượt tìm bằng selfie (phủ cả album) |
 | `ALBUM_INDEX_WINDOW` | `1` | Số ảnh giải mã cùng lúc khi Xử lý. `1` = tuần tự (RAM đỉnh thấp nhất); `2` = giải mã trước một ảnh, nhanh hơn ~10–20% nhưng đỉnh RAM thêm ~0.5–1 GB với ảnh 60 MP |
 | `ALBUM_APP_HOSTS` | `album.doantien.love,localhost,127.0.0.1` | Danh sách host (cách nhau dấu phẩy) được dùng **toàn bộ app**. Host khác trỏ vào cùng container (tên miền CDN, mục 4b) chỉ lấy được ảnh + file tĩnh + `/healthz` + `/robots.txt`; mọi thứ khác 404 |
@@ -35,7 +35,7 @@ Không có bí mật nào. Tất cả đều có mặc định trong image; ch�
 | `ALBUM_DERIVE_WORKERS` | `2` | Số ảnh sinh WebP cùng lúc khi Xử lý (mỗi ảnh JPEG chỉ giải mã thu nhỏ nên nhẹ RAM) |
 | `ALBUM_LOW_MEM` | `1` | Tắt arena cấp phát của onnxruntime (RSS đỉnh thấp hơn ~20%, tốc độ như nhau) |
 
-### Cấu hình khuyến nghị cho server thật (CPU limit 6, Memory limit 3–3.5 GB)
+### Cấu hình khuyến nghị cho server thật (CPU limit 6, Memory limit 4 GiB)
 
 ```
 ALBUM_THREADS=2            # tìm kiếm của khách: luôn còn ~2 lõi
@@ -45,7 +45,7 @@ ALBUM_INDEX_WINDOW=1
 ```
 **Đừng** đặt `ALBUM_THREADS=6` với CPU limit 6: các luồng onnxruntime (busy-wait) của tìm kiếm + Xử lý cùng giải mã/WebP vượt hạn mức → cgroup throttle cả process từng đợt (tìm kiếm chậm, health check có thể trễ). `/healthz` và `GET /api/process` chạy thẳng trên event loop với số liệu đã nhớ (không khoá, không đĩa); `/api/stats` và `/api/gallery` trả giá trị đã nhớ khi đang Xử lý. HEALTHCHECK của image: timeout 20 s.
 
-**Chế độ journal SQLite:** `index.db` chuyển sang WAL ở lần khởi động đầu (bên cạnh có `index.db-wal`/`-shm`; bản image cũ vẫn mở được, nên quay lui an toàn). Người đọc không chờ người ghi. Sao lưu: dùng `sqlite3 index.db ".backup out.db"`, hoặc sao chép **cả** `index.db` và `index.db-wal` (khi không có job chạy).
+**Chế độ journal SQLite:** `index.db` chuyển sang WAL ở lần khởi động đầu (bên cạnh có `index.db-wal`/`-shm`; bản image cũ vẫn mở được, nên quay lui an toàn). Người đọc không chờ người ghi. Sao lưu: dùng `sqlite3 index.db ".backup out.db"`, hoặc sao chép **cả ba** file `index.db`, `index.db-wal` và `index.db-shm` (chỉ chép `index.db` sẽ mất các commit gần nhất).
 
 ## 3. Volume (bắt buộc — nếu không, mất hết ảnh khi redeploy)
 
@@ -69,6 +69,7 @@ Trang công khai tải ảnh WebP từ `/i/{id}-{v}-{240|480|2000}.webp` — URL
 1. Dokploy → app `album` → **Domains → Add Domain**: thêm một tên miền thuộc rsrm.dev (vd. `img.rsrm.dev`), Container Port `8000`, HTTPS bật. DNS qua Cloudflare (proxy bật).
 2. Đặt `ALBUM_CDN_ORIGIN=https://img.rsrm.dev` và `ALBUM_APP_HOSTS` giữ mặc định (**không** đưa tên miền CDN vào đây). Redeploy.
 3. Tên miền CDN đi vào cùng container nhưng bị `HostGate` chặn: chỉ GET/HEAD/OPTIONS ảnh + `/static/` + `/healthz` + `/robots.txt`; `/`, `/manage`, `/api/*`, `/originals/*` đều 404 `no-store`. Nên selfie và upload không bao giờ đi qua CDN (kể cả khi host test cũ có Cloudflare proxy). Ảnh gốc luôn tải cùng origin `https://album.doantien.love/originals/{id}`.
+   **Cổng này dựa vào header `Host`.** Nên router của tên miền CDN trong Dokploy/Traefik chỉ định tuyến các đường `/i/`, `/static/`, `/thumbs/`, `/previews/` (thêm `/healthz` nếu cần), và **không ai được thêm quy tắc ghi đè header Host** (Cloudflare Transform/Origin Rule "Host Header Override") cho tên miền CDN: ghi đè thành `album.doantien.love` sẽ biến host CDN thành host đầy đủ. `/static/*.html` luôn 404 ở mọi host (HTML chỉ phát qua `/` và `/manage`).
 4. **Công tắc tắt:** xoá `ALBUM_CDN_ORIGIN` (hoặc để trống) và redeploy → manifest `cdn:""`, trang tải ảnh từ chính `album.doantien.love/i/…`; không cần dọn gì ở Cloudflare. Khi trang không tải được ảnh từ CDN nó tự thử lại cùng origin.
 5. Lỗi (404, sai `v`) không bao giờ cacheable (`no-store`) nên không có gì bị Cloudflare giữ nhầm. Sau khi đổi ảnh gốc, `v` đổi → URL mới, không cần purge.
 
@@ -76,8 +77,8 @@ Trang công khai tải ảnh WebP từ `/i/{id}-{v}-{240|480|2000}.webp` — URL
 
 App mở cho mọi người và chạy chung VPS với dịch vụ khác — **phải** đặt giới hạn để một truy vấn/ảnh xấu không làm cả máy bị OOM. Tab **Advanced → Cluster/Resources**:
 
-- **Memory Limit = 3 GB** (tối thiểu 2.5 GB; đừng đặt thấp hơn)
-- **CPU Limit = 2** (lõi)
+- **Memory Limit = 4 GiB** khi Xử lý dùng model riêng (mặc định; đỉnh cao hơn ~0.8 GB so với dùng chung, đo trên macOS). Với `ALBUM_PROCESS_THREADS=0` (dùng chung model) 3 GB là đủ (tối thiểu 2.5 GB)
+- **CPU Limit = 6** (lõi) với server thật hiện nay (cấu hình luồng khuyến nghị ở mục 2: `ALBUM_THREADS=2`, `ALBUM_PROCESS_THREADS=4`). Nếu chỉ cấp 2 lõi: `ALBUM_THREADS=1`, `ALBUM_PROCESS_THREADS=1`
 
 Các chặn trong app tính theo mức này: ảnh tải lên ≤ 64 MP, selfie ≤ 40 MP và ≤ 2 truy vấn tính toán cùng lúc (3 cái đồng thời → HTTP 503 "đang bận"), tối đa 4 upload ghi đĩa cùng lúc (quá → 503, trình duyệt tự thử lại), Xử lý tuần tự từng ảnh.
 
@@ -143,7 +144,7 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 
 - Dokploy → **Volume Backups** (nếu bản của bạn có) → đích S3, lịch hằng đêm; hoặc trên VPS:
   `docker run --rm -v album-data:/data -v $PWD:/backup alpine tar czf /backup/album-$(date +%F).tgz -C /data .`
-- Sao `index.db` khi không có job đang chạy (hoặc chấp nhận sao lại lần sau).
+- Sao lưu `index.db` bằng `sqlite3 index.db ".backup index-backup.db"` (an toàn cả khi có job chạy), hoặc chép `index.db` + `index.db-wal` + `index.db-shm` cùng lúc; chỉ chép `index.db` là thiếu các commit chưa checkpoint.
 
 ## 10. Kiểm tra sau deploy
 

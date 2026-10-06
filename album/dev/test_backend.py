@@ -610,6 +610,194 @@ class GateTests(unittest.TestCase):
         for bad in (b"", b"not json", b'{"token":5}', b"[]"):
             self.assertEqual(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "7.7.7.7"}, body=bad)[0], 401, bad)
 
+    def test_login_throttle_concurrent_and_global(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d, admin_token="test-token")
+        good = json.dumps({"token": "test-token"}).encode()
+        bad = json.dumps({"token": "nope"}).encode()
+        # 1) một IP: 10 lượt sai rồi 80 kết nối đồng thời (có cả mã đúng) → không cái nào được 204
+        for _ in range(10):
+            self.assertEqual(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "5.5.5.5"}, body=bad)[0], 401)
+        res = []
+
+        def shot(body):
+            res.append(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "5.5.5.5"}, body=body)[0])
+
+        ths = [threading.Thread(target=shot, args=(good if i % 7 == 0 else bad,)) for i in range(80)]
+        [t.start() for t in ths]
+        [t.join() for t in ths]
+        self.assertEqual(len(res), 80)
+        self.assertNotIn(204, res)
+        self.assertEqual(set(res), {429})
+        # 2) đặt chỗ trước khi so mã: tối đa 10 lượt qua được ngay cả khi đồng thời từ IP mới
+        res.clear()
+        ths = [threading.Thread(target=lambda: res.append(call(app, "POST", "/api/admin-login", headers={"X-Forwarded-For": "6.6.6.6"}, body=bad)[0]))
+               for _ in range(60)]
+        [t.start() for t in ths]
+        [t.join() for t in ths]
+        self.assertLessEqual(sum(1 for r in res if r == 401), 10)
+        # 3) trần toàn cục: nhiều IP khác nhau cùng dò → vượt 30 lượt/phút thì cả mã đúng cũng 429
+        app2 = app_with(d, admin_token="test-token")
+        codes = [call(app2, "POST", "/api/admin-login", headers={"X-Forwarded-For": f"10.0.0.{i}"}, body=bad)[0] for i in range(40)]
+        self.assertEqual(codes[:30], [401] * 30)
+        self.assertEqual(set(codes[30:]), {429})
+        self.assertEqual(call(app2, "POST", "/api/admin-login", headers={"X-Forwarded-For": "10.9.9.9"}, body=good)[0], 429)
+        # 4) mã đúng hoàn lại lượt: 20 lần đăng nhập đúng liên tiếp vẫn qua (không tự khoá chủ nhà)
+        app3 = app_with(d, admin_token="test-token")
+        self.assertEqual({call(app3, "POST", "/api/admin-login", headers={"X-Forwarded-For": "7.7.7.7"}, body=good)[0] for _ in range(25)}, {204})
+
+    def test_no_store_status_and_static_html_blocked_and_query(self):
+        for path in ("/healthz", "/api/stats"):
+            self.assertEqual(call(self.app, "GET", path)[1]["cache-control"], "no-store", path)
+        for host in ("localhost", "cdn.example.test"):
+            for name in ("index.html", "manage.html", "manage-login.html", "INDEX.HTML"):
+                st, h, body, _ = call(self.app, "GET", "/static/" + name, host=host)
+                self.assertEqual((st, h["cache-control"]), (404, "no-store"), (host, name))
+        self.assertEqual(call(self.app, "GET", "/")[0], 200)  # HTML vẫn phát qua route có templating
+        pid, _, _, _, v, _, _, _ = self.gal["photos"][0]
+        self.assertEqual(call(self.app, "GET", f"/i/{pid}-{v}-240.webp")[0], 200)
+        for q in ("?x=1", "?", "?v=1&a=b"):
+            st, h, _, _ = call(self.app, "GET", f"/i/{pid}-{v}-240.webp{q}")
+            self.assertEqual((st, h["cache-control"]), (404 if q != "?" else 200, "no-store" if q != "?" else "public, max-age=31536000, immutable"), q)
+
+    def test_fresh_rebuild_from_i_rate_limited(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        o = os.path.join(d, "originals")
+        os.makedirs(o)
+        make_jpeg(os.path.join(o, "a.jpg"))
+        app = app_with(d)
+        run_process(app)
+        pid = store.photo_id("a.jpg")
+        builds = []
+        real = store.connect_ro
+
+        def counting(*a, **k):
+            builds.append(1)
+            return real(*a, **k)
+
+        job = app.state.job
+        job._snap["state"] = "running"  # như đang Xử lý: mtime DB đổi liên tục
+        try:
+            with mock.patch.object(store, "connect_ro", counting):
+                for i in range(20):
+                    call(app, "GET", f"/i/{pid}-deadbeef-240.webp")
+                    db = sqlite3.connect(store.db_path(d))
+                    db.execute("INSERT OR REPLACE INTO meta VALUES ('k', ?)", (str(i),))
+                    db.commit()
+                    db.close()
+        finally:
+            job._snap["state"] = "done"
+        self.assertLessEqual(len(builds), 2)  # 20 request sai v nhưng DB đổi liên tục: không dựng lại 20 lần
+
+    def test_derive_failure_recorded_not_retried_never_rejects(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        o = os.path.join(d, "originals")
+        os.makedirs(o)
+        make_jpeg(os.path.join(o, "ok.jpg"))
+        make_jpeg(os.path.join(o, "bad.jpg"), color=(1, 2, 3))
+        app = app_with(d)
+        real = indexer.derive_one
+        calls = []
+
+        def flaky(path, *a, **k):
+            calls.append(os.path.basename(path))
+            if path.endswith("bad.jpg"):
+                raise ValueError("boom")
+            return real(path, *a, **k)
+
+        with mock.patch.object(indexer, "derive_one", flaky):
+            run_process(app)
+            s = json.loads(call(app, "GET", "/api/process")[2])
+            self.assertEqual((s["derive_failed"], s["state"]), (1, "done"))
+            self.assertEqual(calls.count("bad.jpg"), 1)
+            run_process(app)  # lượt sau: không thử lại, không tính là đang chờ
+            s = json.loads(call(app, "GET", "/api/process")[2])
+            self.assertEqual((s["total"], s["derive_failed"]), (0, 1))
+            self.assertEqual(calls.count("bad.jpg"), 1)
+            self.assertEqual(json.loads(call(app, "GET", "/api/stats")[2])["pending_derive"], 0)
+        self.assertTrue(os.path.exists(os.path.join(o, "bad.jpg")))
+        self.assertFalse(os.path.exists(os.path.join(d, "rejected")))
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(db.execute("SELECT count(*) FROM failed").fetchone()[0], 0)
+        self.assertEqual(db.execute("SELECT count(*) FROM derive_failed").fetchone()[0], 1)
+        db.close()
+        # file đổi → được thử lại (lần này thành công)
+        make_jpeg(os.path.join(o, "bad.jpg"), (1300, 900), color=(9, 9, 9))
+        run_process(app)
+        s = json.loads(call(app, "GET", "/api/process")[2])
+        self.assertEqual(s["derive_failed"], 0)
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(db.execute("SELECT count(*) FROM derive_failed").fetchone()[0], 0)
+        self.assertEqual(db.execute("SELECT count(*) FROM photo_meta").fetchone()[0], 2)
+        db.close()
+
+    def test_upload_counter_only_after_commit(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        app = app_with(d)
+        b = io.BytesIO()
+        Image.new("RGB", (40, 30), (5, 5, 5)).save(b, "PNG")
+        body = b.getvalue()
+        self.assertEqual(json.loads(call(app, "GET", "/api/stats")[2])["stored_bytes"], 0)
+        real = sqlite3.Connection
+        # commit thất bại → bộ đếm không đổi
+        with mock.patch.object(server.store, "connect") as conn:
+            inner = sqlite3.connect(store.db_path(d), check_same_thread=False)
+
+            class Boom:
+                def __getattr__(self, n):
+                    return getattr(inner, n)
+
+                def commit(self):
+                    raise sqlite3.OperationalError("disk full")
+
+            conn.return_value = Boom()
+            with self.assertRaises(sqlite3.OperationalError):  # trên server thật là HTTP 500; gọi ASGI trực tiếp thì ngoại lệ nổi lên
+                call(app, "POST", "/api/upload?name=a.png", body=body)
+        self.assertEqual(os.listdir(os.path.join(d, "originals")), [])  # không để file mồ côi
+        self.assertEqual(json.loads(call(app, "GET", "/api/stats")[2])["stored_bytes"], 0)
+        self.assertEqual(json.loads(call(app, "POST", "/api/upload?name=b.png", body=body)[2])["status"], "ok")
+        self.assertEqual(json.loads(call(app, "GET", "/api/stats")[2])["stored_bytes"], len(body))
+
+    def test_burst_no_drift(self):
+        """Cảnh đổi chậm (mỗi khung chỉ khác khung trước ~3 nhưng trôi xa dần) không được thành một nhóm khổng lồ."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        db = store.connect(d)
+        import numpy as np
+        taken0 = 1_780_000_000.0
+        for i in range(30):  # 30 khung cách 0.4 s (12 s tổng), độ sáng tăng 3/khung
+            sig = bytes([min(255, 40 + 3 * i)]) * (indexer.SIG_SIDE ** 2)
+            pid = f"{i:016x}"
+            db.execute("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?)", (pid, f"f{i:02d}.jpg", 1, 1, 100, 100, 1600, 0))
+            db.execute("INSERT INTO photo_meta (id, taken, v, color, deriv_ver, w, h, size, mtime_ns, cam, sig) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (pid, taken0 + 0.4 * i, "v", "#000000", 1, 100, 100, 1, 1, "Cam", sig))
+        db.commit()
+        n = indexer.compute_bursts(db)
+        groups = {}
+        for pid, b, taken, sig in db.execute("SELECT id, burst, taken, sig FROM photo_meta WHERE burst IS NOT NULL ORDER BY taken"):
+            groups.setdefault(b, []).append((taken, sig[0]))
+        self.assertGreaterEqual(n, 2)
+        for g in groups.values():
+            self.assertLessEqual(g[-1][0] - g[0][0], indexer.BURST_MAX_SPAN + 1e-9)
+            self.assertLess(max(abs(x[1] - g[0][1]) for x in g), indexer.BURST_FIRST_DIFF)
+        self.assertLess(max(len(g) for g in groups.values()), 13)
+        # burst thật 6 fps (0.17 s, gần y hệt) trong 1 s: vẫn một nhóm
+        db.execute("DELETE FROM photo_meta")
+        db.execute("DELETE FROM photos")
+        for i in range(12):
+            pid = f"{i + 100:016x}"
+            db.execute("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?)", (pid, f"g{i:02d}.jpg", 1, 1, 100, 100, 1600, 0))
+            db.execute("INSERT INTO photo_meta (id, taken, v, color, deriv_ver, w, h, size, mtime_ns, cam, sig) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (pid, taken0 + 0.17 * i, "v", "#000000", 1, 100, 100, 1, 1, "Cam", bytes([100 + i % 3]) * 256))
+        db.commit()
+        self.assertEqual(indexer.compute_bursts(db), 1)
+        self.assertEqual(db.execute("SELECT count(DISTINCT burst) FROM photo_meta WHERE burst IS NOT NULL").fetchone()[0], 1)
+        db.close()
+
     def test_quota_disabled(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)

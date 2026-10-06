@@ -65,6 +65,7 @@ def main():
                 tp = os.path.join(d, pid + ".jpg")
                 if os.path.exists(tp):
                     os.remove(tp)
+        db.commit()  # chốt phần xoá trước khi lập chỉ mục tiếp (một ảnh lỗi sau đó rollback sẽ không cuốn theo)
         print(f"Đã xoá {len(gone)} ảnh không còn trong thư mục")
     print(f"{len(rels)} ảnh trong thư mục, {skipped} đã có (bỏ qua), {len(todo)} cần xử lý "
           f"(det-size {a.det_size})")
