@@ -58,8 +58,8 @@ def main():
     ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", store.DEFAULT_MODEL_DIR))
     ap.add_argument("--det-size", type=int, default=int(os.environ.get("ALBUM_DET_SIZE", 1600)),
                     help="cạnh dài ảnh khi dò mặt (mặc định 1600; 640 nhanh hơn nhưng mất mặt nhỏ)")
-    ap.add_argument("--min-face", type=int, default=24,
-                    help="bỏ mặt có cạnh ngắn hơn N pixel (ảnh gốc) vì embedding kém tin cậy")
+    ap.add_argument("--min-face", type=int, default=40,
+                    help="bỏ mặt có cạnh ngắn hơn N pixel (ảnh gốc): ở ~29 px cosine so với bản full-res chỉ 0.05–0.78, ~44 px 0.70–0.95, ≥66 px 0.93–0.99")
     ap.add_argument("--providers", default=os.environ.get("ALBUM_PROVIDERS", "CPUExecutionProvider"),
                     help="onnxruntime providers, cách nhau dấu phẩy")
     ap.add_argument("--rebuild", action="store_true", help="xoá chỉ mục cũ, làm lại từ đầu")

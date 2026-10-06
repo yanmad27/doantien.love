@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 25 * 1024 * 1024
 SCORE_FLOOR = 0.15  # dưới mức này không bao giờ là cùng người, khỏi gửi về
 MAX_RESULTS = 300
+QUERY_MIN_FACE = 40  # cạnh ngắn (px) tối thiểu của mặt trong selfie, khớp --min-face của indexer
 
 
 def create_app(data_dir, model_dir, providers, query_det_size=640):
@@ -49,7 +50,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
         t2 = time.perf_counter()
         if not faces:
             return None
-        face = max(faces, key=lambda f: f.area)  # mặt to nhất = người chụp selfie
+        usable = [f for f in faces if f.size >= QUERY_MIN_FACE]
+        if not usable:
+            return "face_too_small"
+        # mặt to và chắc chắn nhất = người chụp selfie (diện tích x điểm dò; mặt tí hon bị bỏ)
+        face = max(usable, key=lambda f: f.area * f.score)
         engine.embed(rgb, [face])
         t3 = time.perf_counter()
         E, rows, photos = index()
@@ -68,7 +73,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
                             n_faces=ph["n_faces"], bbox=[round(v, 1) for v in rows[i]["bbox"]]))
         t4 = time.perf_counter()
         return dict(
-            query=dict(n_faces=len(faces), bbox=[round(float(v), 1) for v in face.bbox],
+            query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
                        width=rgb.shape[1], height=rgb.shape[0], det_score=round(face.score, 3)),
             results=res, total_matches=len(ranked), truncated=len(ranked) > MAX_RESULTS,
             indexed_photos=len(photos), indexed_faces=len(rows),
@@ -95,8 +100,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640):
         except Exception:
             log.exception("search lỗi")
             raise HTTPException(500, "Máy chủ gặp lỗi khi xử lý. Vui lòng thử lại sau.")
-        if out is None:
-            return JSONResponse({"error": "no_face"}, status_code=422)
+        if out is None or out == "face_too_small":
+            return JSONResponse({"error": out or "no_face"}, status_code=422)
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/stats")

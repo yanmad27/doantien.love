@@ -56,15 +56,15 @@ Mặc định của `data`/`models` tính theo thư mục chứa script, không 
   Một `--data-dir` ứng với đúng một thư mục ảnh.
 - File hỏng/không đọc được, hay ảnh làm lỗi bước dò/nhúng: in `CẢNH BÁO` và bỏ qua, các ảnh còn lại vẫn chạy tiếp.
 - Indexer bỏ giới hạn số điểm ảnh của Pillow (ảnh của chủ nhà); server thì không.
-- `--min-face` (mặc định 24 px, trên ảnh gốc): bỏ mặt quá nhỏ vì embedding không đáng tin.
+- `--min-face` (mặc định 40 px cạnh ngắn của bbox, trên ảnh gốc): bỏ mặt quá nhỏ vì embedding không đáng tin (đo cosine so với bản full-res: ≥66 px 0.93–0.99, ~44 px 0.70–0.95, ~29 px 0.05–0.78). Kích thước mỗi mặt suy ra được từ bbox lưu trong bảng `faces` (`min(x2-x1, y2-y1)`), nên đánh giá ảnh thật có thể thống kê sót theo cỡ mặt; mặt nhỏ hơn ngưỡng không được lưu, muốn đo thì chạy với `--min-face 0`.
 - App tự nạp lại chỉ mục khi `index.db` đổi — không cần khởi động lại server.
 
 ### Độ phân giải dò (`--det-size`)
 
 Ảnh cưới 20–45 MP; thu về 640 như `FaceAnalysis` mặc định sẽ làm mất mặt nhỏ ở ảnh nhóm.
 `--det-size` là cạnh dài sau khi thu nhỏ (giữ tỉ lệ). Mặc định **1600**. Ngoài ra luôn có thêm
-một lượt 640 rẻ tiền rồi gộp bằng NMS, vì SCRFD ngược lại bỏ sót mặt quá to (chân dung cận
-cảnh — thử thấy mặt ~1100 px bị mất ở 1600). Embedding luôn cắt từ ảnh gốc độ phân giải đầy đủ.
+các lượt 640 và 320 rẻ tiền rồi gộp bằng NMS, vì SCRFD ngược lại bỏ sót mặt quá to (chân dung/selfie
+cận cảnh, mặt chiếm ~80% khung: mất ở 640 và 1600 nhưng thấy ở 320). Cả đường lập chỉ mục lẫn đường truy vấn đều dùng cách này. Embedding luôn cắt từ ảnh gốc độ phân giải đầy đủ; mặt rất to (co >3 lần) được thu nhỏ theo diện tích trước khi warp để khỏi răng cưa. Ảnh xám 16-bit được co về 8-bit đúng thang.
 
 Ảnh nội các Obama (3840×2560, 25 mặt thật; mặt nhỏ nhất ~32 px ở ảnh gốc), chỉ riêng bước dò, CPU M3:
 
@@ -91,7 +91,7 @@ Với ảnh thật 6000 px+ mặt sẽ nhỏ hơn sau khi thu; nếu đánh giá
 - Selfie bị giới hạn 25 MB và 100 MP (kiểm kích thước khai báo trong header trước khi giải mã; vượt → HTTP 413). Không đọc được → 400, lỗi khác → 500. Trang `/docs`, `/redoc` đã tắt (mặc định nạp JS từ CDN).
 - Kết quả tối đa 300 ảnh; nếu bị cắt, API trả `truncated`/`total_matches` và giao diện báo.
 - `download_models.py` ghim SHA-256 của hai file `.onnx`: file thiếu/hỏng/dở dang bị tải lại, ghi qua file `.part` rồi mới đổi tên.
-- Selfie nhiều mặt: dùng mặt **to nhất** (giao diện báo rõ và vẽ khung đỏ).
+- Selfie nhiều mặt: chọn mặt có (diện tích × điểm dò) lớn nhất, bỏ mặt < 40 px; giao diện vẽ khung đỏ và hiện thông báo tiếng Việt khi có nhiều hơn một mặt. Mọi mặt đều < 40 px → 422 `face_too_small`.
 - Điểm = cosine giữa hai embedding chuẩn hoá. Tham khảo: cùng người thường ≳ 0.35–0.4,
   khác người thường < 0.2; vùng 0.2–0.35 là vùng mơ hồ — cần đánh giá trên ảnh thật để chọn
   ngưỡng mặc định (thanh trượt bắt đầu ở 0.35, server chỉ trả về điểm ≥ 0.15, tối đa 300 ảnh).

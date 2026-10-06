@@ -21,6 +21,7 @@
   .score { font-weight: 600; white-space: nowrap; }
   #msg { color: #a00; }
   small { color: #666; }
+  #multi { background: #fff4d6; border: 1px solid #e0b64a; border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
   #trunc { color: #a60; margin: 0 0 10px; }
   input[type=range] { width: 260px; }
 </style>
@@ -36,6 +37,7 @@
   <small>Ảnh của bạn chỉ được xử lý trong bộ nhớ để so khớp, không được lưu lại. Nếu ảnh có nhiều khuôn mặt, hệ thống dùng khuôn mặt <b>to nhất</b>.</small>
   <p id="msg"></p>
   <div id="selfie-wrap" hidden><img id="selfie" alt="ảnh của bạn"><div class="box" id="selfie-box"></div></div>
+  <p id="multi" hidden></p>
   <div id="qinfo"></div>
 </div>
 
@@ -59,7 +61,7 @@ let results = [], timing = null, info = null;
 function clearResults() {
   results = []; info = null;
   $("grid").textContent = ""; $("controls").hidden = true; $("trunc").hidden = true;
-  $("qinfo").textContent = ""; $("count").textContent = "";
+  $("qinfo").textContent = ""; $("count").textContent = ""; $("multi").hidden = true;
 }
 
 $("file").onchange = () => {
@@ -85,7 +87,13 @@ $("go").onclick = async () => {
   try {
     const r = await fetch("api/search", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
     const e2e = performance.now() - t0;
-    if (r.status === 422) { $("msg").textContent = "Không thấy khuôn mặt nào trong ảnh này. Hãy thử ảnh selfie rõ hơn."; return; }
+    if (r.status === 422) {
+      const e = await r.json();
+      $("msg").textContent = e.error === "face_too_small"
+        ? "Khuôn mặt trong ảnh quá nhỏ. Hãy chụp gần hơn hoặc dùng ảnh khác."
+        : "Không thấy khuôn mặt nào trong ảnh này. Hãy thử ảnh selfie rõ hơn.";
+      return;
+    }
     if (!r.ok) { $("msg").textContent = (await r.json()).detail || "Có lỗi xảy ra."; return; }
     const d = await r.json();
     results = d.results; info = d;
@@ -93,9 +101,14 @@ $("go").onclick = async () => {
     const q = d.query;
     placeBox($("selfie-box"), $("selfie"), q.bbox, q.width, q.height);
     $("qinfo").innerHTML = `<small>Tìm thấy ${q.n_faces} khuôn mặt trong ảnh bạn gửi` +
-      (q.n_faces > 1 ? " — đang dùng khuôn mặt to nhất (khung đỏ)" : "") +
+      "" +
       `. Chỉ mục: ${d.indexed_photos} ảnh, ${d.indexed_faces} khuôn mặt. ` +
       `Xử lý ${d.timing_ms.total.toFixed(0)} ms (máy chủ), ${e2e.toFixed(0)} ms (tổng).</small>`;
+    if (q.n_faces > 1) {
+      $("multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Hệ thống chỉ dùng khuôn mặt to và rõ nhất (khung đỏ). ` +
+        `Nếu khung đỏ không phải bạn, hãy gửi ảnh chỉ có một mình bạn.`;
+      $("multi").hidden = false;
+    }
     $("controls").hidden = false;
     render();
   } catch (err) {

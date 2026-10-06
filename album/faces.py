@@ -23,6 +23,7 @@ class ImageTooLarge(Exception):
 class ImageUnreadable(Exception):
     pass
 
+COARSE_SIZES = (640, 320)
 DET_FILE = "det_10g.onnx"
 REC_FILE = "w600k_r50.onnx"
 
@@ -60,6 +61,12 @@ def load_image(src, max_pixels=None):
             if max_pixels and im.size[0] * im.size[1] > max_pixels:
                 raise ImageTooLarge(f"{im.size[0]}x{im.size[1]}")
             im = ImageOps.exif_transpose(im)
+            if im.mode.startswith("I"):  # I;16 / I (xám 16-bit): convert("RGB") sẽ ra toàn trắng
+                a = np.asarray(im).astype(np.float32)
+                if a.max() > 255:
+                    a = a / 256.0 if a.max() <= 65535 else (a - a.min()) / max(1.0, a.max() - a.min()) * 255
+                a = np.clip(a, 0, 255).astype(np.uint8)
+                return np.repeat(a[..., None], 3, axis=2)
             return np.asarray(im.convert("RGB"))
     except ImageTooLarge:
         raise
@@ -135,10 +142,11 @@ class FaceEngine:
 
     def detect(self, rgb, det_size=1280, coarse_pass=True):
         """Dò ở cạnh dài `det_size` (bắt mặt nhỏ trong ảnh nhóm). SCRFD lại bỏ sót mặt quá
-        to so với khung (chân dung cận cảnh), nên thêm một lượt 640 rẻ tiền rồi gộp bằng NMS."""
-        faces = self._detect_one(rgb, det_size)
-        if coarse_pass and det_size > 640:
-            faces = faces + self._detect_one(rgb, 640)
+        to so với khung (chân dung/selfie cận cảnh: mặt chiếm ~80% khung vẫn trượt ở 640,
+        nhưng thấy ở 320–384), nên luôn thêm các lượt thô 640 và 320 rẻ tiền rồi gộp bằng NMS."""
+        sizes = [det_size] + ([s for s in COARSE_SIZES if s < det_size] if coarse_pass else [])
+        faces = [f for s in sizes for f in self._detect_one(rgb, s)]
+        if len(sizes) > 1:
             if len(faces) > 1:
                 dets = np.array([[*f.bbox, f.score] for f in faces])
                 faces = [faces[i] for i in _nms(dets, self.nms_thresh)]
@@ -184,13 +192,32 @@ class FaceEngine:
             faces.append(Face(b.astype(np.float32), float(sc[i]), kp[i].astype(np.float32)))
         return faces
 
+    @staticmethod
+    def _align(rgb, kps, bbox):
+        """Căn 5 điểm về 112x112. Mặt to (co lại >3 lần) mà warp song tuyến thẳng từ ảnh gốc sẽ
+        bị răng cưa (cosine ~0.97 so với bản thu nhỏ theo diện tích) → cắt vùng quanh mặt, thu
+        nhỏ INTER_AREA còn ~2x rồi mới warp."""
+        m = _umeyama(kps, ARCFACE_DST)
+        s = float(np.sqrt(abs(np.linalg.det(m[:, :2]))))  # tỉ lệ ảnh gốc → 112
+        if s < 1 / 3:
+            k = 2 * s  # sau thu nhỏ, còn co ~2x
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            x0 = int(max(0, bbox[0] - w)); y0 = int(max(0, bbox[1] - h))
+            x1 = int(min(rgb.shape[1], bbox[2] + w)); y1 = int(min(rgb.shape[0], bbox[3] + h))
+            roi = rgb[y0:y1, x0:x1]
+            roi = cv2.resize(roi, (max(1, round(roi.shape[1] * k)), max(1, round(roi.shape[0] * k))),
+                             interpolation=cv2.INTER_AREA)
+            kps = (kps - np.array([x0, y0], np.float32)) * k
+            m = _umeyama(kps, ARCFACE_DST)
+            rgb = roi
+        return cv2.warpAffine(rgb, m, (112, 112), borderValue=0.0)
+
     def embed(self, rgb, faces):
         if not faces:
             return
         crops = []
         for f in faces:
-            m = _umeyama(f.kps, ARCFACE_DST)
-            crops.append(cv2.warpAffine(rgb, m, (112, 112), borderValue=0.0))
+            crops.append(self._align(rgb, f.kps, f.bbox))
         blob = ((np.stack(crops).astype(np.float32) - 127.5) / 127.5).transpose(0, 3, 1, 2)
         e = self.rec.run(None, {self.rec_in: blob})[0] if self._rec_batch_ok() else \
             np.concatenate([self.rec.run(None, {self.rec_in: b[None]})[0] for b in blob])
