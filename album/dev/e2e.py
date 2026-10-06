@@ -1,8 +1,8 @@
 """Chỉ dùng khi phát triển: lái trình duyệt thật qua giao diện album mới (mở thẳng thư viện → cuộn hết → lightbox →
 tìm bằng selfie → quay lại tất cả → Lưu ảnh), chụp màn hình từng bước và kiểm các điều bất biến.
 
-  # với máy chủ giả (dev/mock_gallery.py --admin-token secret):
-  python dev/e2e.py --url http://localhost:8820 --selfie /tmp/album-test/photos/wedding_couple.jpg --out /tmp/album-e/shots --mock --manage-token secret
+  # với máy chủ giả (dev/mock_gallery.py --admin-token test-token; và một bản không token ở cổng 8822 cho --open-url):
+  python dev/e2e.py --url http://localhost:8820 --selfie /tmp/album-test/photos/wedding_couple.jpg --out /tmp/album-e/shots --mock --manage-token test-token --open-url http://localhost:8822
   # với backend thật (đã có ảnh được xử lý): bỏ --mock; thêm --photos f1.jpg ... nếu muốn tải lên + Xử lý trước
 
 --browser chromium|webkit (zoom bằng hai ngón chỉ chạy ở chromium). Thoát mã ≠ 0 nếu một bước hỏng. Ảnh chụp có thể chứa ảnh khách: .gitignore đã loại *.png.
@@ -22,7 +22,8 @@ ap.add_argument("--selfie", required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--photos", nargs="*", help="tải lên + Xử lý trước (backend thật, thư mục dữ liệu trống)")
 ap.add_argument("--mock", action="store_true", help="đang chạy dev/mock_gallery.py: kiểm thêm log của 'CDN', đường lùi và /manage có mã")
-ap.add_argument("--manage-token", default="", help="mock chạy với --admin-token này: thử ô nhập mã ở /manage")
+ap.add_argument("--manage-token", default="", help="máy chủ (--url) chạy với token này: thử trang đăng nhập /manage (dùng mã giả, vd. test-token)")
+ap.add_argument("--open-url", default="", help="máy chủ KHÔNG đặt token: thử /manage mở thẳng")
 ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit"])
 ap.add_argument("--reduced-motion", action="store_true")
 a = ap.parse_args()
@@ -31,7 +32,9 @@ APP = urlparse(a.url)
 APP_ORIGIN = f"{APP.scheme}://{APP.netloc}"
 webkit = a.browser == "webkit"
 tag = "" if not webkit else "wk-"
-shot = lambda pg, n, full=False: pg.screenshot(path=os.path.join(a.out, tag + n), full_page=full)
+def shot(pg, n, full=False):
+    pg.wait_for_timeout(450)  # để hiệu ứng hiện dần (ảnh .25s, lightbox .25s) xong, ảnh chụp mới đúng như người dùng thấy
+    pg.screenshot(path=os.path.join(a.out, tag + n), full_page=full)
 external, selfie_posts = [], []
 allowed = {APP.netloc}
 
@@ -377,31 +380,73 @@ with sync_playwright() as p:
     shot(pg, "d4-selfie-results.png")
     pg.click("#b-all"); pg.wait_for_selector("#all:not([hidden])")
     check(pg.locator("#vg-all .tile").count() > 5, "desktop: về tất cả")
+    settle(pg)
+    shot(pg, "d5-back-to-all.png")
+    ctx.close()
+    ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm)
+    ctx.route("**/api/gallery", lambda r: r.fulfill(status=200, content_type="application/json", body='{"mv":"0","cdn":"","dv":2,"photos":[]}'))
+    pg = ctx.new_page(); pg.goto(a.url + "/")
+    pg.wait_for_function("document.getElementById('empty-t').textContent.length > 0")
+    pg.wait_for_timeout(1300 if not a.reduced_motion else 0)
+    shot(pg, "d8-empty-gallery.png")
     ctx.close()
 
-    # ---------- /manage + ô nhập mã chủ nhà ----------
-    ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm)
-    pg = ctx.new_page(); pg.goto(a.url + "/manage")
-    pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+    # ---------- /manage: khoá chủ nhà (hợp đồng §8) ----------
     if a.manage_token:
-        pg.set_input_files("#pick", a.selfie)
-        pg.wait_for_selector("#token-card:not([hidden])", timeout=10000)
-        check(pg.evaluate("localStorage.getItem('album_token')") is None, "chưa có mã thì chưa lưu")
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm)
+        pg = ctx.new_page()
+        resp = pg.goto(a.url + "/manage")
+        check(resp.status == 401 and "no-store" in (resp.headers.get("cache-control") or ""), "GET /manage chưa có cookie: 401 + no-store, đang là %s" % resp.status)
+        pg.wait_for_selector("#login-form")
+        check(pg.text_content("h1").strip() == "Trang chủ nhà" and pg.evaluate("document.querySelector('#token-in').type") == "password", "trang đăng nhập: bộ nhận diện + ô mật khẩu")
         pg.wait_for_timeout(500)
-        shot(pg, "9-manage-token-prompt.png")
-        pg.fill("#token-in", "sai-ma"); pg.click("#token-form button")
-        pg.wait_for_selector("#token-err:not([hidden])", timeout=10000)  # mã sai: 401 lại, báo "chưa đúng"
-        pg.fill("#token-in", a.manage_token); pg.click("#token-form button")
+        shot(pg, "9-manage-login.png")
+        r = pg.evaluate("fetch('/api/upload?name=x.jpg', { method: 'POST', body: 'x' }).then(r => r.status)")
+        check(r == 401, "POST /api/upload chưa đăng nhập phải 401, đang là %s" % r)
+        pg.fill("#token-in", "ma-sai"); pg.click("#login-btn")
+        pg.wait_for_function("!document.getElementById('login-msg').hidden")
+        check("không đúng" in pg.text_content("#login-msg"), "mã sai: báo 'Mã không đúng'")
+        shot(pg, "9b-manage-login-wrong.png")
+        pg.fill("#token-in", a.manage_token); pg.click("#login-btn")
+        pg.wait_for_function("document.getElementById('disk') && document.getElementById('disk').textContent.includes('GB')", timeout=15000)
+        ck = [c for c in ctx.cookies() if c["name"] == "album_token"]
+        check(ck and ck[0]["httpOnly"] and ck[0]["sameSite"] == "Strict" and ck[0]["path"] == "/", "cookie album_token: HttpOnly, SameSite=Strict, Path=/: %s" % ck)
+        check("album_token" not in pg.evaluate("document.cookie") and pg.evaluate("localStorage.length") == 0, "mã không được lộ cho JS / lưu ở localStorage")
+        check("hạn mức" not in pg.inner_text("#disk"), "max_total_bytes null: không hiện hạn mức: " + pg.inner_text("#disk"))
+        print("/manage (có khoá): 401 + trang đăng nhập → mã sai báo lỗi → mã đúng vào trang; cookie HttpOnly; không hạn mức:", pg.inner_text("#disk")[:90])
+        pg.set_input_files("#pick", a.selfie)
         pg.wait_for_function("document.getElementById('upchips').textContent.includes('xong')", timeout=15000)
-        check(pg.evaluate("localStorage.getItem('album_token')") == a.manage_token, "mã phải được lưu ở localStorage")
-        check("album_token=" in pg.evaluate("document.cookie"), "mã phải được đặt vào cookie album_token")
-        check(pg.is_hidden("#token-card"), "nhập đúng mã thì ô nhập ẩn đi")
-        print("/manage: 401 → ô nhập mã → mã sai báo lỗi → mã đúng: tải lên chạy tiếp, mã lưu ở localStorage + cookie")
-        pg.click("#proc"); pg.wait_for_function("document.getElementById('pmsg').textContent.includes('Hoàn tất') || true")
-    else:
-        shot(pg, "9-manage.png")
-    ctx.close()
-
+        pg.wait_for_timeout(300)
+        shot(pg, "9c-manage-after-login.png")
+        ctx.clear_cookies()  # cookie hết hạn giữa chừng: tải lên bị 401 → quay lại trang đăng nhập
+        pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_selector("#login-form", timeout=15000)
+        print("cookie hết hạn: tải lên 401 → quay về trang đăng nhập")
+        ctx.close()
+        ctx = b.new_context(viewport={"width": 1280, "height": 800}, reduced_motion=rm)
+        pg = ctx.new_page(); pg.goto(a.url + "/manage"); pg.wait_for_selector("#login-form"); pg.wait_for_timeout(500)
+        shot(pg, "d9-manage-login.png")
+        for _ in range(10):  # 10 lần sai/phút: lần kế tiếp bị chặn (429)
+            pg.fill("#token-in", "sai"); pg.click("#login-btn")
+            pg.wait_for_function("!document.getElementById('login-btn').disabled")
+        pg.fill("#token-in", "sai"); pg.click("#login-btn")
+        pg.wait_for_function("document.getElementById('login-msg').textContent.includes('đợi')", timeout=10000)
+        print("đăng nhập sai quá nhiều lần: báo chờ (429)")
+        ctx.close()
+        if a.mock:
+            urllib.request.urlopen(urllib.request.Request(a.url + "/__mock/reset", method="POST", data=b""))
+    if a.open_url:  # máy chủ không đặt token: /manage mở thẳng
+        ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm)
+        pg = ctx.new_page()
+        resp = pg.goto(a.open_url + "/manage")
+        check(resp.status == 200, "token không đặt: /manage phải mở thẳng, đang là %s" % resp.status)
+        pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+        pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_function("document.getElementById('upchips').textContent.includes('xong')", timeout=15000)
+        pg.wait_for_timeout(300)
+        shot(pg, "9d-manage-open.png")
+        print("/manage (không khoá): mở thẳng, tải lên chạy không cần mã")
+        ctx.close()
     external = [u for u in external if urlparse(u).netloc not in allowed]
     print("request ngoài ứng dụng/CDN:", external or "không có")
     check(not external, "có request ra ngoài: %s" % external[:5])

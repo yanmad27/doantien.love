@@ -50,6 +50,7 @@ ap.add_argument("--rtt-ms", type=float, default=0)
 ap.add_argument("--connect-rtts", type=float, default=2, help="mỗi kết nối TCP mới tốn ngần này RTT trước khi đọc request (TCP+TLS)")
 ap.add_argument("--html-preconnect", action="store_true", help="thay <!--__CDN_PRECONNECT__--> như backend thật sẽ làm")
 ap.add_argument("--admin-token", default="", help="bật chặn POST /api/upload|process (X-Album-Token / cookie album_token)")
+ap.add_argument("--quota-gb", type=float, default=0, help="0 = không có hạn mức tổng (max_total_bytes: null)")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -172,6 +173,7 @@ def shaped_write(wfile, data):
 
 
 LOG = {"cdn": [], "post": []}
+FAILS = []
 log_lock = threading.Lock()
 
 
@@ -221,6 +223,16 @@ class H(BaseHTTPRequestHandler):
         if not head:
             shaped_write(self.wfile, body)
 
+    def authed(self, header=False):
+        ck = self.headers.get("Cookie") or ""
+        return ("album_token=" + a.admin_token) in ck.split("; ") or (header and self.headers.get("X-Album-Token") == a.admin_token)
+
+    def html(self, body, head, code=200):
+        hdr = {"Cache-Control": "no-store"}
+        if "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body, hdr["Content-Encoding"] = gzip.compress(body, 6), "gzip"
+        self.send(code, body, "text/html; charset=utf-8", hdr, head)
+
     def nf(self):
         self.send(404, b'{"detail":"not found"}', "application/json", {"Cache-Control": "no-store"})
 
@@ -231,9 +243,14 @@ class H(BaseHTTPRequestHandler):
         self.send(204, b"", "text/plain", {"Allow": "GET, HEAD, OPTIONS"})
 
     def do_GET(self, head=False):
+        u = urlparse(self.path)
+        path = u.path
+        if path == "/__mock/shape" and self.kind == "app":  # đổi mạng giả lập khi đang chạy: /__mock/shape?kbps=0&rtt=0
+            q = dict(x.split("=") for x in u.query.split("&") if "=" in x)
+            a.kbps = float(q.get("kbps", a.kbps)); a.rtt_ms = float(q.get("rtt", a.rtt_ms))
+            return self.send(200, b"{}", "application/json", {"Cache-Control": "no-store"})
         if a.rtt_ms:
             time.sleep(a.rtt_ms / 1000)
-        path = urlparse(self.path).path
         if self.kind == "cdn":
             with log_lock:
                 LOG["cdn"].append(["GET", path])
@@ -241,16 +258,21 @@ class H(BaseHTTPRequestHandler):
                 return self.nf()
             return self.image(path, head, cdn=True)
         if path in ("/", "/index.html"):
-            return self.send(200, page("index.html"), "text/html; charset=utf-8", {"Cache-Control": "no-store"}, head)
+            return self.html(page("index.html"), head)
         if path == "/manage":
-            return self.send(200, page("manage.html"), "text/html; charset=utf-8", {"Cache-Control": "no-store"}, head)
+            if a.admin_token and not self.authed():  # như backend thật (hợp đồng §8): 401 + trang đăng nhập
+                return self.html(page("manage-login.html"), head, 401)
+            return self.html(page("manage.html"), head)
         if path.startswith("/static/"):
             p = os.path.normpath(os.path.join(STATIC, path[8:]))
             if not p.startswith(STATIC) or not os.path.isfile(p):
                 return self.nf()
             with open(p, "rb") as fh:
                 body = fh.read()
-            return self.send(200, body, TYPES.get(os.path.splitext(p)[1], "application/octet-stream"), {"Cache-Control": "public, max-age=2592000"}, head)
+            ext, hdr = os.path.splitext(p)[1], {"Cache-Control": "public, max-age=2592000"}
+            if ext in (".css", ".js", ".svg") and "gzip" in (self.headers.get("Accept-Encoding") or ""):  # như một reverse proxy thật
+                body, hdr["Content-Encoding"] = gzip.compress(body, 6), "gzip"
+            return self.send(200, body, TYPES.get(ext, "application/octet-stream"), hdr, head)
         if path == "/api/gallery":
             hdr = {"Cache-Control": "public, max-age=60", "ETag": META_ETAG, "Vary": "Accept-Encoding"}
             if self.headers.get("If-None-Match") == META_ETAG:
@@ -261,7 +283,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, MGZ if gz else MANIFEST, "application/json", hdr, head)
         if path == "/api/stats":
             s = dict(originals=len(ROWS), photos=len(ROWS), pending=0, faces=len(ROWS) * 2, disk_free=50 * 2 ** 30, disk_total=100 * 2 ** 30,
-                     stored_bytes=len(ROWS) * 3_000_000, max_total_bytes=60 * 2 ** 30, max_upload_mb=60)
+                     stored_bytes=len(ROWS) * 3_000_000, max_total_bytes=int(a.quota_gb * 2 ** 30) if a.quota_gb else None, max_upload_mb=60)
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/api/process":
             s = dict(state="idle", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")
@@ -303,12 +325,30 @@ class H(BaseHTTPRequestHandler):
             return self.nf()
         if path == "/__mock/reset":
             with log_lock:
-                LOG["cdn"].clear(); LOG["post"].clear()
+                LOG["cdn"].clear(); LOG["post"].clear(); FAILS.clear()
             return self.send(200, b"{}", "application/json")
+        if path == "/api/admin-login" and a.admin_token:
+            now = time.time()
+            with log_lock:
+                FAILS[:] = [x for x in FAILS if now - x < 60]
+                if len(FAILS) >= 10:
+                    return self.send(429, b'{"detail":"Th\xe1\xbb\xad sai qu\xc3\xa1 nhi\xe1\xbb\x81u l\xe1\xba\xa7n."}', "application/json", {"Cache-Control": "no-store"})
+            try:
+                tok = json.loads(body or b"{}").get("token", "")
+            except Exception:
+                tok = ""
+            if tok == a.admin_token:
+                self.send_response(204)
+                self.send_header("Set-Cookie", f"album_token={a.admin_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000")
+                self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            with log_lock:
+                FAILS.append(now)
+            return self.send(401, b'{"detail":"M\xc3\xa3 kh\xc3\xb4ng \xc4\x91\xc3\xbang."}', "application/json", {"Cache-Control": "no-store"})
         gated = path in ("/api/upload", "/api/process")
         if gated and a.admin_token:
-            ok = self.headers.get("X-Album-Token") == a.admin_token or ("album_token=" + a.admin_token) in (self.headers.get("Cookie") or "")
-            if not ok:
+            if not self.authed(header=True):
                 return self.send(401, b'{"detail":"C\xe1\xba\xa7n m\xc3\xa3 ch\xe1\xbb\xa7 nh\xc3\xa0."}', "application/json", {"Cache-Control": "no-store"})
         if path == "/api/search":
             code, obj = search_payload(body)

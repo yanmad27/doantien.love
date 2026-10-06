@@ -46,6 +46,12 @@ function preconnect(origin) {
   const l = document.createElement("link"); l.rel = "preconnect"; l.href = origin; document.head.append(l);
 }
 
+// hoa trang trí (~130 KB): chờ màn ảnh đầu hiện xong mới nạp, để không tranh băng thông với thumbnail trên mạng chậm
+function loadDecor() {
+  document.querySelectorAll("img.flower[data-src]").forEach(i => { i.onload = () => i.classList.add("on"); i.src = i.dataset.src; i.removeAttribute("data-src"); });
+}
+setTimeout(loadDecor, 6000);
+
 // ---------- thư viện ảnh: hàng ảnh căn đều tính bằng JS, chỉ dựng các hàng gần màn hình ----------
 const WINDOW_VH = 2;   // dựng DOM trong ±2 màn hình quanh vùng nhìn thấy
 const LOAD_VH = 1;     // chỉ nạp ảnh trong ±1 màn hình (sau khi màn đầu tải xong; trước đó chỉ ±0.2)
@@ -169,6 +175,7 @@ class VGallery {
   heat() {  // màn đầu xong (hoặc quá lâu): bắt đầu nạp trước phần sắp tới
     clearTimeout(this.warmTimer);
     this.first = false;
+    loadDecor();
     if (!this.warm) { this.warm = true; this.update(); }
   }
   dropRow(r) {
@@ -229,6 +236,7 @@ async function loadGallery() {
   watchCta();
 }
 function showEmpty(t, s, retry) {
+  loadDecor();
   $("empty").hidden = false; $("empty-t").textContent = t; $("empty-s").textContent = s; $("empty-retry").hidden = !retry;
 }
 $("empty-retry").onclick = loadGallery;

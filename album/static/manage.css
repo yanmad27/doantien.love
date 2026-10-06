@@ -62,4 +62,5 @@
 .token-row { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: .8rem; }
 .token-row input { flex: 1 1 200px; min-height: 48px; padding: .5rem 1rem; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 1rem; }
 .token-row input:focus-visible { outline: 2px solid var(--peach-ink); outline-offset: 2px; }
-#token-err { margin: .7rem 0 0; }
+#login-msg { margin: .7rem 0 0; }
+.login-note { margin: 1rem 0 0; }

@@ -150,3 +150,8 @@ body.lb-open { overflow: hidden; }
 .stage.is-done .s-actions { justify-content: flex-start; margin-top: .7rem; gap: .5rem; }
 .stage.is-done .s-actions .btn { min-height: 40px; padding: .4rem 1rem; font-size: .68rem; }
 .results { scroll-margin-top: 1rem; }
+
+/* hoa trang trí chỉ nạp sau khi màn ảnh đầu tiên đã hiện (xem loadDecor trong guest.js) — không tranh băng thông với ảnh */
+.flower { transition: opacity 1.2s ease; }
+.flower--tl:not(.on), .flower--br:not(.on) { opacity: 0; }
+.flower--tl.on { opacity: 1; } .flower--br.on { opacity: .9; }
