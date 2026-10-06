@@ -130,9 +130,10 @@ def group_tiles(rows):
 def expect_results(resp, rows):
     """kết quả mong đợi: mỗi chuỗi một ô, điểm = khung khớp nhất, nhóm theo điểm đó; lightbox gồm MỌI khung của chuỗi"""
     _, by_b = group_tiles(rows)
+    bman = {p[0]: (p[7] if len(p) > 7 else None) for p in rows}  # `b` theo manifest: client dùng nó (kết quả tìm kiếm có thể lệch/cũ)
     best, bof = {}, {}
     for r in resp["results"]:
-        best[r["id"]] = max(best.get(r["id"], -1), r["score"]); bof[r["id"]] = r.get("b")
+        best[r["id"]] = max(best.get(r["id"], -1), r["score"]); bof[r["id"]] = bman.get(r["id"], r.get("b"))
     seen, tiles = {}, []
     for pid, s in sorted(best.items(), key=lambda kv: -kv[1]):
         b = bof[pid]
@@ -145,6 +146,28 @@ def expect_results(resp, rows):
     main = [x for x in tiles if x["score"] >= 0.40]
     maybe = [x for x in tiles if 0.28 <= x["score"] < 0.40]
     return main, maybe
+
+
+def edge_check(pg, label):
+    """cuộn hết thư viện: mọi ô nằm trọn trong khung chứa (không tràn phải), kích thước hữu hạn > 0; trả về độ tràn lớn nhất (px)"""
+    vh = pg.evaluate("innerHeight")
+    total = pg.evaluate("document.documentElement.scrollHeight")
+    worst, y, seen_tiles = -999.0, 0, 0
+    while True:
+        pg.evaluate("y => scrollTo(0, y)", y)
+        pg.wait_for_timeout(30)
+        r = pg.evaluate("""() => { const c = document.getElementById('vg-all').getBoundingClientRect(); let worst = -999, n = 0, bad = 0;
+          for (const b of document.querySelectorAll('#vg-all .tile')) { const q = b.getBoundingClientRect(); n++;
+            worst = Math.max(worst, q.right - c.right, c.left - q.left);
+            if (!(q.width > 4 && q.height > 4 && isFinite(q.width) && isFinite(q.height))) bad++; }
+          return { worst, n, bad, rows: [...document.querySelectorAll('#vg-all .vrow')].map(r => { const ts = [...r.children], a = ts[0].getBoundingClientRect(), z = ts[ts.length - 1].getBoundingClientRect(); return z.right - a.left; }), w: c.width }; }""")
+        worst = max(worst, r["worst"]); seen_tiles += r["n"]
+        check(r["bad"] == 0, f"{label}: có ô rộng/cao không hợp lệ (0, NaN, quá nhỏ)")
+        if y >= total - vh:
+            break
+        y += vh * 3.5
+    check(worst <= 0.5, f"{label}: ô tràn ra ngoài khung chứa {worst:.1f}px")
+    return worst
 
 
 def collect_ids(pg, root, label, reverse=False, stats=None):
@@ -335,6 +358,13 @@ with sync_playwright() as p:
         ids_r = collect_ids(pg, "#vg-all", f"đổi cỡ {vw}×{vhh}")
         check(ids_r == heads_ids, f"đổi cỡ {vw}×{vhh}: danh sách ô phải đúng ({len(ids_r)} vs {T})")
     print("cuộn ngược + đổi cỡ (360×640, 844×390, 390×844): mỗi lần chụp DOM không id nào lặp, và đủ", T, "ô")
+    res_edge = []
+    for vw in (390, 520, 760, 920, 932, 1280):  # khoảng cách giữa ô do JS đặt: không ô nào tràn ra khung ở bất kỳ bề ngang nào
+        pg.set_viewport_size({"width": vw, "height": 844})
+        pg.wait_for_timeout(300)
+        res_edge.append((vw, round(edge_check(pg, f"bề ngang {vw}"), 1)))
+    print("mép phải ô cuối mỗi hàng ≤ khung chứa (độ tràn lớn nhất, px; âm/0 = khít):", res_edge)
+    pg.set_viewport_size({"width": 390, "height": 844}); pg.wait_for_timeout(300)
     pg.evaluate("scrollTo(0, 0)")
     pg.wait_for_selector('#vg-all .tile[data-i="0"]')
     pg.evaluate("document.querySelector('#vg-all .tile[data-i=\"0\"]').click()")
@@ -345,7 +375,13 @@ with sync_playwright() as p:
     pg.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
     settle(pg)
     shot(pg, "3-gallery-bottom.png")
-    check(pg.is_visible("#pill") and pg.is_visible("#pill-find"), "nút nổi phải hiện khi đã cuộn qua đầu trang")
+    check(not pg.is_visible("#pill"), "chân trang hiện ra / đang cuộn xuống: nút nổi phải ẩn (không che chân trang)")
+    pg.evaluate("scrollBy(0, -500)"); pg.wait_for_timeout(300)  # cuộn lên: hiện lại
+    check(pg.is_visible("#pill") and pg.is_visible("#pill-find"), "cuộn lên: nút nổi 'Tìm ảnh của bạn' phải hiện")
+    pg.wait_for_timeout(450); shot(pg, "3b-pill-scroll-up.png")
+    pg.evaluate("scrollBy(0, 400)"); pg.wait_for_timeout(300)
+    check(not pg.is_visible("#pill"), "cuộn xuống: nút nổi ẩn")
+    print("nút nổi: ẩn khi cuộn xuống và khi chân trang hiện; hiện lại khi cuộn lên")
     pg.evaluate("scrollTo(0, 0)")
     pg.wait_for_function("document.getElementById('pill').hidden")
     pg.evaluate("scrollTo(0, document.documentElement.scrollHeight * 0.3)")
@@ -360,7 +396,7 @@ with sync_playwright() as p:
     pg.wait_for_selector("#lb:not([hidden])")
     check(pg.text_content("#lb-count").replace(".", "").startswith(f"{at[idx] + 1} /"), "đếm ảnh trong lightbox: " + pg.text_content("#lb-count"))
     check(pg.text_content("#lb-count").endswith(pg.inner_text("#count").split()[0]), "lightbox đi qua cả album: " + pg.text_content("#lb-count"))
-    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+    pg.wait_for_function("(() => { const i = document.getElementById('lb-img'); return i.complete && i.naturalWidth > 0 && /-2000\\.webp|\\/previews\\//.test(i.currentSrc); })()", timeout=30000)
     check("-2000.webp" in pg.evaluate("document.getElementById('lb-img').currentSrc"), "lightbox dùng bản WebP 2000 px")
     pg.wait_for_timeout(400 if not a.reduced_motion else 0)
     shot(pg, "4-lightbox-from-gallery.png")
@@ -467,6 +503,12 @@ with sync_playwright() as p:
             am = sc["all_main"]; check(am["frames"][0] in main_ids and set(am["frames"]) <= set(flat_main), "chuỗi mọi khung đều khớp: một ô ở nhóm chính")
             pa = sc["partial"]; check(pa["frames"][0] in main_ids and set(pa["frames"]) <= set(flat_main) and len(pa["matched"]) < len(pa["frames"]),
                                      "chuỗi chỉ 1 khung khớp: lightbox vẫn gồm mọi khung của chuỗi (kể cả khung không khớp)")
+            sl = sc.get("stale")
+            if sl:
+                allf = flat_main + flat_maybe
+                check(all(allf.count(f) == 1 for f in sl["frames"]), "kết quả lệch manifest (b:null ở khung đầu): mọi khung chỉ hiện đúng một lần")
+                check(sl["frames"][0] in main_ids, "chuỗi lệch b: đúng một ô ở nhóm chính")
+                print(f"b lệch giữa manifest và kết quả tìm kiếm ({len(sl['frames'])} khung): mỗi khung đúng một lần, một ô")
             mo = sc["maybe_only"]; check(mo["frames"][0] in maybe_ids and not set(mo["frames"]) & set(flat_main), "chuỗi chỉ khung điểm thấp: ô ở 'Có thể cũng là bạn'")
             print(f"chuỗi liên thanh trong kết quả: tách ngưỡng 0.62/0.33 → 1 ô ở 'Ảnh của bạn' ({len(sp['frames'])} khung); tất cả khung khớp; chỉ 1 khung khớp → đủ {len(pa['frames'])} khung; chỉ điểm thấp → 'có thể'")
     # ảnh kết quả đi đúng URL v/w/h/c như thư viện
@@ -494,6 +536,10 @@ with sync_playwright() as p:
     pg.wait_for_selector("#lb:not([hidden])")
     walk_check(pg, flat_main + flat_maybe, "lightbox ảnh của bạn (mọi khung: chính + có thể)")
     pg.keyboard.press("Escape"); pg.wait_for_selector("#lb", state="hidden")
+    pg.evaluate("document.querySelector('#vg-main .tile[data-i=\"0\"]').click()")
+    pg.wait_for_selector("#lb:not([hidden])")
+    pg.go_back(); pg.wait_for_selector("#lb", state="hidden")
+    check(pg.is_visible("#results") and pg.is_hidden("#all"), "Back khi đang xem ảnh: chỉ đóng lightbox, vẫn ở kết quả")
     log_posts = [u for m, u in reqs if m == "POST"]
     check(all(urlparse(u).netloc == APP.netloc and urlparse(u).path == "/api/search" for u in log_posts), "mọi POST của khách chỉ tới /api/search cùng nguồn gốc: %s" % log_posts)
     check(selfie_posts and all(u == APP_ORIGIN + "/api/search" for u in selfie_posts), "selfie phải được gửi tới /api/search cùng nguồn gốc: %s" % selfie_posts)
@@ -588,7 +634,7 @@ with sync_playwright() as p:
             pg.keyboard.press("ArrowRight")
             check(cid() == tiles[ti][k], f"Tiếp: khung {k + 1} của chuỗi")
             if k == 1:
-                pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+                pg.wait_for_function("(() => { const i = document.getElementById('lb-img'); return i.complete && i.naturalWidth > 0 && /-2000\\.webp|\\/previews\\//.test(i.currentSrc); })()", timeout=30000)
                 check(f"2/{len(tiles[ti])}" in pg.text_content("#lb-burst"), "nhãn 'Chụp liên tiếp 2/N': " + pg.text_content("#lb-burst"))
                 pg.wait_for_timeout(450); shot(pg, pre + "10b-lightbox-in-burst.png")
         pg.keyboard.press("ArrowRight")
@@ -668,7 +714,7 @@ with sync_playwright() as p:
     pg.keyboard.press("Enter")
     pg.wait_for_selector("#lb:not([hidden])")
     check(pg.is_visible("#lb-prev") and pg.is_visible("#lb-next"), "desktop phải có mũi tên")
-    pg.wait_for_function("document.getElementById('lb-img').naturalWidth > 1000", timeout=30000)
+    pg.wait_for_function("(() => { const i = document.getElementById('lb-img'); return i.complete && i.naturalWidth > 0 && /-2000\\.webp|\\/previews\\//.test(i.currentSrc); })()", timeout=30000)
     shot(pg, "d3-lightbox.png")
     for _ in range(3):
         pg.keyboard.press("ArrowRight")
@@ -678,8 +724,11 @@ with sync_playwright() as p:
     pg.wait_for_selector("#vg-main .tile img.on", timeout=60000)
     pg.wait_for_timeout(1000 if not a.reduced_motion else 0)
     shot(pg, "d4-selfie-results.png")
-    pg.click("#b-all"); pg.wait_for_selector("#all:not([hidden])")
-    check(pg.locator("#vg-all .tile").count() > 5, "desktop: về tất cả")
+    pg.go_back(); pg.wait_for_selector("#all:not([hidden])")  # nút Back: từ kết quả về thư viện (không rời trang)
+    check(pg.is_hidden("#results") and pg.is_hidden("#finder") and pg.locator("#vg-all .tile").count() > 5, "Back từ kết quả: về thư viện")
+    pg.go_back(); pg.wait_for_function("location.href === 'about:blank'", timeout=10000)  # Back lần nữa mới rời trang
+    print("Back: kết quả → thư viện → rời trang (about:blank)")
+    pg.goto(a.url + "/"); pg.wait_for_selector("#vg-all .tile img.on", timeout=30000)
     settle(pg)
     shot(pg, "d5-back-to-all.png")
     pg.evaluate("scrollTo(0, 0)"); pg.wait_for_selector('#vg-all .tile[data-i="0"]')
@@ -721,6 +770,25 @@ with sync_playwright() as p:
         pg.wait_for_function("/xong|trùng/.test(document.getElementById('upchips').textContent)", timeout=15000)
         pg.wait_for_timeout(300)
         shot(pg, "9c-manage-after-login.png")
+        # tải lên: 429 được thử lại như 503; 200 mà không phải JSON là lỗi (không phải "trùng với undefined")
+        cnt = [0]
+        def flaky(route):
+            cnt[0] += 1
+            if cnt[0] == 1:
+                route.fulfill(status=429, content_type="application/json", body="{}")
+            else:
+                route.continue_()
+        pg.route("**/api/upload*", flaky)
+        pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_function("(() => { const s = document.querySelector('#files li .f-st'); return s && /✓|trùng/.test(s.textContent); })()", timeout=20000)
+        check(cnt[0] >= 2, "429 phải được thử lại")
+        pg.unroute("**/api/upload*", flaky)
+        pg.route("**/api/upload*", lambda r, _q=None: r.fulfill(status=200, content_type="text/plain", body="ok"))
+        pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_function("(() => { const s = document.querySelector('#files li .f-st'); return s && s.textContent.includes('✗'); })()", timeout=10000)
+        check("undefined" not in pg.inner_text("#files"), "200 không phải JSON: báo lỗi, không in 'undefined'")
+        pg.unroute("**/api/upload*")
+        print("tải lên: 429 thử lại rồi xong; 200 không phải JSON → lỗi rõ ràng")
         ctx.clear_cookies()  # cookie hết hạn giữa chừng: tải lên bị 401 → quay lại trang đăng nhập
         pg.set_input_files("#pick", a.selfie)
         pg.wait_for_selector("#login-form", timeout=15000)

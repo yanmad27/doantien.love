@@ -61,9 +61,7 @@ body.dragging::after { content: "Thả ảnh selfie vào đây"; position: fixed
 /* ---- thư viện: hàng ảnh căn đều (tính bằng JS), chỉ dựng các hàng gần màn hình ---- */
 .all { min-height: 40vh; }
 .vg { position: relative; width: 100%; }
-.vrow { position: absolute; left: 0; width: 100%; display: flex; gap: 4px; }
-@media (min-width: 500px) { .vrow { gap: 6px; } }
-@media (min-width: 900px) { .vrow { gap: 8px; } }
+.vrow { position: absolute; left: 0; width: 100%; display: flex; }  /* khoảng cách giữa ô do JS đặt (layoutRows) — cùng một nguồn với phép tính bề ngang */
 .tile { position: relative; flex: none; display: block; height: 100%; padding: 0; overflow: hidden; border: 0; border-radius: 6px; background: linear-gradient(135deg, var(--rose-pale), #fbe9df); cursor: zoom-in; -webkit-tap-highlight-color: transparent; transition: transform .3s var(--ease-out), box-shadow .3s; }
 @media (min-width: 900px) { .tile { border-radius: 8px; } .tile:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(89, 71, 63, .2); z-index: 1; } }
 .tile:active { transform: scale(.985); }
@@ -136,7 +134,7 @@ body.lb-open .pill { display: none; }
 body.lb-open { overflow: hidden; }
 
 @media (max-width: 360px) { .foot { letter-spacing: .16em; } .eyebrow { letter-spacing: .2em; } }
-@media (max-width: 420px) { .page { padding-inline: 1rem; } .stage { padding-inline: 1rem; } }
+@media (max-width: 420px) { .page { padding-inline: 1.25rem; } .stage { padding-inline: 1rem; } }
 
 /* tìm xong: thẻ gọn lại, ảnh selfie nhỏ cạnh lời nhắn */
 .stage { scroll-margin-top: 1rem; }
@@ -148,7 +146,7 @@ body.lb-open { overflow: hidden; }
 .stage.is-done .s-title { font-size: clamp(1.6rem, 6vw, 2rem); }
 .stage.is-done .s-text { margin-top: .1rem; font-size: 1.05rem; line-height: 1.35; }
 .stage.is-done .s-actions { justify-content: flex-start; margin-top: .7rem; gap: .5rem; }
-.stage.is-done .s-actions .btn { min-height: 40px; padding: .4rem 1rem; font-size: .68rem; }
+.stage.is-done .s-actions .btn { min-height: 44px; padding: .4rem 1rem; font-size: .68rem; }
 .results { scroll-margin-top: 1rem; }
 
 /* hoa trang trí chỉ nạp sau khi màn ảnh đầu tiên đã hiện (xem loadDecor trong guest.js) — không tranh băng thông với ảnh */
@@ -166,3 +164,12 @@ body.lb-open { overflow: hidden; }
 
 .thanks { max-width: 32em; margin: 0 auto; font-family: var(--serif); font-weight: 500; font-size: 1.1rem; line-height: 1.5; letter-spacing: 0; text-transform: none; color: var(--ink-soft); }
 .foot .thanks + .ornament { margin-top: 1.4rem; }
+
+/* nút nổi ẩn khi cuộn xuống / khi chân trang hiện ra */
+.pill { transition: opacity .25s, translate .25s, visibility 0s; }
+.pill.away { opacity: 0; translate: -50% 16px; visibility: hidden; pointer-events: none; transition: opacity .25s, translate .25s, visibility 0s .25s; }
+/* đếm ảnh và nhãn burst cùng mép trái, cùng kiểu viên thuốc */
+.lb-count { background: rgba(255, 247, 238, .14); padding: .2rem .8rem; }
+.lb-burst { padding: .2rem .8rem; }
+/* giấy xếp chồng nhẹ trên điện thoại (lệch ≤ 3 px) */
+@media (max-width: 640px) { .tile.stacked { box-shadow: 2px 2px 0 -1px var(--paper), 2px 2px 0 0 var(--line-soft); } }

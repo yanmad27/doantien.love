@@ -45,7 +45,7 @@ function loadImg(img, steps, sizes, onBad) {
   apply();
 }
 function preconnect(origin) {
-  if (!origin || document.querySelector(`link[rel=preconnect][href="${origin}"]`)) return;  // backend có thể đã đặt sẵn trong HTML
+  if (!origin || [...document.querySelectorAll("link[rel=preconnect]")].some(l => l.href.replace(/\/$/, "") === origin)) return;  // backend có thể đã đặt sẵn trong HTML
   const l = document.createElement("link"); l.rel = "preconnect"; l.href = origin; document.head.append(l);
 }
 
@@ -64,8 +64,8 @@ function uniqById(list, better) {
 
 // Ô gộp: it.frames = mọi khung của chuỗi (theo thứ tự manifest), it.at = chỉ số khung đầu trong `flat` (bộ ảnh để lướt trong lightbox),
 // f.head = ô chứa khung f. flat = các ô theo thứ tự, mỗi ô trải thành các khung của nó: mỗi id đúng một lần.
-function stackTiles(items) {
-  const flat = [], seen = new Set(), out = [];
+function stackTiles(items, seen = new Set()) {  // seen dùng chung giữa hai nhóm: một id không bao giờ ở cả hai
+  const flat = [], out = [];
   for (const it of items) {
     it.frames = it.frames.filter(f => !seen.has(f.id));  // an toàn: một id không bao giờ ở hai ô
     if (!it.frames.length) continue;
@@ -85,12 +85,15 @@ function collapse(list) {  // thư viện: gộp theo `b`, ô nằm ở vị tr�
   }
   return stackTiles(items);
 }
-let burstFrames = new Map();  // b -> mọi khung của chuỗi (từ manifest, theo thứ tự)
+let burstFrames = new Map(), photoById = new Map();  // b -> mọi khung của chuỗi (từ manifest, theo thứ tự)
 
 // ---------- thư viện ảnh: hàng ảnh căn đều tính bằng JS, chỉ dựng các hàng gần màn hình ----------
 const WINDOW_VH = 2;   // dựng DOM trong ±2 màn hình quanh vùng nhìn thấy
 const LOAD_VH = 1;     // chỉ nạp ảnh trong ±1 màn hình (sau khi màn đầu tải xong; trước đó chỉ ±0.2)
 const DROP_VH = 1.6;   // ra khỏi ±1.6 màn hình thì bỏ src (giải phóng bộ nhớ giải mã, dừng tải dở)
+
+// tỉ lệ khung hình an toàn: w/h = 0, thiếu hoặc quá cực đoan (panorama 1×100) không được làm vỡ bố cục
+const arOf = x => { const r = x.w / x.h; return isFinite(r) && r > 0 ? Math.min(5, Math.max(0.2, r)) : 1.5; };
 
 function layoutRows(items, W) {
   const H = W < 500 ? 135 : W < 900 ? 180 : 210, gap = W < 500 ? 4 : W < 900 ? 6 : 8;
@@ -99,7 +102,7 @@ function layoutRows(items, W) {
   while (i < n) {
     let j = i, sum = 0, h = 0, justify = true;
     while (j < n) {
-      const ar = items[j].w / items[j].h, hh = (W - gap * (j - i)) / (sum + ar);
+      const ar = arOf(items[j]), hh = (W - gap * (j - i)) / (sum + ar);
       if (j > i && hh <= H && Math.abs(hh - H) > Math.abs(h - H)) break;  // thêm ảnh này làm hàng lệch xa chiều cao đích hơn
       sum += ar; h = hh; j++;
       if (hh <= H) break;
@@ -107,7 +110,7 @@ function layoutRows(items, W) {
     if (j >= n && h > H * 1.15) { h = H; justify = false; }  // hàng cuối còn trống nhiều: không kéo giãn
     const cnt = j - i, ws = [];
     let used = 0;
-    for (let k = i; k < j; k++) { const w = Math.round(items[k].w / items[k].h * h); ws.push(w); used += w; }
+    for (let k = i; k < j; k++) { const w = Math.round(arOf(items[k]) * h); ws.push(w); used += w; }
     if (justify) ws[cnt - 1] += W - gap * (cnt - 1) - used;  // khít đúng bề ngang
     rows.push({ top, h: Math.round(h), i, j, ws });
     top += Math.round(h) + gap; i = j;
@@ -119,7 +122,7 @@ const galleries = [];
 class VGallery {
   constructor(root, kind, onOpen) {
     this.root = root; this.kind = kind; this.onOpen = onOpen;
-    this.items = []; this.flat = []; this.rows = []; this.rowOf = []; this.mounted = new Map();
+    this.items = []; this.flat = []; this.rows = []; this.rowOf = []; this.mounted = new Map(); this.gap = 4;
     this.W = 0; this.active = false; this.warm = false; this.first = true; this.pending = 0;
     root.addEventListener("click", e => { const b = e.target.closest(".tile"); if (b) this.onOpen(this, +b.dataset.i, b); });
     new ResizeObserver(() => requestAnimationFrame(() => { if (this.active && this.root.clientWidth !== this.W) this.relayout(); })).observe(root);  // rAF: relayout đổi chiều cao root, không được làm lặp vòng quan sát
@@ -140,7 +143,7 @@ class VGallery {
     }
     this.W = W;
     const L = layoutRows(this.items, W);
-    this.rows = L.rows; this.rowOf = new Array(this.items.length);
+    this.gap = L.gap; this.rows = L.rows; this.rowOf = new Array(this.items.length);
     this.rows.forEach((r, ri) => { for (let k = r.i; k < r.j; k++) this.rowOf[k] = ri; });
     this.root.style.height = L.height + "px";
     this.unmountAll();
@@ -180,7 +183,7 @@ class VGallery {
   }
   mountRow(ri) {
     const row = this.rows[ri], el = document.createElement("div");
-    el.className = "vrow"; el.style.top = row.top + "px"; el.style.height = row.h + "px";
+    el.className = "vrow"; el.style.gap = this.gap + "px"; el.style.top = row.top + "px"; el.style.height = row.h + "px";
     for (let k = row.i, c = 0; k < row.j; k++, c++) {
       const x = this.items[k], b = document.createElement("button");
       b.type = "button"; b.className = "tile"; b.dataset.i = k; b.dataset.id = x.id;
@@ -237,7 +240,7 @@ class VGallery {
   }
 }
 let ticking = false;
-const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; for (const g of galleries) g.update(); }); } };
+const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; for (const g of galleries) g.update(); trackPill(); }); } };
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", onScroll);
 document.addEventListener("focusin", e => { if (e.target.classList && e.target.classList.contains("tile")) onScroll(); });
@@ -256,6 +259,7 @@ async function loadGallery() {
     if (!r) r = await fetch("/api/gallery");
     if (!r.ok) throw new Error("http " + r.status);
     m = await r.json();
+    if (!m || !Array.isArray(m.photos)) throw new Error("manifest sai dạng");
   } catch (e) {
     $("skeleton").hidden = true;
     showEmpty("Chưa tải được album", "Có vẻ mạng đang gián đoạn. Bạn thử lại nhé.", true);
@@ -265,7 +269,7 @@ async function loadGallery() {
   CDN = String(m.cdn || "").replace(/\/+$/, "");
   preconnect(CDN);
   photos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
-  burstFrames = new Map();
+  burstFrames = new Map(); photoById = new Map(photos.map(p => [p.id, p]));
   for (const p of photos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
   galleryReady = true;
   $("skeleton").hidden = true;
@@ -289,17 +293,28 @@ $("empty-retry").onclick = loadGallery;
 loadGallery();
 
 // ---------- nút nổi "Tìm ảnh của bạn" / "Xem tất cả ảnh": hiện khi nút ở đầu trang đã cuộn khuất ----------
-let io = null;
+// Nút nổi không che ảnh: ẩn khi đang cuộn xuống và khi chân trang hiện ra; cuộn lên thì hiện lại.
+let io = null, pillShown = false, pillAway = false, footSeen = false, lastY = 0;
+function paintPill() { $("pill").hidden = !pillShown; $("pill").classList.toggle("away", pillAway || footSeen); }
+function trackPill() {
+  const y = scrollY;
+  if (y > lastY + 6) pillAway = true; else if (y < lastY - 6) pillAway = false;
+  lastY = y; paintPill();
+}
+new IntersectionObserver(es => { footSeen = es[es.length - 1].isIntersecting; paintPill(); }).observe(document.querySelector(".foot"));
 function watchCta() {
   if (io) io.disconnect();
-  if (!galleryReady || !photos.length) { $("pill").hidden = true; return; }
+  pillAway = false;
+  if (!galleryReady || !photos.length) { pillShown = false; paintPill(); return; }
   const target = mode === "all" ? $("cta-row") : $("finder");
   $("pill-find").hidden = mode !== "all"; $("pill-all").hidden = mode === "all";
-  io = new IntersectionObserver(es => { $("pill").hidden = es[es.length - 1].isIntersecting; });
+  io = new IntersectionObserver(es => { pillShown = !es[es.length - 1].isIntersecting; paintPill(); });
   io.observe(target);
 }
-$("pill-all").onclick = () => showAll();
-$("b-all").onclick = () => showAll();
+// "Xem tất cả ảnh": lấy lại đúng mục lịch sử đã đẩy ở enterMine (không đẩy thêm mục mới), popstate sẽ gọi showAll
+const leaveMine = () => { if (history.state && history.state.mine) history.back(); else showAll(); };
+$("pill-all").onclick = leaveMine;
+$("b-all").onclick = leaveMine;
 
 // ---------- chọn ảnh selfie ----------
 $("in-file").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) choose(f); };
@@ -317,6 +332,7 @@ $("b-retry").onclick = () => file && search();
 function enterMine() {
   if (mode === "mine") return;
   mode = "mine";
+  history.pushState({ mine: 1 }, "");  // nút Back của điện thoại quay về thư viện thay vì rời trang
   savedY = scrollY;
   gAll.setActive(false);
   $("all").hidden = true; $("finder").hidden = false; $("cta-row").hidden = true;
@@ -353,18 +369,19 @@ function choose(f) {
 // ---------- gọi API ----------
 async function prepare(f) {
   // giữ nguyên ảnh nếu vừa phải; quá lớn thì vẽ lại nhỏ hơn (trình duyệt tự áp EXIF khi vẽ <img>)
+  const url = URL.createObjectURL(f);
   try {
-    const url = URL.createObjectURL(f), im = new Image();
+    const im = new Image();
     im.src = url; await im.decode();
     const m = Math.max(im.naturalWidth, im.naturalHeight);
-    if (m <= SEND_RESIZE_ABOVE) { URL.revokeObjectURL(url); return f; }
+    if (m <= SEND_RESIZE_ABOVE) return f;
     const s = SEND_MAX_EDGE / m, c = document.createElement("canvas");
     c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
     c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url);
     const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.92));
     return b || f;
   } catch (e) { return f; }
+  finally { URL.revokeObjectURL(url); }  // kể cả khi decode() lỗi (HEIC…)
 }
 
 async function search() {
@@ -382,6 +399,7 @@ async function search() {
     if (my !== runId) return;
     if (r.status === 422) {
       const e = await r.json().catch(() => ({}));
+      if (my !== runId) return;
       if (e.error === "face_too_small") {
         showError("Khuôn mặt hơi nhỏ", "Khuôn mặt trong ảnh quá nhỏ để nhận ra bạn. Hãy chụp gần hơn hoặc dùng một tấm ảnh khác.",
           ["Đưa máy lại gần, để mặt chiếm phần lớn khung hình", "Chọn ảnh chỉ có một mình bạn"]);
@@ -393,6 +411,7 @@ async function search() {
     }
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
+      if (my !== runId) return;
       if (r.status === 503) showError("Đang đông khách quá", "Nhiều người đang tìm ảnh cùng lúc. Bạn thử lại sau ít giây nhé.", [], true);
       else if (r.status === 413) showError("Ảnh quá lớn", e.detail || "Hãy chọn một ảnh nhỏ hơn.", []);
       else if (r.status === 400) showError("Không đọc được ảnh", e.detail || "Hãy thử một file JPG hoặc PNG khác.", []);
@@ -432,6 +451,7 @@ function showError(title, text, tips, canRetry, noPreview) {
 }
 
 function placeBox(box, bbox, w, h) {
+  if (!w || !h) return;
   box.hidden = false;
   box.style.left = bbox[0] / w * 100 + "%"; box.style.top = bbox[1] / h * 100 + "%";
   box.style.width = (bbox[2] - bbox[0]) / w * 100 + "%"; box.style.height = (bbox[3] - bbox[1]) / h * 100 + "%";
@@ -474,7 +494,8 @@ function clearResults() {
 }
 
 // ---------- kết quả: dùng lại đúng URL ảnh và cách dựng như thư viện ----------
-const fromHit = r => ({ id: r.id, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: r.b || null, score: r.score, bbox: r.bbox });
+// `b` theo manifest (nguồn đã dùng để dựng các khung của chuỗi) — nếu manifest cũ/mới lệch với kết quả tìm kiếm thì vẫn nhất quán
+const fromHit = r => { const mp = photoById.get(r.id); return { id: r.id, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: (mp ? mp.b : r.b) || null, score: r.score, bbox: r.bbox }; };
 // một ảnh = một ô: gộp theo id lấy điểm cao nhất, xếp điểm giảm dần. Chia nhóm SAU khi gộp nên hai nhóm không bao giờ trùng nhau
 const hits = list => uniqById(list.map(fromHit), (x, o) => x.score > o.score).sort((a, b) => b.score - a.score);
 
@@ -509,11 +530,14 @@ function renderResults() {
   $("g-main-empty").hidden = !noMain;
   $("g-main-empty").textContent = "Chưa có ảnh nào thật chắc chắn, nhưng có vài ảnh có thể là bạn ở bên dưới.";
   $("g-main-t").hidden = noMain; $("g-main-n").hidden = noMain;
-  gMain.put(COLLAPSE_BURSTS ? stackTiles(main) : { items: main, flat: main }); gMain.setActive(!noMain);
+  const seenIds = new Set();  // ảnh đã ở nhóm chính thì không được xuất hiện lần nữa ở nhóm "có thể"
+  gMain.put(COLLAPSE_BURSTS ? stackTiles(main, seenIds) : { items: main, flat: main }); gMain.setActive(!noMain);
+  for (const f of gMain.flat) seenIds.add(f.id);
+  const maybeLeft = COLLAPSE_BURSTS ? maybe : maybe.filter(x => !seenIds.has(x.id));
   $("g-main-n").textContent = main.length ? countText(gMain) : "";
-  const hasMaybe = maybe.length > 0;
+  gMaybe.put(COLLAPSE_BURSTS ? stackTiles(maybeLeft, seenIds) : { items: maybeLeft, flat: maybeLeft });
+  const hasMaybe = gMaybe.items.length > 0;
   $("g-maybe").hidden = !hasMaybe;
-  gMaybe.put(COLLAPSE_BURSTS ? stackTiles(maybe) : { items: maybe, flat: maybe });
   if (hasMaybe) {
     $("maybe-n").textContent = `(${gMaybe.items.length})`;
     setMaybe(noMain);  // không có ảnh chắc chắn thì mở sẵn nhóm này
@@ -575,9 +599,9 @@ function closeLb(silent) {
   if (!lbOpen) return;
   ptrs.clear(); g = null;
   lbOpen = false; lb.hidden = true; document.body.classList.remove("lb-open");
-  lbImg.removeAttribute("src"); lbImg.style.opacity = ""; resetZoom();
+  lbImg.removeAttribute("src"); lbImg.style.opacity = ""; resetZoom(); cancelNeighbours();
   clearTimeout(shareTimer); for (const e of blobs.values()) if (e.ctl) e.ctl.abort(); blobs.clear(); lastId = null;
-  if (history.state && history.state.lb && !silent) history.back();
+  if (history.state && history.state.lb && !silent) { popIgnore++; history.back(); }
   else if (history.state && history.state.lb) history.replaceState(null, "");
   const x = cur.list[cur.i], head = x && (x.head || x);  // đã lướt xa thì cuộn tới ảnh đang xem, focus về đúng ô
   if (cur.g === gAll) { if (gAll.active) gAll.reveal(gAll.items.indexOf(head)); }
@@ -588,8 +612,15 @@ function closeLb(silent) {
   }
 }
 const requestClose = () => closeLb(false);
-addEventListener("popstate", () => { if (lbOpen) closeLb(true); });
+let popIgnore = 0;  // popstate do chính closeLb gây ra bằng history.back()
+addEventListener("popstate", () => {
+  if (popIgnore > 0) { popIgnore--; return; }
+  if (lbOpen) closeLb(true);
+  else if (mode === "mine") showAll();  // Back từ kết quả → về thư viện; Back lần nữa mới rời trang
+});
 
+let nbImgs = [];
+function cancelNeighbours() { for (const im of nbImgs) { im.onload = im.onerror = null; im.src = ""; } nbImgs = []; }  // src rỗng huỷ lượt tải đang bay
 function loadFull(x, ok, fail) {  // ảnh 2000 px theo đường lùi CDN → /i/ → /previews
   const steps = chain(x, "preview");
   let k = 0;
@@ -612,10 +643,12 @@ function show(dir) {
   lbImg.style.opacity = "";
   lbImg.src = x.ts || chain(x, "thumb")[0].src;  // ảnh nhỏ của ô lưới (đã có trong cache): hiện ngay, rồi thay bằng bản 2000 px
   spin.classList.add("on");
-  loadFull(x, src => { if (cur.list[cur.i] === x) { lbImg.src = src; spin.classList.remove("on"); } },
+  loadFull(x, src => { if (lbOpen && cur.list[cur.i] === x) { lbImg.src = src; spin.classList.remove("on"); } },  // không gán src sau khi đã đóng
     () => { if (cur.list[cur.i] === x) spin.classList.remove("on"); });  // lỗi của ảnh cũ không được tắt vòng xoay của ảnh mới
   if (dir && !reduced) lbImg.animate([{ opacity: 0, transform: `translateX(${dir * 36}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
-  for (const k of [cur.i - 1, cur.i + 1]) if (cur.list[k]) new Image().src = chain(cur.list[k], "preview")[0].src;
+  cancelNeighbours();
+  const saveData = navigator.connection && navigator.connection.saveData;  // tiết kiệm dữ liệu: không tải trước ảnh hàng xóm
+  if (!saveData) for (const k of [cur.i - 1, cur.i + 1]) if (cur.list[k]) { const im = new Image(); im.src = chain(cur.list[k], "preview")[0].src; nbImgs.push(im); }
   prepareShare(x);
 }
 function go(d) {
@@ -646,6 +679,7 @@ function applyZoom() {
   lbImg.style.transform = z.s === 1 && !z.x && !z.y ? "" : `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
   lb.dataset.zoom = z.s.toFixed(2);
 }
+function zoomOut() { z = { s: 1, x: 0, y: 0 }; applyZoom(); }  // giữ transition của smooth(): thu về có hoạt ảnh
 function resetZoom() { z = { s: 1, x: 0, y: 0 }; lbImg.style.transition = ""; applyZoom(); }
 // vùng chứa ảnh (hộp của #lb-stage trừ padding) và phần ảnh thật sự hiển thị trong đó (object-fit: contain), toạ độ màn hình, lúc chưa zoom
 function contentRect() {
@@ -679,7 +713,7 @@ function tap(e) {
   const inside = e.clientX >= c.l && e.clientX <= c.l + c.w && e.clientY >= c.t && e.clientY <= c.t + c.h;
   const dbl = now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
   lastTap = dbl ? { t: 0, x: 0, y: 0 } : { t: now, x: e.clientX, y: e.clientY };
-  if (dbl) { smooth(() => (z.s > 1 ? resetZoom() : zoomAt(ZOOM_TAP, e.clientX, e.clientY))); return; }
+  if (dbl) { smooth(() => (z.s > 1 ? zoomOut() : zoomAt(ZOOM_TAP, e.clientX, e.clientY))); return; }
   if (!inside && z.s === 1) requestClose();  // chạm vào vùng tối quanh ảnh: đóng (không đóng khi đang phóng)
 }
 
@@ -736,12 +770,13 @@ function endPtr(e) {
   }
   if (!g) return;
   const p = g; g = null;
+  const cancel = e.type === "pointercancel";  // hệ thống huỷ cử chỉ (cuộc gọi, cử chỉ hệ điều hành…): chỉ bật về, không đóng, không chuyển ảnh
   lbImg.style.opacity = "";
   if (z.s > 1) { if (!p.moved && !p.noTap && e.type === "pointerup") tap(e); return; }
   if (!p.axis) { if (!p.noTap && e.type === "pointerup" && Math.hypot(p.dx, p.dy) < 10 && performance.now() - p.t < 500) tap(e); return; }
   const v = Math.abs(p.dx) / Math.max(performance.now() - p.t, 1);
-  if (p.axis === "y" && p.dy > 90) { requestClose(); }
-  else if (p.axis === "x" && (Math.abs(p.dx) > 60 || v > .5)) { lbImg.style.transform = ""; go(p.dx < 0 ? 1 : -1); }
+  if (p.axis === "y" && p.dy > 90 && !cancel) { requestClose(); }
+  else if (p.axis === "x" && !cancel && (Math.abs(p.dx) > 60 || v > .5)) { lbImg.style.transform = ""; go(p.dx < 0 ? 1 : -1); }
   else {
     if (!reduced) lbImg.animate([{ transform: lbImg.style.transform, opacity: lbImg.style.opacity || 1 }, { transform: "none", opacity: 1 }], { duration: 220, easing: "ease-out" });
     lbImg.style.transform = "";
@@ -749,7 +784,8 @@ function endPtr(e) {
 }
 stageEl.addEventListener("pointerup", endPtr);
 stageEl.addEventListener("pointercancel", endPtr);
-stageEl.addEventListener("wheel", e => {  // máy tính: lăn chuột để phóng/thu
+stageEl.addEventListener("wheel", e => {  // chụm trên bàn di chuột (ctrlKey) mới phóng/thu; hai ngón cuộn thường không phóng
+  if (!e.ctrlKey) return;
   e.preventDefault();
   const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);  // dòng/trang (Firefox) quy về px
   zoomAt(Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-dy * 0.002))), e.clientX, e.clientY);

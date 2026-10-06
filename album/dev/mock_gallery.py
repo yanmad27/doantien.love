@@ -155,6 +155,8 @@ if a.dup and len(ROWS) > 800:  # dòng trùng: kề nhau, ở xa, và một bả
     c3[4] = "deadbeef"
     ROWS.insert(700, c3); ROWS.append(c2); ROWS.insert(12, c1)
     DUPS["manifest"] = [c1[0], c2[0], c3[0]]
+    ROWS[200][1] = ROWS[200][2] = 0           # w/h = 0: client phải chặn tỉ lệ khung hình
+    ROWS[201][1], ROWS[201][2] = 9000, 100    # panorama cực đoan
 FAIL = {r[0] for r in ROWS if int(hashlib.sha1(r[0].encode()).hexdigest()[:6], 16) / 0xFFFFFF < a.cdn_fail}
 MANIFEST = json.dumps(dict(mv=hashlib.sha1(json.dumps(ROWS).encode()).hexdigest()[:10], cdn=CDN, dv=DV,
                            photos=[r[:7] + [r[8]] for r in ROWS]), separators=(",", ":")).encode()
@@ -202,6 +204,7 @@ def shaped_write(wfile, data):
         wfile.write(part)
 
 
+SESSION = hashlib.sha256(("mock-session:" + a.admin_token).encode()).hexdigest()  # như backend thật: cookie phiên không chứa mã
 LOG = {"cdn": [], "post": []}
 FAILS = []
 log_lock = threading.Lock()
@@ -228,17 +231,18 @@ def search_payload(body):
                         width=r[1], height=r[2], v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
     # các chuỗi liên thanh có chủ đích (hợp đồng §11): khung điểm cao + khung điểm thấp (một ô, ở nhóm cao), tất cả khung khớp, chỉ 1 khung khớp, chỉ khung điểm thấp
     groups = [g for g in BURSTS if all(r[0] in BY_ID for r in g)]
-    plan = [(0, [.62, .33]), (1, [.71, .52]), (2, [.45]), (3, [.31])]
+    plan = [(0, [.62, .33]), (1, [.71, .52]), (2, [.45]), (3, [.31]), (4, [.55, .5])]
     SCEN.clear()
     for gi, scores in plan:
-        if gi < len(groups) and len(groups[gi]) >= len(scores) + (1 if gi == 2 else 0):
+        if gi < len(groups) and len(groups[gi]) >= len(scores) + (1 if gi == 2 else 0) and not (gi == 4 and not a.dup):
             g = groups[gi]
             ids = {r[0] for r in g}
             res = [x for x in res if x["id"] not in ids]
-            for r, s in zip(g, scores):
-                res.append(dict(id=r[0], b=r[8], name=r[6], score=s, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
+            for ki, (r, s) in enumerate(zip(g, scores)):
+                # gi == 4 ("stale"): kết quả tìm kiếm lệch với manifest — khung đầu b:null dù manifest có b (ảnh phải vẫn chỉ hiện một lần)
+                res.append(dict(id=r[0], b=(None if (gi == 4 and ki == 0) else r[8]), name=r[6], score=s, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
                                 v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
-            SCEN[["split", "all_main", "partial", "maybe_only"][gi]] = dict(b=g[0][8], frames=[r[0] for r in g], matched=[r[0] for r in g[:len(scores)]])
+            SCEN[["split", "all_main", "partial", "maybe_only", "stale"][gi]] = dict(b=g[0][8], frames=[r[0] for r in g], matched=[r[0] for r in g[:len(scores)]])
     if a.dup and len(res) > 46:  # cùng một ảnh hai lần: bản điểm thấp của ảnh đầu bảng, và bản điểm cao của ảnh đang ở nhóm "có thể"
         res.append(dict(res[0], score=0.33)); res.append(dict(res[45], score=0.5))
         DUPS["search"] = [res[0]["id"], res[45]["id"]]
@@ -272,7 +276,7 @@ class H(BaseHTTPRequestHandler):
 
     def authed(self, header=False):
         ck = self.headers.get("Cookie") or ""
-        return ("album_token=" + a.admin_token) in ck.split("; ") or (header and self.headers.get("X-Album-Token") == a.admin_token)
+        return ("album_session=" + SESSION) in ck.split("; ") or (header and self.headers.get("X-Album-Token") == a.admin_token)
 
     def html(self, body, head, code=200):
         hdr = {"Cache-Control": "no-store"}
@@ -388,7 +392,7 @@ class H(BaseHTTPRequestHandler):
                 tok = ""
             if tok == a.admin_token:
                 self.send_response(204)
-                self.send_header("Set-Cookie", f"album_token={a.admin_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000")
+                self.send_header("Set-Cookie", f"album_session={SESSION}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000")
                 self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", "0")
                 self.end_headers()
                 return

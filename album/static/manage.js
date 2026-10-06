@@ -1,6 +1,8 @@
 "use strict";
 const $ = id => document.getElementById(id);
-const fmt = n => n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GB" : n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
+const num = (digits = 0) => new Intl.NumberFormat("vi-VN", { minimumFractionDigits: digits, maximumFractionDigits: digits });  // dấu phẩy thập phân, dấu chấm hàng nghìn
+const n0 = num(0), n1 = num(1), n2 = num(2);
+const fmt = n => n >= 1073741824 ? n2.format(n / 1073741824) + " GB" : n >= 1048576 ? n1.format(n / 1048576) + " MB" : n0.format(n / 1024) + " KB";
 const dur = s => { s = Math.round(s); return s >= 60 ? Math.floor(s / 60) + " phút " + (s % 60) + " giây" : s + " giây"; };
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -21,13 +23,13 @@ async function loadStats() {
     const d = await (await fetch("/api/stats")).json();
     maxMB = d.max_upload_mb;
     $("drop-hint").textContent = `JPG, PNG, WEBP · tối đa ${maxMB} MB mỗi ảnh`;
-    $("n-orig").textContent = d.originals; $("n-done").textContent = d.photos;
-    $("n-pend").textContent = d.pending; $("n-faces").textContent = d.faces;
+    $("n-orig").textContent = n0.format(d.originals); $("n-done").textContent = n0.format(d.photos);
+    $("n-pend").textContent = n0.format(d.pending); $("n-faces").textContent = n0.format(d.faces);
     const used = 1 - d.disk_free / d.disk_total, low = d.disk_free / d.disk_total < 0.1;
     $("disk-bar").style.width = Math.max(used * 100, 1) + "%";
     $("disk-bar").parentElement.classList.toggle("low", low);
     $("disk").classList.toggle("low", low);
-    $("disk").textContent = `Ổ đĩa: còn trống ${(d.disk_free / 2 ** 30).toFixed(1)} GB / ${(d.disk_total / 2 ** 30).toFixed(1)} GB` +
+    $("disk").textContent = `Ổ đĩa: còn trống ${n1.format(d.disk_free / 2 ** 30)} GB / ${n1.format(d.disk_total / 2 ** 30)} GB` +
       ` · ảnh đã lưu ${fmt(d.stored_bytes)}` + (d.max_total_bytes == null ? "" : ` / hạn mức ${fmt(d.max_total_bytes)}`) + (low ? " — sắp hết chỗ" : "");
   } catch (e) {}
 }
@@ -63,25 +65,28 @@ function pump() {
 }
 function upload(it, tries = 0) {
   const st = it.st, x = new XMLHttpRequest();
-  const retry = () => {  // máy chủ bận (503) hoặc đứt kết nối: thử lại tối đa 4 lần, chậm dần
+  const retry = () => {  // máy chủ bận (503), quá nhiều request (429), hết thời gian hoặc đứt kết nối: thử lại tối đa 4 lần, chậm dần
     if (tries >= 4) return false;
     sent -= it.loaded; it.loaded = 0; it.fill.style.width = "0"; st.textContent = "chờ thử lại…";
     setTimeout(() => upload(it, tries + 1), 2000 * (tries + 1)); return true;
   };
   x.open("POST", "/api/upload?name=" + encodeURIComponent(it.f.name));
+  x.timeout = 120000;  // một file kẹt không được giữ chỗ trong hàng đợi mãi
   x.setRequestHeader("Content-Type", "application/octet-stream");
-  x.upload.onprogress = e => { sent += e.loaded - it.loaded; it.loaded = e.loaded; const p = Math.round(e.loaded / e.total * 100); st.textContent = p + "%"; it.fill.style.width = p + "%"; pump(); };
+  x.upload.onprogress = e => { if (!e.lengthComputable) return; sent += e.loaded - it.loaded; it.loaded = e.loaded; const p = Math.round(e.loaded / e.total * 100); st.textContent = p + "%"; it.fill.style.width = p + "%"; pump(); };
   const fin = () => { sent += it.f.size - it.loaded; it.loaded = it.f.size; it.li.classList.add("done"); active--; pump(); refreshStats(); };
   x.onload = () => {
-    let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {}
+    let d = null; try { d = JSON.parse(x.responseText); } catch (e) {}
+    if (!d || typeof d !== "object") d = x.status === 200 ? { detail: "máy chủ trả lời không đọc được" } : {};  // 200 mà không phải JSON: lỗi, không phải "trùng"
     if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : ""); st.className = "f-st ok"; doneN++; }
-    else if (x.status === 200) { st.textContent = "trùng với " + d.name; st.className = "f-st dup"; dupN++; }
+    else if (x.status === 200 && d.name) { st.textContent = "trùng với " + d.name; st.className = "f-st dup"; dupN++; }
     else if (x.status === 401) { toLogin(); return; }
-    else if (x.status === 503 && retry()) return;
+    else if ((x.status === 503 || x.status === 429) && retry()) return;
     else { st.textContent = "✗ " + (d.detail || ("lỗi " + x.status)); st.className = "f-st err"; failN++; }
     fin();
   };
   x.onerror = () => { if (retry()) return; st.textContent = "✗ mất kết nối"; st.className = "f-st err"; failN++; fin(); };
+  x.ontimeout = () => { if (retry()) return; st.textContent = "✗ quá thời gian chờ"; st.className = "f-st err"; failN++; fin(); };
   x.send(it.f);
 }
 $("pick").onchange = () => { addFiles($("pick").files); $("pick").value = ""; };
