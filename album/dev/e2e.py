@@ -41,6 +41,8 @@ with sync_playwright() as p:
     b = p.chromium.launch()
     pg = b.new_page(viewport={"width": 1000, "height": 900})
     pg.goto(a.url + "/manage")
+    pg.wait_for_function("document.getElementById('disk').textContent.includes('GB')")
+    print("đĩa:", pg.inner_text("#disk"))
     shot(pg, "1-manage-empty.png")
     pg.set_input_files("#pick", a.photos)
     pg.wait_for_function("document.getElementById('upsum').textContent.includes('Hoàn tất')", timeout=300000)

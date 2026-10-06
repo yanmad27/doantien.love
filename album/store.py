@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE TABLE IF NOT EXISTS faces (
   photo_id TEXT, idx INTEGER, x1 REAL, y1 REAL, x2 REAL, y2 REAL, score REAL, emb BLOB,
   PRIMARY KEY (photo_id, idx));
+CREATE TABLE IF NOT EXISTS failed (  -- ảnh không xử lý được: không thử lại mỗi lượt (trừ khi file đổi)
+  path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, reason TEXT);
 CREATE TABLE IF NOT EXISTS originals (  -- ảnh gốc tải lên qua web: tên đã chuẩn hoá + SHA-256 để chống trùng
   name TEXT PRIMARY KEY, sha256 TEXT UNIQUE, size INTEGER);
 """
@@ -37,6 +39,10 @@ def thumb_dir(data_dir):
 
 def preview_dir(data_dir):
     return os.path.join(data_dir, "previews")
+
+
+def rejected_dir(data_dir):
+    return os.path.join(data_dir, "rejected")
 
 
 def originals_dir(data_dir):

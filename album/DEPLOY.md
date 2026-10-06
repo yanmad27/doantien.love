@@ -23,8 +23,10 @@ Không có bí mật nào. Tất cả đều có mặc định trong image; ch�
 | `PORT` | `8000` | Cổng app lắng nghe (host `0.0.0.0`) |
 | `DATA_DIR` | `/data` | Nơi lưu mọi thứ bền vững (volume) |
 | `ALBUM_MAX_UPLOAD_MB` | `60` | Giới hạn dung lượng mỗi ảnh (ảnh 45 MP JPEG thường 10–30 MB) |
-| `ALBUM_MIN_FREE_MB` | `2048` | Dưới mức đĩa trống này, app từ chối tải ảnh lên (thông báo tiếng Việt) |
-| `ALBUM_THREADS` | `0` (= số lõi) | Số luồng onnxruntime; đặt `2` nếu muốn app chiếm ít CPU hơn |
+| `ALBUM_MIN_FREE_MB` | `5120` | Đĩa host dùng chung với app khác: dưới mức trống này (kiểm lúc bắt đầu và mỗi 8 MB khi đang nhận), app từ chối tải ảnh lên (HTTP 507, thông báo tiếng Việt) |
+| `ALBUM_MAX_TOTAL_GB` | `20` | **Hạn mức tổng** dung lượng ảnh gốc trong album (tính cả phần đã đặt chỗ cho các upload đang chạy). Hết hạn mức → 507. Đặt theo đĩa thực có |
+| `ALBUM_THREADS` | `2` | Số luồng onnxruntime (image đặt sẵn 2 để không chiếm hết CPU của VPS dùng chung) |
+| `ALBUM_INDEX_WINDOW` | `1` | Số ảnh giải mã cùng lúc khi Xử lý. `1` = tuần tự (RAM đỉnh thấp nhất); `2` = giải mã trước một ảnh, nhanh hơn ~10–20% nhưng đỉnh RAM thêm ~0.5–1 GB với ảnh 60 MP |
 | `ALBUM_LOW_MEM` | `1` | Tắt arena cấp phát của onnxruntime (RSS đỉnh thấp hơn ~20%, tốc độ như nhau) |
 
 ## 3. Volume (bắt buộc — nếu không, mất hết ảnh khi redeploy)
@@ -42,19 +44,25 @@ Tab **Domains → Add Domain**:
 - Host `album.doantien.love`, **Container Port `8000`** (= `PORT`), Path `/`, HTTPS bật, Certificate = Let's Encrypt.
 - DNS: bản ghi A/AAAA của `album.doantien.love` trỏ về VPS (việc ở DNS do chủ dự án làm).
 
-## 5. Giới hạn bộ nhớ và CPU
+## 5. Giới hạn bộ nhớ và CPU (BẮT BUỘC)
 
-Tab **Advanced → Cluster/Resources**: **Memory Limit = 3 GB** (tối thiểu 2.5 GB), CPU 2 lõi trở lên.
+App mở cho mọi người và chạy chung VPS với dịch vụ khác — **phải** đặt giới hạn để một truy vấn/ảnh xấu không làm cả máy bị OOM. Tab **Advanced → Cluster/Resources**:
+
+- **Memory Limit = 3 GB** (tối thiểu 2.5 GB; đừng đặt thấp hơn)
+- **CPU Limit = 2** (lõi)
+
+Các chặn trong app tính theo mức này: ảnh tải lên ≤ 64 MP, selfie ≤ 40 MP và ≤ 2 truy vấn tính toán cùng lúc (3 cái đồng thời → HTTP 503 "đang bận"), tối đa 4 upload ghi đĩa cùng lúc (quá → 503, trình duyệt tự thử lại), Xử lý tuần tự từng ảnh.
 
 Đo thực tế (macOS arm64, CPU, Python 3.9; bản Linux/Python 3.11 chưa đo được vì chưa có Docker — hãy kiểm lại bằng `docker stats` sau khi deploy):
 
 | | RSS |
 |---|---|
 | App nhàn rỗi | ~0.4–0.5 GB |
-| **Đỉnh khi Xử lý** (có ảnh JPEG 45 MP 9000×5000) | **~1.8 GB** (`ALBUM_LOW_MEM=1`; ~2.2 GB nếu tắt) |
+| **Đỉnh khi Xử lý** (ảnh JPEG 45 MP 9000×5000 + 24 MP) | **~1.8 GB** (`ALBUM_LOW_MEM=1`; ~2.2 GB nếu tắt) |
+| Đỉnh khi Xử lý một ảnh PNG **60 MP** (RGB/RGBA/xám 16-bit; tệ nhất) | ~1.6–1.85 GB; 3 ảnh 60 MP + 45 MP + 24 MP liên tiếp trong một lượt: **2.35 GB** (macOS giữ lại bộ nhớ đã cấp phát; Linux thường trả về sớm hơn) |
 | Sau truy vấn selfie | giữ nguyên mức đỉnh (allocator không trả bộ nhớ ngay) |
 
-Đỉnh do ảnh lớn nhất quyết định (ảnh 45 MP: ~135 MB mảng + bộ nhớ trung gian của model dò ở 1600 px). Tìm kiếm trong lúc đang Xử lý vẫn chạy, chậm hơn. Nếu bị OOM-kill: tăng giới hạn, hoặc đặt `ALBUM_THREADS=2`.
+Đỉnh do ảnh lớn nhất quyết định (ảnh 45 MP: ~135 MB mảng + bộ nhớ trung gian của model dò ở 1600 px; PNG giải mã nặng hơn JPEG cùng số điểm ảnh). Tìm kiếm trong lúc đang Xử lý vẫn chạy, chậm hơn. Nếu bị OOM-kill: tăng giới hạn.
 
 Tốc độ: ~0.8 giây/ảnh ≤ 4000 px; ảnh 24 MP ~1.5 s, 45 MP ~2.5 s (CPU hiện đại, nhiều lõi). 1000 ảnh ≈ 15–25 phút.
 
@@ -70,7 +78,7 @@ Tốc độ: ~0.8 giây/ảnh ≤ 4000 px; ảnh 24 MP ~1.5 s, 45 MP ~2.5 s (CPU
 | Chỉ mục (embedding + bbox, `index.db`) | ~30 KB (≈ 1 KB/khuôn mặt, ~15 mặt/ảnh nhóm) |
 | **Ngoài ảnh gốc** | **~0.6 MB/ảnh** |
 
-Ví dụ: 1000 ảnh × 15 MB gốc ≈ 15 GB + 0.6 GB. Cần thêm chỗ trống cho tệp tạm lúc tải lên (một ảnh một lúc). Trước khi tải ảnh, kiểm tra đĩa của host:
+Ví dụ: 1000 ảnh × 15 MB gốc ≈ 15 GB + 0.6 GB — đặt `ALBUM_MAX_TOTAL_GB` ≥ con số này (mặc định 20) và để đĩa còn trống ≥ `ALBUM_MIN_FREE_MB`. Cần thêm chỗ trống cho tệp tạm lúc tải lên (một ảnh một lúc). Trước khi tải ảnh, kiểm tra đĩa của host:
 
 ```sh
 curl -s https://album.doantien.love/healthz    # {"ok":true,"disk_free":…,"disk_total":…} (byte, của ổ chứa DATA_DIR)
@@ -83,6 +91,11 @@ Trang `/manage` cũng hiện dung lượng trống.
 - Traefik mặc định không giới hạn kích thước body. Nhưng entrypoint có `readTimeout` (~60 s cho cả request): ảnh 20 MB trên đường truyền chậm (< ~3 Mbit/s upload) có thể bị cắt → ảnh đó báo lỗi, tải lại.
 - Cap mỗi ảnh 60 MB (`ALBUM_MAX_UPLOAD_MB`); ảnh quá cỡ bị chặn ngay ở trình duyệt.
 - Nếu trước Traefik còn Cloudflare proxy: gói free giới hạn body 100 MB/request — vẫn đủ.
+
+## 7b. Ảnh làm sập / ảnh lỗi
+
+- Trước mỗi lần giải mã app ghi `DATA_DIR/decoding.json`. Nếu container bị OOM-kill/chết giữa lúc xử lý một ảnh, lần khởi động sau (hoặc lần Xử lý kế tiếp) app **chuyển ảnh đó sang `DATA_DIR/rejected/`** và báo trong trạng thái Xử lý — không lặp lại vòng crash. Ảnh có thể là ảnh vô tội đang được giải mã cùng lúc; xem trong `rejected/` rồi tải lại nếu cần.
+- Ảnh đọc không được (cụt, hỏng) chỉ báo lỗi một lần; lần Xử lý sau bỏ qua (bảng `failed` trong `index.db`) cho đến khi file đổi.
 
 ## 8. Dùng
 

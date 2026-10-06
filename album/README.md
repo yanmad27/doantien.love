@@ -44,19 +44,22 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 | `ALBUM_MODEL_DIR` | `--model-dir` | `album/models` (container: `/opt/models`) |
 | `ALBUM_HOST` / `PORT` (hoặc `ALBUM_PORT`) | `--host` / `--port` | `127.0.0.1` / `8000` (container: `0.0.0.0`) |
 | `ALBUM_MAX_UPLOAD_MB` | `--max-upload-mb` | `60` |
-| `ALBUM_MIN_FREE_MB` | `--min-free-mb` | `2048` |
-| `ALBUM_THREADS` | `--threads` | `0` (theo số lõi) |
+| `ALBUM_MIN_FREE_MB` | `--min-free-mb` | `5120` |
+| `ALBUM_MAX_TOTAL_GB` | `--max-total-gb` | `20` |
+| `ALBUM_INDEX_WINDOW` | — | `1` (tuần tự; `2` = giải mã trước một ảnh, nhanh hơn nhưng tốn RAM) |
+| `ALBUM_THREADS` | `--threads` | `0` (theo số lõi; container đặt `2`) |
 | `ALBUM_LOW_MEM` | — | chưa đặt; `1` = tắt arena onnxruntime (RAM đỉnh thấp hơn; container đặt sẵn) |
 | `ALBUM_DET_SIZE` | `index_photos.py --det-size` | `1600` |
 | `ALBUM_PROVIDERS` | `--providers` | `CPUExecutionProvider` |
 
 ## Chặn lạm dụng (vì không có mật khẩu)
 
-- Tải lên: chỉ `.jpg/.jpeg/.png/.webp` **và** Pillow đọc được header (định dạng thật JPEG/PNG/WEBP), tối đa 150 MP, tối đa `ALBUM_MAX_UPLOAD_MB`/ảnh (kiểm `Content-Length` rồi đếm khi stream; ghi thẳng ra đĩa, không buffer RAM). Tên file chỉ giữ phần cuối đã làm sạch (không path traversal); trùng nội dung (SHA-256) → bỏ qua; cùng tên khác nội dung → thêm hậu tố `-<sha8>`, không bao giờ ghi đè.
-- Ổ đĩa chứa `DATA_DIR` còn trống < `ALBUM_MIN_FREE_MB` → 507 + thông báo tiếng Việt. `/healthz` và `/api/stats` trả `disk_free`/`disk_total`.
-- Một job Xử lý một lúc; selfie ≤ 25 MB và ≤ 100 MP (như trước), chỉ trong RAM.
+- Tải lên: chỉ `.jpg/.jpeg/.png/.webp` **và** Pillow đọc được header (định dạng thật JPEG/PNG/WEBP), tối đa **64 MP** (PNG khai báo hàng trăm MP ngốn ~18 B/điểm ảnh khi giải mã; kiểm lại ở indexer trước khi giải mã), tối đa `ALBUM_MAX_UPLOAD_MB`/ảnh (kiểm `Content-Length` rồi đếm khi stream; ghi thẳng ra đĩa, không buffer RAM). Tên file chỉ giữ phần cuối đã làm sạch (không path traversal); trùng nội dung (SHA-256) → bỏ qua; cùng tên khác nội dung → thêm hậu tố `-<sha8>`, không bao giờ ghi đè.
+- Ổ đĩa chứa `DATA_DIR` còn trống < `ALBUM_MIN_FREE_MB` (mặc định 5120; kiểm lúc bắt đầu và mỗi 8 MB khi nhận) → 507 + thông báo tiếng Việt. Hạn mức tổng `ALBUM_MAX_TOTAL_GB` (mặc định 20; tính ảnh đã lưu + chỗ đặt trước cho upload đang chạy) → 507. Tối đa 4 upload cùng lúc, quá → 503 (trình duyệt tự thử lại). `/healthz` và `/api/stats` trả `disk_free`/`disk_total`.
+- Ảnh làm process chết khi giải mã (OOM) được chuyển sang `DATA_DIR/rejected/` ở lần chạy sau (marker `decoding.json`); ảnh lỗi chỉ báo một lần (bảng `failed`), không thử lại mỗi lượt.
+- Một job Xử lý một lúc; selfie ≤ 25 MB và ≤ **40 MP**, chỉ trong RAM; tối đa 2 truy vấn tính toán cùng lúc, cái thứ 3 → 503 "đang bận".
 - Mọi response có `X-Robots-Tag: noindex, nofollow`; `/robots.txt` = `Disallow: /`. Không trả đường dẫn hệ thống: chỉ tên file đã lưu; lỗi job đã gỡ đường dẫn tuyệt đối.
-- Kiểm bằng script: `.venv/bin/python dev/check_limits.py --photo <ảnh ≤ 2 MB> --selfie x`.
+- Sinh ảnh bom: `.venv/bin/python dev/make_poison.py /tmp/album-poison`. Kiểm bằng script: `.venv/bin/python dev/check_limits.py --photo <ảnh ≤ 2 MB> --selfie x [--poison <thư mục ảnh bom PNG>]`; với `--poison` kiểm thêm ảnh 150 MP, selfie 50 MP, 3 truy vấn đồng thời, burst upload (quota/slot), kill giữa lúc giải mã → `rejected/`.
 
 ## Lập chỉ mục
 

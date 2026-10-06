@@ -11,12 +11,14 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ap = argparse.ArgumentParser()
 ap.add_argument("--photo", required=True)
 ap.add_argument("--selfie", required=True)
+ap.add_argument("--poison", help="thư mục chứa bomb150_rgb.png, a60_rgb.png, b60_rgba.png, c60_gray16.png, selfie50.png, selfie40.png")
 ap.add_argument("--port", type=int, default=8792)
 a = ap.parse_args()
 URL = f"http://127.0.0.1:{a.port}"
@@ -38,18 +40,23 @@ def check(name, cond, got):
         fails.append(name)
 
 
-def run(extra_env, fn):
-    work = tempfile.mkdtemp(prefix="album-limits-")
+def start(work, extra_env):
     env = dict(os.environ, DATA_DIR=os.path.join(work, "data"), PORT=str(a.port), ALBUM_HOST="0.0.0.0", **extra_env)
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")], env=env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(240):
+        try:
+            urllib.request.urlopen(URL + "/healthz", timeout=1).read()
+            break
+        except Exception:
+            time.sleep(0.5)
+    return srv
+
+
+def run(extra_env, fn):
+    work = tempfile.mkdtemp(prefix="album-limits-")
+    srv = start(work, extra_env)
     try:
-        for _ in range(240):
-            try:
-                urllib.request.urlopen(URL + "/healthz", timeout=1).read()
-                break
-            except Exception:
-                time.sleep(0.5)
         fn(work)
     finally:
         srv.terminate()
@@ -115,7 +122,139 @@ def disk_checks(work):
     check("ổ đĩa dưới ngưỡng → 507 + thông báo tiếng Việt", s == 507 and "Ổ đĩa" in json.loads(b)["detail"], (s, json.loads(b)["detail"]))
 
 
+def wait_done():
+    for _ in range(1200):
+        st = json.loads(req("/api/process")[2])
+        if st["state"] != "running":
+            return st
+        time.sleep(0.25)
+
+
+def slow_upload(name, body, hold=2.0):
+    """Gửi header + 1 KB đầu, giữ kết nối `hold` giây rồi gửi nốt: mô phỏng upload chậm để các request chồng lên nhau."""
+    import socket
+    sk = socket.create_connection(("127.0.0.1", a.port), timeout=60)
+    sk.sendall((f"POST /api/upload?name={name} HTTP/1.1\r\nHost: x\r\nContent-Type: application/octet-stream\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode() + body[:1024])
+    time.sleep(hold)
+    try:
+        sk.sendall(body[1024:])
+    except OSError:
+        pass
+    data = b""
+    try:
+        while True:
+            c = sk.recv(65536)
+            if not c:
+                break
+            data += c
+    except OSError:
+        pass
+    sk.close()
+    return int(data.split(b" ", 2)[1]) if data.startswith(b"HTTP/") else 0
+
+
+def poison_checks(work):
+    P = a.poison
+    rd = lambda n: open(os.path.join(P, n), "rb").read()
+    s, h, b = req("/api/upload?name=bomb150.png", rd("bomb150_rgb.png"), method="POST")
+    check("PNG khai báo 150 MP bị từ chối khi upload", s == 413, (s, json.loads(b)["detail"]))
+    s, h, b = req("/api/search", rd("selfie50.png"), method="POST")
+    check("selfie khai báo 50 MP bị từ chối", s == 413, s)
+    # 3 truy vấn đồng thời: tối đa 2 chạy, cái thứ 3 nhận 503
+    import threading
+    body, codes, bar = rd("selfie40.png"), [], threading.Barrier(3)
+
+    def one():
+        bar.wait()
+        codes.append(req("/api/search", body, method="POST")[0])
+    ts = [threading.Thread(target=one) for _ in range(3)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    check("3 truy vấn selfie đồng thời → có 503 (giới hạn 2)", 503 in codes and len([c for c in codes if c != 503]) >= 2, sorted(codes))
+    # ảnh hỏng (header đúng, thân cụt) → lỗi 1 lần rồi không thử lại
+    good = rd("a60_rgb.png")
+    s, h, b = req("/api/upload?name=truncated.png", good[:len(good) // 2], method="POST")
+    check("upload PNG cụt (header đúng) được nhận", s == 200, s)
+    req("/api/upload?name=ok.jpg", photo, method="POST")
+    s, _, _ = req("/api/process", b"", method="POST")
+    st1 = wait_done()
+    check("lượt 1: ảnh cụt bị báo lỗi, ảnh tốt được xử lý", st1["failed"] == 1 and st1["state"] == "done" and st1["total"] == 2, (st1["total"], st1["failed"], st1["errors"]))
+    req("/api/process", b"", method="POST")
+    st2 = wait_done()
+    check("lượt 2: ảnh lỗi không bị thử lại (total=0)", st2["total"] == 0, st2["total"])
+    # ảnh nặng 60 MP: giết server ngay khi đang giải mã → lần khởi động sau chuyển file sang rejected/
+    for n in ("a60_rgb.png", "b60_rgba.png", "c60_gray16.png"):
+        s, h, b = req(f"/api/upload?name=0-{n}", rd(n), method="POST")
+        assert s == 200, (n, s, b)
+    return "kill"
+
+
+def crash_check():
+    work = tempfile.mkdtemp(prefix="album-crash-")
+    marker = os.path.join(work, "data", "decoding.json")
+    srv = start(work, {})
+    try:
+        for n in ("a60_rgb.png", "b60_rgba.png", "c60_gray16.png"):
+            req(f"/api/upload?name=0-{n}", open(os.path.join(a.poison, n), "rb").read(), method="POST")
+        req("/api/process", b"", method="POST")
+        for _ in range(2000):
+            if os.path.exists(marker):
+                break
+            time.sleep(0.01)
+        marked = json.load(open(marker)) if os.path.exists(marker) else None
+        srv.kill()  # như OOM-kill: process chết khi file còn "đang giải mã"
+        srv.wait()
+        check("marker 'đang giải mã' được ghi bền trước khi giải mã", bool(marked), marked)
+        srv = start(work, {})
+        st = json.loads(req("/api/process")[2])
+        rej = sorted(os.listdir(os.path.join(work, "data", "rejected")))
+        check("sau khi khởi động lại, file đang giải mã nằm trong rejected/ và báo trong trạng thái",
+              bool(rej) and sorted(st["rejected"]) == sorted(marked), (rej, st["rejected"]))
+        check("marker đã dọn", not os.path.exists(marker), os.path.exists(marker))
+        req("/api/process", b"", method="POST")
+        st = wait_done()
+        left = os.listdir(os.path.join(work, "data", "originals"))
+        check("Process kế tiếp chạy xong, không lặp lại file đã loại", st["state"] == "done" and not set(marked) & set(left),
+              (st["state"], st["total"], st["failed"], left))
+    finally:
+        srv.kill()
+        srv.wait()
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def burst_checks(work):
+    """Quota tổng 150 MB, cap mỗi ảnh 60 MB → đặt chỗ được 2 upload cùng lúc; slot upload toàn cục = 4."""
+    import threading
+    codes = []
+
+    def one(i):
+        codes.append(slow_upload(f"b{i}.jpg", photo + bytes([i]) * 8, hold=2.0))
+    ts = [threading.Thread(target=one, args=(i,)) for i in range(12)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    check("burst 12 upload chậm song song: có 200, 503 (hết slot) và 507 (quota)", {200, 503, 507} <= set(codes), sorted(codes))
+    s, h, b = req("/api/upload?name=after.jpg", photo + b"zz", method="POST")
+    d = json.loads(b)
+    check("sau burst đặt chỗ đã được trả lại, upload bình thường vẫn nhận", s == 200 and d["status"] == "ok", (s, d))
+    s, h, b = req("/api/stats")
+    st = json.loads(b)
+    check("stats có disk_free/disk_total/quota", st["disk_free"] > 0 and st["disk_total"] >= st["disk_free"] and st["stored_bytes"] > 0, st)
+
+
+def name_checks(work):
+    long_name = "Ảnh cưới đẹp nhất của chúng tôi " * 8 + ".jpg"  # > 255 byte khi mã hoá UTF-8
+    s, h, b = req("/api/upload?name=" + urllib.parse.quote(long_name), photo, method="POST")
+    d = json.loads(b)
+    check("tên tiếng Việt dài được rút theo byte, không 500", s == 200 and len(d["name"].encode()) <= 200, (s, len(d["name"].encode())))
+
+
 run({"ALBUM_MAX_UPLOAD_MB": "2", "ALBUM_MIN_FREE_MB": "1"}, main_checks)
+run({"ALBUM_MAX_UPLOAD_MB": "2", "ALBUM_MIN_FREE_MB": "1"}, name_checks)
 run({"ALBUM_MIN_FREE_MB": "99999999"}, disk_checks)
+run({"ALBUM_MAX_UPLOAD_MB": "60", "ALBUM_MAX_TOTAL_GB": "0.15", "ALBUM_MIN_FREE_MB": "1"}, burst_checks)
+if a.poison:
+    run({"ALBUM_MIN_FREE_MB": "1"}, poison_checks)
+    crash_check()
 print("\nTẤT CẢ ĐẠT" if not fails else f"\nTHẤT BẠI: {fails}")
 sys.exit(1 if fails else 0)

@@ -77,8 +77,13 @@ function pump() {
   $("upsum").textContent = `Đã gửi ${fmt(sent)} / ${fmt(total)} — xong ${doneN}, trùng ${dupN}, lỗi ${failN}` + (active || queue.length ? "…" : ". Hoàn tất.");
   $("upbar").value = sent;
 }
-function upload(it) {
+function upload(it, tries = 0) {
   const st = it.li.lastChild, x = new XMLHttpRequest();
+  const retry = () => {  // máy chủ bận (503) hoặc đứt kết nối: thử lại tối đa 4 lần, chậm dần
+    if (tries >= 4) return false;
+    sent -= it.loaded; it.loaded = 0; st.textContent = "chờ thử lại…";
+    setTimeout(() => upload(it, tries + 1), 2000 * (tries + 1)); return true;
+  };
   x.open("POST", "api/upload?name=" + encodeURIComponent(it.f.name));
   x.setRequestHeader("Content-Type", "application/octet-stream");
   x.upload.onprogress = e => { sent += e.loaded - it.loaded; it.loaded = e.loaded; st.textContent = Math.round(e.loaded / e.total * 100) + "%"; pump(); };
@@ -87,10 +92,11 @@ function upload(it) {
     let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {}
     if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : ""); st.className = "ok"; doneN++; }
     else if (x.status === 200) { st.textContent = "trùng với " + d.name; st.className = "dup"; dupN++; }
+    else if (x.status === 503 && retry()) return;
     else { st.textContent = "✗ " + (d.detail || ("lỗi " + x.status)); st.className = "err"; failN++; }
     fin();
   };
-  x.onerror = () => { st.textContent = "✗ mất kết nối"; st.className = "err"; failN++; fin(); };
+  x.onerror = () => { if (retry()) return; st.textContent = "✗ mất kết nối"; st.className = "err"; failN++; fin(); };
   x.send(it.f);
 }
 $("pick").onchange = () => { addFiles($("pick").files); $("pick").value = ""; };
@@ -108,7 +114,7 @@ function showStatus(s) {
   $("pmsg").textContent = t;
   $("pinfo").textContent = s.state === "idle" ? "" :
     `${s.done}/${s.total} ảnh · ${s.faces} khuôn mặt · ${s.failed} lỗi · ${dur(s.elapsed)}` + (s.current ? ` · đang làm: ${s.current}` : "");
-  $("errors").textContent = s.errors.join("\n");
+  $("errors").textContent = (s.rejected.length ? "Đã loại (làm sập khi giải mã, nằm trong thư mục rejected/): " + s.rejected.join(", ") + "\n" : "") + s.errors.join("\n");
   if (run && !timer) timer = setInterval(poll, 1000);
   if (!run && timer) { clearInterval(timer); timer = null; refreshStats(); }
 }

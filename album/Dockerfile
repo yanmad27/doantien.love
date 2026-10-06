@@ -4,7 +4,7 @@ FROM python:3.11.17-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DATA_DIR=/data PORT=8000 ALBUM_HOST=0.0.0.0 ALBUM_MODEL_DIR=/opt/models \
-    ALBUM_LOW_MEM=1 MALLOC_ARENA_MAX=2
+    ALBUM_LOW_MEM=1 ALBUM_THREADS=2 MALLOC_ARENA_MAX=2
 
 WORKDIR /app
 
@@ -27,8 +27,8 @@ RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
 USER app
 
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD ["python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8000'), timeout=4).read()"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8000'), timeout=8).read()"]
 
 # một worker duy nhất (job Xử lý và chỉ mục nằm trong RAM của process này)
 CMD ["python", "server.py"]

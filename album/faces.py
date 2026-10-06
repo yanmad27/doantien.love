@@ -13,7 +13,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 # Không nới MAX_IMAGE_PIXELS ở đây: file này cũng chạy trên đường tải selfie (không tin cậy).
 # Chỉ index_photos.py (ảnh của chủ nhà) mới bỏ giới hạn đó.
-QUERY_MAX_PIXELS = 100_000_000
+QUERY_MAX_PIXELS = 40_000_000  # ~0.7 GB RAM/truy vấn khi giải mã; selfie điện thoại ≤ 40 MP vẫn qua
 
 
 class ImageTooLarge(Exception):

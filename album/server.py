@@ -25,7 +25,8 @@ from starlette.concurrency import run_in_threadpool
 
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
-from indexer import DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, pending_photos
+from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, mark_failed, pending_photos,
+                     recover_crashed)
 
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,9 +36,13 @@ MAX_RESULTS = 300
 QUERY_MIN_FACE = 40  # cạnh ngắn (px) tối thiểu của mặt trong selfie, khớp --min-face của indexer
 UPLOAD_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 UPLOAD_FORMATS = {"JPEG", "PNG", "WEBP"}
-UPLOAD_MAX_PIXELS = 150_000_000  # dưới ngưỡng 2x của Pillow (~179 MP) nên Pillow không tự từ chối
+UPLOAD_MAX_PIXELS = 64_000_000  # ảnh bom PNG nhỏ khai báo hàng trăm MP ngốn ~18 B/điểm ảnh khi giải mã; 64 MP đủ cho máy ảnh 61 MP
+MAX_UPLOAD_SLOTS = 4      # số upload ghi đĩa cùng lúc (toàn cục)
+MAX_SEARCH_SLOTS = 2      # số truy vấn selfie tính toán cùng lúc (mỗi cái có thể ~0.7 GB RAM)
+MAX_BODY_SLOTS = 8        # số body selfie đang nhận cùng lúc (mỗi cái ≤ 25 MB)
+DISK_CHECK_EVERY = 8 * 1024 * 1024
 PHOTO_ID = re.compile(r"^[0-9a-f]{16}$")
-INDEX_WINDOW = 2  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
+INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
 
 
 class NoIndexMiddleware:
@@ -64,7 +69,9 @@ def safe_name(raw):
     if ext not in UPLOAD_EXTS:
         return None
     stem = re.sub(r"[^\w.\- ()]", "_", stem).strip(" .")[:100] or "photo"
-    return stem + ext
+    while len(stem.encode("utf-8")) > 150:  # tên file tối đa 255 byte; chừa chỗ cho hậu tố -<sha8> và đuôi
+        stem = stem[:-1]
+    return stem.rstrip(" .") + ext
 
 
 class ProcessJob:
@@ -73,12 +80,12 @@ class ProcessJob:
     def __init__(self, data_dir, engine, det_size, min_face):
         self.data_dir, self.engine, self.det_size, self.min_face = data_dir, engine, det_size, min_face
         self.lock = threading.Lock()
-        self.s = dict(state="idle", total=0, done=0, failed=0, faces=0, current=None, errors=[],
+        self.s = dict(state="idle", total=0, done=0, failed=0, faces=0, current=None, errors=[], rejected=[],
                       started_at=None, finished_at=None, elapsed=0.0)
 
     def status(self):
         with self.lock:
-            s = dict(self.s, errors=list(self.s["errors"]))
+            s = dict(self.s, errors=list(self.s["errors"]), rejected=list(self.s["rejected"]))
         if s["state"] == "running":
             s["elapsed"] = time.time() - s["started_at"]
         return s
@@ -89,13 +96,23 @@ class ProcessJob:
             if self.s["state"] == "running":
                 return False
             self.s = dict(state="running", total=0, done=0, failed=0, faces=0, current=None, errors=[],
-                          started_at=time.time(), finished_at=None, elapsed=0.0)
+                          rejected=self.s["rejected"], started_at=time.time(), finished_at=None, elapsed=0.0)
         threading.Thread(target=self._run, daemon=True, name="process").start()
         return True
 
     def _clean(self, e):
         """Lỗi gửi ra ngoài: chỉ loại lỗi + thông điệp đã bỏ mọi đường dẫn tuyệt đối."""
         return f"{type(e).__name__}: " + re.sub(r"(/[^\s:'\"]+)+", lambda m: os.path.basename(m.group(0)), str(e))[:200]
+
+    def recover(self, db):
+        """File làm process chết ở lần trước (OOM khi giải mã…) → chuyển sang DATA_DIR/rejected/ và báo trong trạng thái."""
+        moved = recover_crashed(db, store.originals_dir(self.data_dir), self.data_dir)
+        for rel in moved:
+            mark_failed(db, store.rejected_dir(self.data_dir), os.path.basename(rel), "làm sập khi giải mã")
+        if moved:
+            with self.lock:
+                self.s["rejected"] = self.s["rejected"] + moved
+        return moved
 
     def _upd(self, **kw):
         with self.lock:
@@ -105,6 +122,7 @@ class ProcessJob:
         try:
             db = store.connect(self.data_dir)  # kết nối riêng của luồng này
             root = store.originals_dir(self.data_dir)
+            self.recover(db)
             todo, _ = pending_photos(db, root, self.det_size)
             self._upd(total=len(todo))
 
@@ -130,7 +148,8 @@ class ProcessJob:
 
 
 def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
-               max_upload=60 * 1024 * 1024, det_size=DEFAULT_DET_SIZE, min_free=2048 * 1024 * 1024):
+               max_upload=60 * 1024 * 1024, det_size=DEFAULT_DET_SIZE, min_free=5120 * 1024 * 1024,
+               max_total=20 * 1024 ** 3):
     app = FastAPI(title="Tìm ảnh cưới", docs_url=None, redoc_url=None, openapi_url=None)  # docs mặc định nạp JS từ CDN
     for d in (store.originals_dir(data_dir), store.thumb_dir(data_dir), store.preview_dir(data_dir),
               os.path.join(data_dir, "tmp")):
@@ -143,6 +162,32 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     tmp_dir = os.path.join(data_dir, "tmp")
     for f in os.listdir(tmp_dir):  # upload dở dang của lần chạy trước
         os.remove(os.path.join(tmp_dir, f))
+    upload_slots = threading.BoundedSemaphore(MAX_UPLOAD_SLOTS)
+    search_slots = threading.BoundedSemaphore(MAX_SEARCH_SLOTS)
+    body_slots = threading.BoundedSemaphore(MAX_BODY_SLOTS)
+    quota = {"reserved": 0}
+    quota_lock = threading.Lock()
+    _db = store.connect(data_dir)  # lần chạy trước chết giữa lúc xử lý một ảnh → loại ảnh đó ngay khi khởi động
+    job.recover(_db)
+    _db.close()
+
+    def stored_bytes():
+        db = store.connect(data_dir)
+        try:
+            return db.execute("SELECT COALESCE(SUM(size),0) FROM originals").fetchone()[0]
+        finally:
+            db.close()
+
+    class Busy(Exception):
+        pass
+
+    def search_gated(body):
+        if not search_slots.acquire(blocking=False):
+            raise Busy
+        try:
+            return search(body)
+        finally:
+            search_slots.release()
 
     def index():
         p = store.db_path(data_dir)
@@ -193,17 +238,24 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     @app.post("/api/search")
     async def api_search(request: Request):
-        chunks, n = [], 0
-        async for c in request.stream():
-            n += len(c)
-            if n > MAX_BODY:
-                raise HTTPException(413, "Ảnh quá lớn (tối đa 25 MB)")
-            chunks.append(c)
-        body = b"".join(chunks)
+        if not body_slots.acquire(blocking=False):
+            raise HTTPException(503, "Máy chủ đang bận, hãy thử lại sau ít giây.")
+        try:
+            chunks, n = [], 0
+            async for c in request.stream():
+                n += len(c)
+                if n > MAX_BODY:
+                    raise HTTPException(413, "Ảnh quá lớn (tối đa 25 MB)")
+                chunks.append(c)
+            body = b"".join(chunks)
+        finally:
+            body_slots.release()
         if not body:
             raise HTTPException(400, "Không có dữ liệu ảnh")
         try:
-            out = await run_in_threadpool(search, body)
+            out = await run_in_threadpool(search_gated, body)
+        except Busy:
+            raise HTTPException(503, "Máy chủ đang bận, hãy thử lại sau ít giây.")
         except ImageTooLarge:
             raise HTTPException(413, "Ảnh quá lớn (số điểm ảnh vượt giới hạn). Hãy chọn ảnh nhỏ hơn.")
         except ImageUnreadable:
@@ -224,8 +276,18 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             n_orig = len(find_photos(store.originals_dir(data_dir)))
         finally:
             db.close()
+        du = shutil.disk_usage(data_dir)
         return dict(photos=len(photos), faces=len(rows), originals=n_orig, pending=len(todo),
-                    max_upload_mb=max_upload // 2**20)
+                    max_upload_mb=max_upload // 2**20, disk_free=du.free, disk_total=du.total,
+                    stored_bytes=stored_bytes(), max_total_bytes=max_total)
+
+    async def reject(request, status, msg):
+        n = 0
+        async for c in request.stream():  # đọc bỏ (có giới hạn) phần body để trình duyệt nhận được thông báo thay vì lỗi mạng
+            n += len(c)
+            if n > max_upload:
+                break
+        raise HTTPException(status, msg)
 
     # ---------- tải ảnh lên: body thô theo từng file, ghi thẳng ra đĩa theo từng mảnh ----------
     @app.post("/api/upload")
@@ -236,21 +298,29 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         declared = request.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_upload:
             raise HTTPException(413, f"Ảnh quá lớn (tối đa {max_upload // 2**20} MB)")
-        if shutil.disk_usage(data_dir).free < min_free:
-            n = 0
-            async for c in request.stream():  # đọc bỏ phần body để trình duyệt nhận được thông báo thay vì lỗi mạng
-                n += len(c)
-                if n > max_upload:
-                    break
-            raise HTTPException(507, f"Ổ đĩa sắp đầy (còn dưới {min_free // 2**20} MB trống), không nhận thêm ảnh. Hãy xoá bớt hoặc mở rộng dung lượng.")
+        if not upload_slots.acquire(blocking=False):
+            await reject(request, 503, "Máy chủ đang nhận nhiều ảnh cùng lúc, hãy thử lại sau ít giây.")
+        reserved = False
         part = os.path.join(tmp_dir, uuid.uuid4().hex + ".part")
-        h, n = hashlib.sha256(), 0
         try:
+            if shutil.disk_usage(data_dir).free < min_free:
+                await reject(request, 507, f"Ổ đĩa sắp đầy (còn dưới {min_free // 2**20} MB trống), không nhận thêm ảnh. Hãy xoá bớt hoặc mở rộng dung lượng.")
+            with quota_lock:  # đặt chỗ trước dung lượng tối đa của file này; trả lại trong finally
+                if stored_bytes() + quota["reserved"] + max_upload <= max_total:
+                    quota["reserved"] += max_upload
+                    reserved = True
+            if not reserved:
+                await reject(request, 507, f"Album đã đạt giới hạn dung lượng ({max_total // 1024 ** 3} GB), không nhận thêm ảnh.")
+            h, n, checked = hashlib.sha256(), 0, 0
             with open(part, "wb") as fh:
                 async for c in request.stream():
                     n += len(c)
                     if n > max_upload:
                         raise HTTPException(413, f"Ảnh quá lớn (tối đa {max_upload // 2**20} MB)")
+                    if n - checked >= DISK_CHECK_EVERY:  # đĩa có thể đầy dần trong lúc nhiều upload chạy song song
+                        checked = n
+                        if shutil.disk_usage(data_dir).free < min_free:
+                            raise HTTPException(507, "Ổ đĩa sắp đầy, dừng nhận ảnh.")
                     h.update(c)
                     fh.write(c)
             if n == 0:
@@ -259,6 +329,10 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         finally:
             if os.path.exists(part):
                 os.remove(part)
+            if reserved:
+                with quota_lock:
+                    quota["reserved"] -= max_upload
+            upload_slots.release()
 
     def finalize_upload(part, fname, digest, size):
         try:
@@ -275,6 +349,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             try:
                 dup = db.execute("SELECT name FROM originals WHERE sha256=?", (digest,)).fetchone()
                 if dup:
+                    if not os.path.exists(os.path.join(store.originals_dir(data_dir), dup[0])):
+                        raise HTTPException(400, "Ảnh này đã bị loại trước đó vì không xử lý được.")
                     return dict(status="duplicate", name=dup[0])
                 final = fname
                 root = store.originals_dir(data_dir)
@@ -366,8 +442,10 @@ def main():
     ap.add_argument("--threads", type=int, default=int(env("ALBUM_THREADS", default=0)),
                     help="số luồng onnxruntime (0 = theo số lõi)")
     ap.add_argument("--max-upload-mb", type=int, default=int(env("ALBUM_MAX_UPLOAD_MB", default=60)))
-    ap.add_argument("--min-free-mb", type=int, default=int(env("ALBUM_MIN_FREE_MB", default=2048)),
+    ap.add_argument("--min-free-mb", type=int, default=int(env("ALBUM_MIN_FREE_MB", default=5120)),
                     help="từ chối tải lên khi ổ đĩa của DATA_DIR còn trống ít hơn mức này")
+    ap.add_argument("--max-total-gb", type=float, default=float(env("ALBUM_MAX_TOTAL_GB", default=20)),
+                    help="tổng dung lượng ảnh gốc tối đa trong album")
     a = ap.parse_args()
     data_dir = os.path.abspath(a.data_dir)
     try:
@@ -378,7 +456,8 @@ def main():
     except OSError as e:
         sys.exit(f"LỖI: không ghi được vào DATA_DIR={data_dir} ({e}). Volume phải cho phép user của container ghi (xem DEPLOY.md).")
     app = create_app(data_dir, a.model_dir, a.providers.split(","), threads=a.threads,
-                     max_upload=a.max_upload_mb * 1024 * 1024, min_free=a.min_free_mb * 1024 * 1024)
+                     max_upload=a.max_upload_mb * 1024 * 1024, min_free=a.min_free_mb * 1024 * 1024,
+                     max_total=int(a.max_total_gb * 1024 ** 3))
     uvicorn.run(app, host=a.host, port=a.port, log_level="warning", workers=1)
 
 
