@@ -51,6 +51,8 @@ ap.add_argument("--connect-rtts", type=float, default=2, help="mỗi kết nối
 ap.add_argument("--html-preconnect", action="store_true", help="thay <!--__CDN_PRECONNECT__--> như backend thật sẽ làm")
 ap.add_argument("--admin-token", default="", help="bật chặn POST /api/upload|process (X-Album-Token / cookie album_token)")
 ap.add_argument("--quota-gb", type=float, default=0, help="0 = không có hạn mức tổng (max_total_bytes: null)")
+ap.add_argument("--dup", action="store_true", help="cố ý đưa dòng trùng vào manifest và vào kết quả /api/search (client phải chỉ hiện mỗi ảnh một lần)")
+ap.add_argument("--search-n", type=int, default=70, help="số ảnh /api/search trả về (tới cả album; hợp đồng §10: trần >= 3000)")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -118,16 +120,44 @@ def make_manifest():
         taken = None if i < max(0, int(a.count * .02)) else round(t, 3)
         if taken:
             t += rnd.uniform(4, 40)
-        rows.append([pid, m["w"], m["h"], taken, v, None if legacy and rnd.random() < .5 else m["c"], f"IMG_{i + 1:04d}.JPG", m["k"]])
+        rows.append([pid, m["w"], m["h"], taken, v, None if legacy and rnd.random() < .5 else m["c"], f"IMG_{i + 1:04d}.JPG", m["k"], None])
     rows.sort(key=lambda r: (r[3] is not None, r[3] or 0, r[6]))
+    # ảnh chụp liên thanh (burst): 2–4 khung liền nhau cùng kích thước/hình, chung `b` = id khung đầu (hợp đồng §10); phần lớn ảnh b = null
+    r2, i = random.Random(a.seed + 2), 0
+    while i < len(rows) - 4:
+        if r2.random() < .1:
+            n = r2.choice([2, 2, 2, 3, 3, 4])  # phần lớn là cặp và bộ ba
+            for k in range(n):
+                rows[i + k][8] = rows[i][0]
+                if k:
+                    for f in (1, 2, 5, 7):
+                        rows[i + k][f] = rows[i][f]
+                    rows[i + k][3] = round(rows[i][3] + 0.17 * k, 3) if rows[i][3] else None  # cách nhau 0.17 s như chụp liên thanh thật
+            i += n
+        else:
+            i += 1
     return rows
 
 
 ROWS = make_manifest()
 BY_ID = {r[0]: r for r in ROWS}
+UNIQ = list(BY_ID.values())
+DUPS = {"manifest": [], "search": []}
+SCEN = {}
+BURSTS = []
+_cur = {}
+for _r in ROWS:
+    if _r[8]:
+        _cur.setdefault(_r[8], []).append(_r)
+BURSTS = [g for g in _cur.values() if len(g) >= 2]
+if a.dup and len(ROWS) > 800:  # dòng trùng: kề nhau, ở xa, và một bản trùng id nhưng khác v
+    c1, c2, c3 = list(ROWS[11]), list(ROWS[300]), list(ROWS[5])
+    c3[4] = "deadbeef"
+    ROWS.insert(700, c3); ROWS.append(c2); ROWS.insert(12, c1)
+    DUPS["manifest"] = [c1[0], c2[0], c3[0]]
 FAIL = {r[0] for r in ROWS if int(hashlib.sha1(r[0].encode()).hexdigest()[:6], 16) / 0xFFFFFF < a.cdn_fail}
 MANIFEST = json.dumps(dict(mv=hashlib.sha1(json.dumps(ROWS).encode()).hexdigest()[:10], cdn=CDN, dv=DV,
-                           photos=[r[:7] for r in ROWS]), separators=(",", ":")).encode()
+                           photos=[r[:7] + [r[8]] for r in ROWS]), separators=(",", ":")).encode()
 MGZ = gzip.compress(MANIFEST, 6)
 META_ETAG = '"' + hashlib.sha1(MANIFEST).hexdigest()[:16] + '"'
 
@@ -189,14 +219,31 @@ def search_payload(body):
         w, h = Image.open(io.BytesIO(body)).size
     except Exception:
         w, h = 640, 480
-    pool = rnd.sample(ROWS, min(len(ROWS), 70)) if ROWS else []
+    pool = rnd.sample(UNIQ, min(len(UNIQ), a.search_n)) if UNIQ else []
     res = []
+    N, MAIN = len(pool), round(len(pool) * 40 / 70)
     for j, r in enumerate(pool):
-        score = 0.78 - j * 0.0095 if j < 40 else 0.395 - (j - 40) * 0.0035
-        res.append(dict(id=r[0], name=r[6], score=round(score, 4), thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg",
+        score = 0.78 - j * (0.38 / max(MAIN, 1)) if j < MAIN else 0.395 - (j - MAIN) * (0.11 / max(N - MAIN, 1))
+        res.append(dict(id=r[0], b=r[8], name=r[6], score=round(score, 4), thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg",
                         width=r[1], height=r[2], v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
+    # các chuỗi liên thanh có chủ đích (hợp đồng §11): khung điểm cao + khung điểm thấp (một ô, ở nhóm cao), tất cả khung khớp, chỉ 1 khung khớp, chỉ khung điểm thấp
+    groups = [g for g in BURSTS if all(r[0] in BY_ID for r in g)]
+    plan = [(0, [.62, .33]), (1, [.71, .52]), (2, [.45]), (3, [.31])]
+    SCEN.clear()
+    for gi, scores in plan:
+        if gi < len(groups) and len(groups[gi]) >= len(scores) + (1 if gi == 2 else 0):
+            g = groups[gi]
+            ids = {r[0] for r in g}
+            res = [x for x in res if x["id"] not in ids]
+            for r, s in zip(g, scores):
+                res.append(dict(id=r[0], b=r[8], name=r[6], score=s, thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg", width=r[1], height=r[2],
+                                v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
+            SCEN[["split", "all_main", "partial", "maybe_only"][gi]] = dict(b=g[0][8], frames=[r[0] for r in g], matched=[r[0] for r in g[:len(scores)]])
+    if a.dup and len(res) > 46:  # cùng một ảnh hai lần: bản điểm thấp của ảnh đầu bảng, và bản điểm cao của ảnh đang ở nhóm "có thể"
+        res.append(dict(res[0], score=0.33)); res.append(dict(res[45], score=0.5))
+        DUPS["search"] = [res[0]["id"], res[45]["id"]]
     return 200, dict(query=dict(n_faces=1, n_ignored=0, bbox=[w * .3, h * .2, w * .7, h * .65], width=w, height=h, det_score=.9),
-                     results=res, total_matches=len(res), truncated=False, indexed_photos=len(ROWS), indexed_faces=len(ROWS) * 2,
+                     results=res, total_matches=len(res), truncated=False, indexed_photos=len(UNIQ), indexed_faces=len(UNIQ) * 2,
                      timing_ms=dict(decode=5, detect=30, embed=10, compare=1, total=46))
 
 
@@ -288,6 +335,8 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/process":
             s = dict(state="idle", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
+        if path == "/__mock/dups":
+            return self.send(200, json.dumps(dict(DUPS, bursts=SCEN)).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/__mock/log":
             with log_lock:
                 return self.send(200, json.dumps(LOG).encode(), "application/json", {"Cache-Control": "no-store"}, head)

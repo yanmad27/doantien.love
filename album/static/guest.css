@@ -155,3 +155,11 @@ body.lb-open { overflow: hidden; }
 .flower { transition: opacity 1.2s ease; }
 .flower--tl:not(.on), .flower--br:not(.on) { opacity: 0; }
 .flower--tl.on { opacity: 1; } .flower--br.on { opacity: .9; }
+
+/* chuỗi ảnh chụp liên thanh gộp thành một ô (COLLAPSE_BURSTS): huy hiệu "+N" và hai lớp giấy xếp chồng phía sau */
+.tile.stacked { overflow: visible; box-shadow: 3px 3px 0 -1px var(--paper), 3px 3px 0 0 var(--line-soft), 6px 6px 0 -1px var(--paper), 6px 6px 0 0 var(--line-soft); }
+.tile.stacked img { border-radius: inherit; }
+.stack { position: absolute; right: 8px; top: 8px; min-width: 2.1rem; padding: .05rem .55rem; border-radius: 999px; background: rgba(255, 250, 243, .94); color: var(--peach-ink); font-family: var(--ui); font-size: .72rem; font-weight: 600; letter-spacing: .06em; line-height: 1.7; text-align: center; box-shadow: 0 2px 8px rgba(89, 71, 63, .25); }
+
+.lb-info { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; }
+.lb-burst { padding: .2rem .8rem; border-radius: 999px; background: rgba(239, 153, 144, .9); color: #2a1a15; font-family: var(--ui); font-size: .7rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }

@@ -10,6 +10,9 @@ const $ = id => document.getElementById(id);
 const TUNE = new URLSearchParams(location.search).get("tune") === "1";
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const nf = new Intl.NumberFormat("vi-VN");
+// Ảnh chụp liên thanh (burst) có chung `b`. Mặc định GỘP: mỗi chuỗi thành MỘT ô (khung đầu + huy hiệu "+N"), lightbox lướt qua từng khung,
+// không khung nào bị ẩn hay xoá. Đặt false để hiện từng khung như ảnh riêng (?bursts=0 chỉ để so sánh/gỡ lỗi).
+const COLLAPSE_BURSTS = new URLSearchParams(location.search).get("bursts") !== "0";
 
 let file = null, selfieUrl = null, runId = 0, ctl = null;
 let data = null;
@@ -52,6 +55,38 @@ function loadDecor() {
 }
 setTimeout(loadDecor, 6000);
 
+// mỗi ảnh (id) chỉ xuất hiện đúng một lần. Giữ phần tử đầu tiên (giữ thứ tự manifest); nếu có `better` thì giữ phần tử tốt hơn
+function uniqById(list, better) {
+  const m = new Map();
+  for (const x of list) { const o = m.get(x.id); if (!o || (better && better(x, o))) m.set(x.id, x); }
+  return [...m.values()];
+}
+
+// Ô gộp: it.frames = mọi khung của chuỗi (theo thứ tự manifest), it.at = chỉ số khung đầu trong `flat` (bộ ảnh để lướt trong lightbox),
+// f.head = ô chứa khung f. flat = các ô theo thứ tự, mỗi ô trải thành các khung của nó: mỗi id đúng một lần.
+function stackTiles(items) {
+  const flat = [], seen = new Set(), out = [];
+  for (const it of items) {
+    it.frames = it.frames.filter(f => !seen.has(f.id));  // an toàn: một id không bao giờ ở hai ô
+    if (!it.frames.length) continue;
+    it.at = flat.length;
+    for (const f of it.frames) { seen.add(f.id); f.head = it; flat.push(f); }
+    out.push(it);
+  }
+  return { items: out, flat };
+}
+function collapse(list) {  // thư viện: gộp theo `b`, ô nằm ở vị trí của khung đầu tiên
+  if (!COLLAPSE_BURSTS) return { items: list, flat: list };
+  const heads = new Map(), items = [];
+  for (const x of list) {
+    const h = x.b && heads.get(x.b);
+    if (h) h.frames.push(x);
+    else { x.frames = [x]; items.push(x); if (x.b) heads.set(x.b, x); }
+  }
+  return stackTiles(items);
+}
+let burstFrames = new Map();  // b -> mọi khung của chuỗi (từ manifest, theo thứ tự)
+
 // ---------- thư viện ảnh: hàng ảnh căn đều tính bằng JS, chỉ dựng các hàng gần màn hình ----------
 const WINDOW_VH = 2;   // dựng DOM trong ±2 màn hình quanh vùng nhìn thấy
 const LOAD_VH = 1;     // chỉ nạp ảnh trong ±1 màn hình (sau khi màn đầu tải xong; trước đó chỉ ±0.2)
@@ -84,13 +119,14 @@ const galleries = [];
 class VGallery {
   constructor(root, kind, onOpen) {
     this.root = root; this.kind = kind; this.onOpen = onOpen;
-    this.items = []; this.rows = []; this.rowOf = []; this.mounted = new Map();
+    this.items = []; this.flat = []; this.rows = []; this.rowOf = []; this.mounted = new Map();
     this.W = 0; this.active = false; this.warm = false; this.first = true; this.pending = 0;
     root.addEventListener("click", e => { const b = e.target.closest(".tile"); if (b) this.onOpen(this, +b.dataset.i, b); });
     new ResizeObserver(() => requestAnimationFrame(() => { if (this.active && this.root.clientWidth !== this.W) this.relayout(); })).observe(root);  // rAF: relayout đổi chiều cao root, không được làm lặp vòng quan sát
     galleries.push(this);
   }
-  set(items) { this.items = items; this.warm = false; this.first = true; this.relayout(true); }
+  set(list) { this.put(collapse(list)); }
+  put(c) { this.items = c.items; this.flat = c.flat; this.warm = false; this.first = true; this.relayout(true); }
   setActive(on) { this.active = on; if (on) this.relayout(); else this.unmountAll(); }
   unmountAll() { for (const r of this.mounted.values()) r.el.remove(); this.mounted.clear(); }
   relayout(fresh) {
@@ -141,11 +177,13 @@ class VGallery {
     el.className = "vrow"; el.style.top = row.top + "px"; el.style.height = row.h + "px";
     for (let k = row.i, c = 0; k < row.j; k++, c++) {
       const x = this.items[k], b = document.createElement("button");
-      b.type = "button"; b.className = "tile"; b.dataset.i = k;
+      b.type = "button"; b.className = "tile"; b.dataset.i = k; b.dataset.id = x.id;
       b.style.width = row.ws[c] + "px"; b.style.background = x.c || "";
-      b.setAttribute("aria-label", `Mở ảnh ${k + 1} trên ${this.items.length}`);
+      const nf2 = x.frames ? x.frames.length : 1;
+      b.setAttribute("aria-label", `Mở ảnh ${k + 1} trên ${this.items.length}` + (nf2 > 1 ? `, gồm ${nf2} ảnh chụp liên tiếp` : ""));
       const img = document.createElement("img"); img.alt = ""; img.decoding = "async"; img.draggable = false;
       b.append(img);
+      if (nf2 > 1) { b.classList.add("stacked"); const s = document.createElement("span"); s.className = "stack"; s.textContent = `+${nf2 - 1}`; s.setAttribute("aria-hidden", "true"); b.append(s); }
       if (TUNE && x.bbox) {
         const box = document.createElement("i"); box.className = "box"; placeBox(box, x.bbox, x.w, x.h);
         const sc = document.createElement("span"); sc.className = "score is-" + (x.score >= CONFIDENT_CUT ? "main" : "maybe"); sc.textContent = `${x.score.toFixed(3)} · ${x.name}`;
@@ -220,7 +258,9 @@ async function loadGallery() {
   performance.mark("gallery-manifest");
   CDN = String(m.cdn || "").replace(/\/+$/, "");
   preconnect(CDN);
-  photos = m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6] }));
+  photos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
+  burstFrames = new Map();
+  for (const p of photos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
   galleryReady = true;
   $("skeleton").hidden = true;
   if (!photos.length) {
@@ -421,33 +461,55 @@ function showResults() {
 
 function clearResults() {
   // xoá sạch kết quả lượt trước (khách sau không thấy ảnh của khách trước)
-  data = null; gMain.setActive(false); gMaybe.setActive(false); gMain.items = gMaybe.items = [];
+  data = null; gMain.setActive(false); gMaybe.setActive(false); gMain.items = gMaybe.items = gMain.flat = gMaybe.flat = [];
   $("results").hidden = true; $("g-maybe").hidden = true; $("trunc").hidden = true;
   $("selfie-box").hidden = true;
   closeLb(true);
 }
 
 // ---------- kết quả: dùng lại đúng URL ảnh và cách dựng như thư viện ----------
-const fromHit = r => ({ id: r.id, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, score: r.score, bbox: r.bbox });
+const fromHit = r => ({ id: r.id, w: r.w || r.width, h: r.h || r.height, v: r.v || null, c: r.c || null, name: r.name, b: r.b || null, score: r.score, bbox: r.bbox });
+// một ảnh = một ô: gộp theo id lấy điểm cao nhất, xếp điểm giảm dần. Chia nhóm SAU khi gộp nên hai nhóm không bao giờ trùng nhau
+const hits = list => uniqById(list.map(fromHit), (x, o) => x.score > o.score).sort((a, b) => b.score - a.score);
+
+// Kết quả: mỗi chuỗi liên thanh thành một ô, tính điểm theo khung khớp nhất; ô nằm ở nhóm cao hơn mà khung khớp nhất của nó đạt, không bao giờ ở cả hai nhóm.
+// Lightbox của ô gồm MỌI khung của chuỗi (khách có thể ở khung bên cạnh; khung không khớp vẫn lưu được).
+function burstTiles(res) {
+  if (!COLLAPSE_BURSTS) return res;
+  const byB = new Map(), out = [], copy = x => Object.assign({}, x, { frames: null, head: null, at: null });
+  for (const h of res) {  // res: điểm giảm dần, mỗi id một lần
+    if (!h.b) { const t = copy(h); t.frames = [t]; out.push(t); continue; }
+    let t = byB.get(h.b);
+    if (t) { t.hits.push(h); continue; }
+    const all = burstFrames.get(h.b) || [h];                        // đủ khung từ manifest; không có thì chỉ các khung khớp
+    t = copy(all[0]); t.score = h.score; t.hits = [h]; t.frames = all.map(copy);
+    const best = t.frames.find(f => f.id === h.id); if (best) { best.score = h.score; best.bbox = h.bbox; }
+    t.bbox = (t.frames[0].id === h.id) ? h.bbox : null;
+    byB.set(h.b, t); out.push(t);
+  }
+  for (const t of byB.values()) if (!burstFrames.has(t.b)) t.frames = t.hits.map(copy);
+  return out;
+}
+const countText = g => g.flat.length === g.items.length ? `${g.items.length} ảnh` : `${g.items.length} ảnh · ${g.flat.length} khung hình`;
 
 function renderResults() {
   if (TUNE) return renderTune();
-  const res = data.results.map(fromHit);
+  const res = burstTiles(hits(data.results));
   const main = res.filter(x => x.score >= CONFIDENT_CUT), maybe = res.filter(x => x.score >= MAYBE_CUT && x.score < CONFIDENT_CUT);
   $("tune").hidden = true;
   $("g-main-t").textContent = "Ảnh của bạn";
-  $("g-main-n").textContent = main.length ? `${main.length} ảnh` : "";
   $("g-main").hidden = !main.length && !maybe.length;
   const noMain = !main.length;
   $("g-main-empty").hidden = !noMain;
   $("g-main-empty").textContent = "Chưa có ảnh nào thật chắc chắn, nhưng có vài ảnh có thể là bạn ở bên dưới.";
   $("g-main-t").hidden = noMain; $("g-main-n").hidden = noMain;
-  gMain.set(main); gMain.setActive(!noMain);
+  gMain.put(COLLAPSE_BURSTS ? stackTiles(main) : { items: main, flat: main }); gMain.setActive(!noMain);
+  $("g-main-n").textContent = main.length ? countText(gMain) : "";
   const hasMaybe = maybe.length > 0;
   $("g-maybe").hidden = !hasMaybe;
-  gMaybe.set(maybe);
+  gMaybe.put(COLLAPSE_BURSTS ? stackTiles(maybe) : { items: maybe, flat: maybe });
   if (hasMaybe) {
-    $("maybe-n").textContent = `(${maybe.length})`;
+    $("maybe-n").textContent = `(${gMaybe.items.length})`;
     setMaybe(noMain);  // không có ảnh chắc chắn thì mở sẵn nhóm này
   }
   const cut = data.truncated && res.length && res[res.length - 1].score >= MAYBE_CUT;
@@ -471,12 +533,12 @@ function renderTune() {
   $("g-main-t").textContent = "Kết quả (có điểm)";
   const th = parseFloat($("th").value);
   $("thv").textContent = th.toFixed(2);
-  const shown = data.results.filter(x => x.score >= th).map(fromHit);
-  $("tcount").textContent = `${shown.length} ảnh / ${data.results.length} ảnh có điểm ≥ 0.15`;
-  $("g-main-n").textContent = `${shown.length} ảnh`;
+  const shown = burstTiles(hits(data.results.filter(x => x.score >= th)));
+  $("tcount").textContent = `${shown.length} ô / ${data.results.length} ảnh có điểm ≥ 0.15`;
   $("tune-info").textContent = `Hai mức đang dùng cho khách: chắc chắn ≥ ${CONFIDENT_CUT.toFixed(2)} (nhãn xanh), có thể ≥ ${MAYBE_CUT.toFixed(2)} (nhãn vàng). ` +
     `Chỉ mục ${data.indexed_photos} ảnh, ${data.indexed_faces} mặt. Máy chủ ${data.timing_ms.total.toFixed(0)} ms, tổng ${data.e2e.toFixed(0)} ms.`;
-  gMain.set(shown); gMain.setActive(true);
+  gMain.put(COLLAPSE_BURSTS ? stackTiles(shown) : { items: shown, flat: shown }); gMain.setActive(true);
+  $("g-main-n").textContent = countText(gMain);
   const cut = data.truncated && shown.length && th <= data.results[data.results.length - 1].score;
   $("trunc").hidden = !cut;
   if (cut) $("trunc").textContent = `Có ${data.total_matches} ảnh khớp nhưng chỉ trả về ${data.results.length} ảnh điểm cao nhất.`;
@@ -494,7 +556,10 @@ const shareApi = matchMedia("(pointer: coarse)").matches && !!navigator.canShare
 
 // prefetch: chỉ ở chế độ "ảnh của bạn" mới tải sẵn ảnh gốc cho nút Chia sẻ (cả album ~1.900 ảnh gốc thì không thể)
 function openLb(g, i, opener, prefetch) {
-  cur = { list: g.items, i, g, prefetch };
+  // "ảnh của bạn": bộ ảnh để lướt là nhóm chắc chắn rồi tới nhóm "có thể", đúng thứ tự hiển thị, mỗi id một lần
+  const mine = prefetch && g !== gAll;
+  const at = g.items[i].at != null ? g.items[i].at : i;  // ô gộp: mở ở khung đầu của chuỗi
+  cur = mine ? { list: gMain.flat.concat(gMaybe.flat), i: at + (g === gMaybe ? gMain.flat.length : 0), g, prefetch } : { list: g.flat, i: at, g, prefetch };
   lbOpen = true; lb.hidden = false; document.body.classList.add("lb-open");
   history.pushState({ lb: 1 }, "");
   show(0);
@@ -508,7 +573,13 @@ function closeLb(silent) {
   clearTimeout(shareTimer); for (const e of blobs.values()) if (e.ctl) e.ctl.abort(); blobs.clear(); lastId = null;
   if (history.state && history.state.lb && !silent) history.back();
   else if (history.state && history.state.lb) history.replaceState(null, "");
-  if (cur.g && cur.g.active && cur.g.items === cur.list) cur.g.reveal(cur.i);  // đã lướt xa thì cuộn tới ảnh đang xem, focus về đúng ô
+  const x = cur.list[cur.i], head = x && (x.head || x);  // đã lướt xa thì cuộn tới ảnh đang xem, focus về đúng ô
+  if (cur.g === gAll) { if (gAll.active) gAll.reveal(gAll.items.indexOf(head)); }
+  else if (cur.g && mode === "mine" && cur.list.length && cur.list.length === gMain.flat.length + gMaybe.flat.length) {  // (kết quả đã bị dọn thì thôi)
+    const inMaybe = cur.i >= gMain.flat.length, grp = inMaybe ? gMaybe : gMain;
+    if (inMaybe && $("maybe-toggle").getAttribute("aria-expanded") !== "true") setMaybe(true);
+    grp.reveal(grp.items.indexOf(head));
+  }
 }
 const requestClose = () => closeLb(false);
 addEventListener("popstate", () => { if (lbOpen) closeLb(true); });
@@ -526,6 +597,9 @@ function show(dir) {
   resetZoom();
   $("lb-count").textContent = `${nf.format(cur.i + 1)} / ${nf.format(n)}`;
   $("lb-prev").hidden = $("lb-next").hidden = n < 2;
+  const hd = x.head, bl = $("lb-burst");  // khung thuộc chuỗi liên thanh: cho biết đang ở khung nào
+  bl.hidden = !(hd && hd.frames.length > 1);
+  if (!bl.hidden) bl.textContent = `Chụp liên tiếp ${hd.frames.indexOf(x) + 1}/${hd.frames.length}`;
   lbImg.alt = `Ảnh cưới số ${cur.i + 1} trên ${n}`;
   $("lb-save").href = "/originals/" + x.id;
   const spin = $("lb-spin");
