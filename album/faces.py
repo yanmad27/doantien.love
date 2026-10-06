@@ -122,6 +122,9 @@ class FaceEngine:
                 raise FileNotFoundError(f"Thiếu model {p} — chạy: python download_models.py")
         so = ort.SessionOptions()
         so.log_severity_level = 3
+        if os.environ.get("ALBUM_LOW_MEM"):  # không giữ arena/mẫu cấp phát theo shape: RSS thấp hơn, chậm hơn chút
+            so.enable_cpu_mem_arena = False
+            so.enable_mem_pattern = False
         if threads:
             so.intra_op_num_threads = threads
         providers = providers or ["CPUExecutionProvider"]

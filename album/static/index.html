@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>Tìm ảnh của bạn</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto; color: #222; }
@@ -28,6 +29,7 @@
 </head>
 <body>
 <h1>Tìm ảnh của bạn trong album cưới</h1>
+<p><a href="/manage">Tải ảnh lên &amp; Xử lý</a></p>
 
 <div class="panel">
   <div class="row">
@@ -53,6 +55,10 @@
 <p id="trunc" hidden></p>
 <div id="grid"></div>
 
+<div id="lb" hidden style="position:fixed;inset:0;background:#000d;z-index:9;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+  <img id="lbimg" alt="" style="max-width:94vw;max-height:86vh;object-fit:contain">
+  <div style="color:#fff"><span id="lbname"></span> · <a id="lbdl" style="color:#9cf" target="_blank">Tải ảnh gốc</a> · <a id="lbclose" href="#" style="color:#fff">Đóng ✕</a></div>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 let results = [], timing = null, info = null;
@@ -118,6 +124,15 @@ $("go").onclick = async () => {
 
 $("th").oninput = render;
 
+function openPhoto(x) {
+  $("lbimg").src = x.preview; $("lbname").textContent = `${x.name} — điểm ${x.score.toFixed(3)}`;
+  $("lbdl").href = "originals/" + x.id; $("lb").hidden = false; $("lb").style.display = "flex";
+}
+function closePhoto() { $("lb").hidden = true; $("lb").style.display = "none"; $("lbimg").removeAttribute("src"); }
+$("lbclose").onclick = e => { e.preventDefault(); closePhoto(); };
+$("lb").onclick = e => { if (e.target === $("lb")) closePhoto(); };
+document.onkeydown = e => { if (e.key === "Escape") closePhoto(); };
+
 function render() {
   const th = parseFloat($("th").value);
   $("thv").textContent = th.toFixed(2);
@@ -139,6 +154,7 @@ function render() {
     m.innerHTML = `<span class="name"></span><span class="score">${x.score.toFixed(3)}</span>`;
     m.firstChild.textContent = x.name; m.firstChild.title = `${x.name} — ${x.n_faces} mặt trong ảnh`;
     card.append(t, m); grid.append(card);
+    card.style.cursor = "zoom-in"; card.onclick = () => openPhoto(x);
   }
 }
 </script>

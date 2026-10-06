@@ -6,59 +6,21 @@ import argparse
 import json
 import os
 import sys
-import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 
 import store
-from faces import FaceEngine, load_image
-
-EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
-THUMB_SIDE = 640
-
-
-def find_photos(root):
-    out = []
-    for d, _, files in os.walk(root):
-        for f in files:
-            if os.path.splitext(f)[1].lower() in EXTS and not f.startswith("."):
-                out.append(os.path.relpath(os.path.join(d, f), root))
-    return sorted(out)
-
-
-def make_thumb(path, dest):
-    with Image.open(path) as im:
-        im.draft("RGB", (THUMB_SIDE * 2, THUMB_SIDE * 2))  # JPEG: giải mã nhanh ở độ phân giải thấp
-        im = ImageOps.exif_transpose(im).convert("RGB")
-        im.thumbnail((THUMB_SIDE, THUMB_SIDE), Image.LANCZOS)
-        im.save(dest, "JPEG", quality=80)
-    return os.path.getsize(dest)
-
-
-def load_job(root, rel, data_dir):
-    """Chạy ở thread phụ: giải mã ảnh + làm thumbnail trong lúc luồng chính đang suy luận."""
-    path = os.path.join(root, rel)
-    t0 = time.perf_counter()
-    try:
-        rgb = load_image(path)
-        t1 = time.perf_counter()
-        make_thumb(path, os.path.join(store.thumb_dir(data_dir), store.photo_id(rel) + ".jpg"))
-        return rel, rgb, t1 - t0, time.perf_counter() - t1, None
-    except Exception as e:  # file hỏng: bỏ qua, cảnh báo
-        return rel, None, 0, 0, e
-
+from faces import FaceEngine
+from indexer import DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, pending_photos
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--photos", required=True, help="thư mục ảnh (quét đệ quy)")
     ap.add_argument("--data-dir", default=os.environ.get("ALBUM_DATA_DIR", store.DEFAULT_DATA_DIR))
     ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", store.DEFAULT_MODEL_DIR))
-    ap.add_argument("--det-size", type=int, default=int(os.environ.get("ALBUM_DET_SIZE", 1600)),
+    ap.add_argument("--det-size", type=int, default=int(os.environ.get("ALBUM_DET_SIZE", DEFAULT_DET_SIZE)),
                     help="cạnh dài ảnh khi dò mặt (mặc định 1600; 640 nhanh hơn nhưng mất mặt nhỏ)")
-    ap.add_argument("--min-face", type=int, default=40,
+    ap.add_argument("--min-face", type=int, default=DEFAULT_MIN_FACE,
                     help="bỏ mặt có cạnh ngắn hơn N pixel (ảnh gốc): ở ~29 px cosine so với bản full-res chỉ 0.05–0.78, ~44 px 0.70–0.95, ≥66 px 0.93–0.99")
     ap.add_argument("--providers", default=os.environ.get("ALBUM_PROVIDERS", "CPUExecutionProvider"),
                     help="onnxruntime providers, cách nhau dấu phẩy")
@@ -86,84 +48,43 @@ def main():
     rels = find_photos(root)
     if a.limit:
         rels = rels[:a.limit]
-    known = {r[0]: r[1:] for r in db.execute("SELECT path, size, mtime_ns, det_size FROM photos")}
-    todo, skipped = [], 0
-    for rel in rels:
-        st = os.stat(os.path.join(root, rel))
-        if known.get(rel) == (st.st_size, st.st_mtime_ns, a.det_size):
-            skipped += 1
-        else:
-            todo.append(rel)
+    known = {r[0] for r in db.execute("SELECT path FROM photos")}
+    todo, skipped = pending_photos(db, root, a.det_size, rels)
     if a.prune:
-        gone = set(known) - set(find_photos(root))
+        gone = known - set(find_photos(root))
         for rel in gone:
             pid = store.photo_id(rel)
             db.execute("DELETE FROM faces WHERE photo_id=?", (pid,))
             db.execute("DELETE FROM photos WHERE id=?", (pid,))
-            tp = os.path.join(store.thumb_dir(a.data_dir), pid + ".jpg")
-            if os.path.exists(tp):
-                os.remove(tp)
+            for d in (store.thumb_dir(a.data_dir), store.preview_dir(a.data_dir)):
+                tp = os.path.join(d, pid + ".jpg")
+                if os.path.exists(tp):
+                    os.remove(tp)
         print(f"Đã xoá {len(gone)} ảnh không còn trong thư mục")
     print(f"{len(rels)} ảnh trong thư mục, {skipped} đã có (bỏ qua), {len(todo)} cần xử lý "
           f"(det-size {a.det_size})")
 
     eng = FaceEngine(a.model_dir, providers=a.providers.split(","))
-    n_ok = n_bad = n_faces = 0
-    t_dec = t_thumb = t_det = t_emb = 0.0
-    wall0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        # chỉ giải mã trước vài ảnh: ảnh 45 MP đã giải mã nặng ~135 MB
-        window = deque(pool.submit(load_job, root, rel, a.data_dir) for rel in todo[:3])
-        nxt = len(window)
-        for i in range(1, len(todo) + 1):
-            rel, rgb, td, tt, err = window.popleft().result()
-            if nxt < len(todo):
-                window.append(pool.submit(load_job, root, todo[nxt], a.data_dir))
-                nxt += 1
-            if err is not None:
-                n_bad += 1
-                print(f"CẢNH BÁO: bỏ qua {rel}: {err}", file=sys.stderr)
-                continue
-            try:
-                t0 = time.perf_counter()
-                dets = [f for f in eng.detect(rgb, a.det_size) if f.size >= a.min_face]
-                t1 = time.perf_counter()
-                eng.embed(rgb, dets)
-                t2 = time.perf_counter()
-                h, w = rgb.shape[:2]
-                st = os.stat(os.path.join(root, rel))
-                pid = store.photo_id(rel)
-                db.execute("DELETE FROM faces WHERE photo_id=?", (pid,))
-                db.execute("INSERT OR REPLACE INTO photos VALUES (?,?,?,?,?,?,?,?)",
-                           (pid, rel, st.st_size, st.st_mtime_ns, w, h, a.det_size, len(dets)))
-                for k, f in enumerate(dets):
-                    db.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?)",
-                               (pid, k, *map(float, f.bbox), f.score, f.emb.astype(np.float16).tobytes()))
-                db.commit()
-            except Exception as e:  # một ảnh hỏng không được làm hỏng cả lượt chạy
-                db.rollback()
-                n_bad += 1
-                print(f"CẢNH BÁO: bỏ qua {rel}: {e}", file=sys.stderr)
-                continue
-            n_ok += 1
-            n_faces += len(dets)
-            t_dec += td
-            t_thumb += tt
-            t_det += t1 - t0
-            t_emb += t2 - t1
-            print(f"[{i}/{len(todo)}] {rel} {w}x{h}: {len(dets)} mặt "
-                  f"(giải mã {td:.2f}s, dò {t1 - t0:.2f}s, nhúng {t2 - t1:.2f}s)", flush=True)
-    wall = time.perf_counter() - wall0
+
+    def progress(i, n, rel, info):
+        if info["err"] is not None:
+            print(f"CẢNH BÁO: bỏ qua {rel}: {info['err']}", file=sys.stderr)
+        else:
+            print(f"[{i}/{n}] {rel} {info['w']}x{info['h']}: {info['faces']} mặt "
+                  f"(giải mã {info['td']:.2f}s, dò {info['tdet']:.2f}s, nhúng {info['temb']:.2f}s)", flush=True)
+
+    st = index_photos(db, eng, root, a.data_dir, todo, a.det_size, a.min_face, on_progress=progress)
+    n_ok, n_bad, n_faces, wall = st["ok"], st["bad"], st["faces"], st["wall"]
     db.commit()
     total_photos, total_faces = db.execute("SELECT COUNT(*), COALESCE(SUM(n_faces),0) FROM photos").fetchone()
     db.close()
     summary = dict(processed=n_ok, failed=n_bad, skipped=skipped, faces_new=n_faces,
                    photos_total=total_photos, faces_total=total_faces, det_size=a.det_size,
                    wall_s=wall, wall_s_per_photo=wall / n_ok if n_ok else None,
-                   decode_s_per_photo=t_dec / n_ok if n_ok else None,
-                   thumb_s_per_photo=t_thumb / n_ok if n_ok else None,
-                   detect_s_per_photo=t_det / n_ok if n_ok else None,
-                   embed_s_per_photo=t_emb / n_ok if n_ok else None)
+                   decode_s_per_photo=st["td"] / n_ok if n_ok else None,
+                   thumb_s_per_photo=st["tt"] / n_ok if n_ok else None,
+                   detect_s_per_photo=st["tdet"] / n_ok if n_ok else None,
+                   embed_s_per_photo=st["temb"] / n_ok if n_ok else None)
     with open(os.path.join(a.data_dir, "last_index_run.json"), "w") as fh:
         json.dump(summary, fh, indent=1)
     print(f"Xong: {n_ok} ảnh mới ({n_bad} lỗi), {n_faces} mặt, {wall:.1f}s"

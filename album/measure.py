@@ -1,22 +1,20 @@
-"""Đo 4 chỉ số trên một thư mục ảnh: thời gian lập chỉ mục/ảnh, độ trễ truy vấn selfie,
-RAM (RSS) của app đang chạy, dung lượng chỉ mục/ảnh.
+"""Đo RAM + dung lượng/ảnh qua đúng đường chạy thật: khởi động server như container (DATA_DIR, PORT, 0.0.0.0),
+tải ảnh lên qua HTTP, bấm Xử lý, lấy mẫu RSS, truy vấn selfie.
 
-  python measure.py --photos <thư mục ảnh> --queries <thư mục hoặc file selfie>
+  python measure.py --photos <thư mục/file ảnh...> --queries <selfie> [--env ALBUM_LOW_MEM=1] [--threads N]
 
-Chạy trong data dir tạm (không đụng data thật), xoá khi xong. Server chạy với TMPDIR rỗng
-riêng để kiểm tra selfie không bị ghi ra đĩa.
+Dùng data dir tạm (xoá khi xong). Trong --photos có thể đưa cả ảnh 20–45 MP để đo đỉnh RAM.
 """
 import argparse
 import json
 import os
-import resource
 import shutil
-import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,115 +22,88 @@ EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def rss_mb(pid):
-    out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return int(out.strip()) / 1024
+    out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(out) / 1024 if out else 0.0
 
 
 def dir_bytes(d):
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(d) for f in fs)
 
 
-def pct(v, p):
-    v = sorted(v)
-    return v[min(len(v) - 1, round(p / 100 * (len(v) - 1)))]
+def call(url, data=None, method=None):
+    req = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"))
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.load(r)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--photos", required=True)
-    ap.add_argument("--queries", help="thư mục/file selfie; mặc định dùng vài ảnh trong --photos")
-    ap.add_argument("--model-dir", default=os.environ.get("ALBUM_MODEL_DIR", os.path.join(HERE, "models")))
-    ap.add_argument("--det-size", type=int, default=1600)
-    ap.add_argument("--providers", default="CPUExecutionProvider")
-    ap.add_argument("--repeats", type=int, default=5, help="số lần lặp mỗi selfie")
+    ap.add_argument("--photos", nargs="+", required=True)
+    ap.add_argument("--queries", nargs="+", required=True)
+    ap.add_argument("--env", action="append", default=[], help="KEY=VALUE thêm cho server")
     ap.add_argument("--port", type=int, default=8791)
     a = ap.parse_args()
-
-    q = a.queries or a.photos
-    qfiles = [q] if os.path.isfile(q) else sorted(
-        os.path.join(r, f) for r, _, fs in os.walk(q) for f in fs if f.lower().endswith(EXTS))[:10]
-    if not qfiles:
-        sys.exit("Không có ảnh selfie để truy vấn")
-    py = sys.executable
+    files = []
+    for p in a.photos:
+        files += [p] if os.path.isfile(p) else sorted(os.path.join(r, f) for r, _, fs in os.walk(p) for f in fs if f.lower().endswith(EXTS))
     work = tempfile.mkdtemp(prefix="album-measure-")
-    data, tmp = os.path.join(work, "data"), os.path.join(work, "tmp")
-    os.makedirs(tmp)
+    data = os.path.join(work, "data")
+    env = dict(os.environ, DATA_DIR=data, PORT=str(a.port), ALBUM_HOST="0.0.0.0", ALBUM_MIN_FREE_MB="1", TMPDIR=work)
+    env.update(kv.split("=", 1) for kv in a.env)
+    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    peak, stop = [0.0], threading.Event()
     try:
-        # 1) lập chỉ mục
-        subprocess.run([py, os.path.join(HERE, "index_photos.py"), "--photos", a.photos, "--data-dir", data,
-                        "--model-dir", a.model_dir, "--det-size", str(a.det_size),
-                        "--providers", a.providers], check=True, stdout=subprocess.DEVNULL)
-        idx_peak_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 2**20  # macOS: byte
-        s = json.load(open(os.path.join(data, "last_index_run.json")))
-        n, nf = s["photos_total"], s["faces_total"]
+        url = f"http://127.0.0.1:{a.port}"
+        for _ in range(240):
+            try:
+                urllib.request.urlopen(url + "/healthz", timeout=1).read()
+                break
+            except Exception:
+                if srv.poll() is not None:
+                    sys.exit("Server thoát sớm")
+                time.sleep(0.5)
+        idle = rss_mb(srv.pid)
+        up_bytes = 0
+        for f in files:
+            call(url + "/api/upload?name=" + urllib.parse.quote(os.path.basename(f)), open(f, "rb").read())
+            up_bytes += os.path.getsize(f)
 
-        # 2) dung lượng chỉ mục
-        db_b = os.path.getsize(os.path.join(data, "index.db"))
-        th_b = dir_bytes(os.path.join(data, "thumbs"))
-        emb_b = nf * 512 * 2  # float16
-
-        # 3) server + truy vấn
-        env = dict(os.environ, TMPDIR=tmp)
-        srv = subprocess.Popen([py, os.path.join(HERE, "server.py"), "--data-dir", data, "--model-dir", a.model_dir,
-                                "--port", str(a.port), "--providers", a.providers], env=env,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
-            url = f"http://127.0.0.1:{a.port}"
-            for _ in range(120):  # chờ app nạp model
-                try:
-                    urllib.request.urlopen(url + "/api/stats", timeout=1).read()
-                    break
-                except (urllib.error.URLError, ConnectionError):
-                    if srv.poll() is not None:
-                        sys.exit("Server thoát sớm")
-                    time.sleep(0.5)
-            rss_idle = rss_mb(srv.pid)
-
-            def query(path):
-                body = open(path, "rb").read()
-                req = urllib.request.Request(url + "/api/search", data=body, method="POST",
-                                             headers={"Content-Type": "application/octet-stream"})
-                t = time.perf_counter()
-                try:
-                    d = json.load(urllib.request.urlopen(req, timeout=60))
-                except urllib.error.HTTPError as e:
-                    if e.code == 422:
-                        return None
-                    raise
-                return (time.perf_counter() - t) * 1e3, d["timing_ms"]["total"], d["timing_ms"]
-
-            query(qfiles[0])  # khởi động nguội, không tính
-            e2e, srv_ms, parts, skipped = [], [], [], 0
-            for _ in range(a.repeats):
-                for f in qfiles:
-                    r = query(f)
-                    if r is None:
-                        skipped += 1
-                        continue
-                    e2e.append(r[0]); srv_ms.append(r[1]); parts.append(r[2])
-            rss_after = rss_mb(srv.pid)
-        finally:
-            srv.terminate()
-            srv.wait(timeout=10)
-        leaked = os.listdir(tmp)
-
-        part = {k: statistics.mean(p[k] for p in parts) for k in parts[0]}
-        print("\n=== KẾT QUẢ ĐO ===")
-        print(f"Ảnh: {n}, khuôn mặt: {nf} ({nf / n:.1f}/ảnh), det-size {a.det_size}, providers {a.providers}")
-        print(f"1) Lập chỉ mục: {s['wall_s_per_photo']:.3f} s/ảnh (tổng {s['wall_s']:.1f}s) — "
-              f"giải mã {s['decode_s_per_photo']:.3f} + thumb {s['thumb_s_per_photo']:.3f} (luồng phụ, chạy song song), "
-              f"dò {s['detect_s_per_photo']:.3f}, nhúng {s['embed_s_per_photo']:.3f} s/ảnh; "
-              f"RSS đỉnh khi lập chỉ mục ~{idx_peak_mb:.0f} MB")
-        print(f"2) Truy vấn selfie ({len(e2e)} lần, {len(qfiles)} ảnh x {a.repeats}, bỏ {skipped} ảnh không có mặt, {n} ảnh trong chỉ mục):")
-        print(f"   trong máy chủ: p50 {pct(srv_ms, 50):.0f} ms, p95 {pct(srv_ms, 95):.0f} ms "
-              f"(giải mã {part['decode']:.0f} + dò {part['detect']:.0f} + nhúng {part['embed']:.0f} + so sánh {part['compare']:.1f} ms)")
-        print(f"   đầu-cuối qua HTTP: p50 {pct(e2e, 50):.0f} ms, p95 {pct(e2e, 95):.0f} ms")
-        print(f"3) RSS app: nhàn rỗi {rss_idle:.0f} MB, sau {len(e2e) + 1} truy vấn {rss_after:.0f} MB")
-        print(f"4) Chỉ mục: {(db_b + th_b) / n / 1024:.1f} KB/ảnh tổng = "
-              f"embedding+metadata {db_b / n / 1024:.1f} KB/ảnh (index.db {db_b / 1024:.0f} KB; riêng embedding thô {emb_b / n / 1024:.1f} KB/ảnh) "
-              f"+ thumbnail {th_b / n / 1024:.1f} KB/ảnh ({th_b / 1024:.0f} KB)")
-        print(f"Selfie ghi ra TMPDIR của server: {'KHÔNG (rỗng)' if not leaked else 'CÓ: ' + str(leaked)}")
+        def sample():
+            while not stop.is_set():
+                peak[0] = max(peak[0], rss_mb(srv.pid))
+                time.sleep(0.1)
+        threading.Thread(target=sample, daemon=True).start()
+        t0 = time.time()
+        call(url + "/api/process", b"")
+        while call(url + "/api/process")["state"] == "running":
+            time.sleep(0.5)
+        wall = time.time() - t0
+        stop.set()
+        s = call(url + "/api/process")
+        after_proc = rss_mb(srv.pid)
+        ms = []
+        for q in a.queries:
+            req = urllib.request.Request(url + "/api/search", data=open(q, "rb").read(), method="POST")
+            t = time.perf_counter()
+            urllib.request.urlopen(req, timeout=60).read()
+            ms.append((time.perf_counter() - t) * 1e3)
+        after_q = rss_mb(srv.pid)
+        n = s["done"] - s["failed"]
+        orig, th, pv = (dir_bytes(os.path.join(data, d)) for d in ("originals", "thumbs", "previews"))
+        db = os.path.getsize(os.path.join(data, "index.db"))
+        print(f"Ảnh: {len(files)} ({n} xử lý được, {s['failed']} lỗi), {s['faces']} khuôn mặt, env thêm: {a.env}")
+        print(f"Xử lý: {wall:.1f}s tổng = {wall / max(n, 1):.2f} s/ảnh")
+        print(f"RSS: nhàn rỗi {idle:.0f} MB | ĐỈNH khi xử lý {peak[0]:.0f} MB | sau xử lý {after_proc:.0f} MB | sau {len(ms)} truy vấn {after_q:.0f} MB")
+        print(f"Truy vấn selfie: {sorted(ms)[len(ms) // 2]:.0f} ms (trung vị, đầu-cuối HTTP)")
+        k = 1024
+        print(f"Đĩa/ảnh (trung bình {n} ảnh): gốc {orig / n / k:.0f} KB + bản xem {pv / n / k:.0f} KB + thumbnail {th / n / k:.0f} KB "
+              f"+ index.db {db / n / k:.1f} KB = {(orig + pv + th + db) / n / k:.0f} KB. Ngoài ảnh gốc: {(pv + th + db) / n / k:.0f} KB/ảnh")
+        print(f"  (tổng gốc {orig / 2**20:.1f} MB, bản xem {pv / 2**20:.1f} MB, thumb {th / 2**20:.2f} MB, db {db / k:.0f} KB)")
+        print(f"Selfie ghi ra TMPDIR: {'KHÔNG' if not [x for x in os.listdir(work) if x != 'data'] else 'CÓ'}")
     finally:
+        srv.terminate()
+        srv.wait(timeout=15)
         shutil.rmtree(work, ignore_errors=True)
 
 

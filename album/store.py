@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE TABLE IF NOT EXISTS faces (
   photo_id TEXT, idx INTEGER, x1 REAL, y1 REAL, x2 REAL, y2 REAL, score REAL, emb BLOB,
   PRIMARY KEY (photo_id, idx));
+CREATE TABLE IF NOT EXISTS originals (  -- ảnh gốc tải lên qua web: tên đã chuẩn hoá + SHA-256 để chống trùng
+  name TEXT PRIMARY KEY, sha256 TEXT UNIQUE, size INTEGER);
 """
 
 
@@ -33,9 +35,17 @@ def thumb_dir(data_dir):
     return os.path.join(data_dir, "thumbs")
 
 
+def preview_dir(data_dir):
+    return os.path.join(data_dir, "previews")
+
+
+def originals_dir(data_dir):
+    return os.path.join(data_dir, "originals")
+
+
 def connect(data_dir):
     os.makedirs(thumb_dir(data_dir), exist_ok=True)
-    db = sqlite3.connect(db_path(data_dir))
+    db = sqlite3.connect(db_path(data_dir), timeout=30)
     db.executescript(SCHEMA)
     return db
 
@@ -44,7 +54,7 @@ def load_matrix(data_dir):
     """Trả về (E [N,512] float32, rows [N] -> dict mô tả khuôn mặt, photos {id: dict})."""
     if not os.path.exists(db_path(data_dir)):
         return np.zeros((0, 512), np.float32), [], {}
-    db = sqlite3.connect(f"file:{db_path(data_dir)}?mode=ro", uri=True)
+    db = sqlite3.connect(f"file:{db_path(data_dir)}?mode=ro", uri=True, timeout=30)
     photos = {r[0]: dict(id=r[0], path=r[1], width=r[2], height=r[3], n_faces=r[4])
               for r in db.execute("SELECT id, path, width, height, n_faces FROM photos")}
     embs, rows = [], []
