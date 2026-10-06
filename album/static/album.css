@@ -1,0 +1,94 @@
+/* album.doantien.love — cùng bộ nhận diện với thiệp mời: giấy ngà, hoa màu nước hồng đào, viền san hô mảnh,
+   chữ script mềm + serif cho nội dung. Token lấy từ :root của styles.css (thiệp), đã kiểm tương phản ở đó. */
+:root {
+  --paper: #fffaf3;
+  --paper-warm: #fff6ec;
+  --peach: #ef9990;
+  --peach-dark: #d77570;
+  --rose-pale: #f5d3c7;
+  --ink: #59473f;
+  --ink-soft: #6f5d55;
+  --gold: #aa8356;
+  --peach-ink: #a95350;
+  --gold-ink: #7d5b2c;
+  --line: rgba(215, 117, 112, .55);
+  --line-soft: rgba(215, 117, 112, .28);
+  --ok: #4f7a52;
+  --warn: #8a5a1c;
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --serif: "Cormorant Garamond", Georgia, serif;
+  --script: "Style Script", cursive;
+  --sans: "Be Vietnam Pro", system-ui, sans-serif;
+  --shadow: 0 24px 70px rgba(89, 71, 63, .14);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  min-height: 100svh;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: lining-nums;
+  background:
+    radial-gradient(120% 70% at 6% 100%, rgba(245, 211, 199, .55), transparent 55%),
+    radial-gradient(90% 60% at 100% 0%, rgba(245, 211, 199, .35), transparent 60%),
+    var(--paper);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+button, input { font: inherit; color: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+a { color: var(--peach-ink); }
+::selection { background: var(--rose-pale); }
+:focus-visible { outline: 2px solid var(--peach-ink); outline-offset: 3px; border-radius: 6px; }
+
+/* ---- khung viền kép như trang bìa/hero của thiệp ---- */
+.frame { position: fixed; inset: 10px; border: 1px solid var(--line); border-radius: 10px; pointer-events: none; z-index: 0; }
+.frame::after { content: ""; position: absolute; inset: 6px; border: 1px solid rgba(170, 131, 86, .2); border-radius: 6px; }
+
+.flower { position: absolute; height: auto; pointer-events: none; z-index: 1; user-select: none; }
+.flower--tl { top: 0; left: 0; width: min(200px, 38vw); animation: breathe 8s ease-in-out infinite alternate; }
+.flower--br { right: 0; bottom: 0; width: min(150px, 34vw); animation: breathe 9s 1s ease-in-out infinite alternate-reverse; position: fixed; opacity: .9; }
+@keyframes breathe { from { transform: translate3d(0, 0, 0) rotate(0deg); } to { transform: translate3d(4px, 6px, 0) rotate(1.2deg); } }
+
+.page { position: relative; z-index: 2; width: min(1120px, 100%); margin: 0 auto; padding: 3.2rem 1.25rem 4rem; }
+
+/* ---- chữ ---- */
+.eyebrow { margin: 0; color: var(--gold-ink); font-family: var(--sans); font-size: .72rem; font-weight: 600; letter-spacing: .26em; text-transform: uppercase; }
+.title { margin: .2rem 0 0; color: var(--peach-ink); font-family: var(--script); font-weight: 400; font-size: clamp(2.7rem, 11vw, 4.6rem); line-height: 1.08; }
+.lead { margin: 0 auto; max-width: 30em; color: var(--ink-soft); font-family: var(--serif); font-weight: 500; font-size: clamp(1.15rem, 3.6vw, 1.32rem); line-height: 1.55; }
+.script { font-family: var(--script); font-weight: 400; color: var(--peach-ink); }
+
+.ornament { position: relative; display: block; width: min(300px, 72%); height: 14px; margin: 1rem auto 1.1rem;
+  background: linear-gradient(90deg, transparent, var(--line)) left center / calc(50% - 20px) 1px no-repeat, linear-gradient(90deg, var(--line), transparent) right center / calc(50% - 20px) 1px no-repeat; }
+.ornament::after { content: ""; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; translate: -50% -50%; rotate: 45deg; border: 1px solid var(--line); }
+
+/* ---- nút ---- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .6rem; min-height: 48px; padding: .7rem 1.6rem; border: 1px solid var(--peach-ink); border-radius: 999px; background: transparent; color: var(--peach-ink);
+  font-family: var(--sans); font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; text-decoration: none; cursor: pointer; transition: background .25s, color .25s, transform .25s var(--ease-out), box-shadow .25s; }
+.btn:hover { background: rgba(239, 153, 144, .14); }
+.btn:active { transform: scale(.98); }
+.btn--solid { background: var(--peach-ink); color: #fff; box-shadow: 0 10px 26px rgba(169, 83, 80, .28); }
+.btn--solid:hover { background: #944644; }
+.btn--quiet { border-color: var(--line-soft); color: var(--ink-soft); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn svg { width: 1.25rem; height: 1.25rem; flex: none; }
+
+/* ---- thẻ giấy ---- */
+.card { position: relative; background: var(--paper); border: 1px solid var(--peach); border-radius: 16px; box-shadow: var(--shadow); }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise .7s var(--ease-out) backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

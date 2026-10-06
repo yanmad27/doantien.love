@@ -2,161 +2,127 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>Tìm ảnh của bạn</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto; color: #222; }
-  h1 { font-size: 1.4rem; }
-  .panel { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-  #selfie-wrap { position: relative; display: inline-block; }
-  #selfie-wrap img { max-height: 160px; display: block; border-radius: 6px; }
-  .box { position: absolute; border: 2px solid #e22; box-sizing: border-box; pointer-events: none; }
-  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; align-items: start; }
-  .card { border: 1px solid #ddd; border-radius: 6px; overflow: hidden; background: #fafafa; }
-  .thumb { position: relative; line-height: 0; }
-  .thumb img { width: 100%; height: auto; }
-  .meta { padding: 6px 8px; font-size: .85rem; display: flex; justify-content: space-between; gap: 6px; }
-  .meta .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; }
-  .score { font-weight: 600; white-space: nowrap; }
-  #msg { color: #a00; }
-  small { color: #666; }
-  #multi { background: #fff4d6; border: 1px solid #e0b64a; border-radius: 6px; padding: 6px 10px; margin: 8px 0; }
-  #trunc { color: #a60; margin: 0 0 10px; }
-  input[type=range] { width: 260px; }
-</style>
+<meta name="theme-color" content="#fffaf3">
+<title>Tìm ảnh của bạn · Album cưới Khắc Doãn &amp; Đông Tiên</title>
+<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/album.css">
+<link rel="stylesheet" href="/static/guest.css">
 </head>
 <body>
-<h1>Tìm ảnh của bạn trong album cưới</h1>
-<p><a href="/manage">Tải ảnh lên &amp; Xử lý</a></p>
+<div class="frame" aria-hidden="true"></div>
+<img class="flower flower--tl" src="/static/img/bloom-corner.webp" width="400" height="451" alt="" aria-hidden="true">
+<img class="flower flower--br" src="/static/img/bloom-side.webp" width="300" height="541" alt="" aria-hidden="true">
 
-<div class="panel">
-  <div class="row">
-    <label>Chọn một ảnh selfie (rõ mặt): <input type="file" id="file" accept="image/*"></label>
-    <button id="go" disabled>Tìm ảnh</button>
+<main class="page" id="main">
+  <header class="intro">
+    <img class="logo rise" src="/static/img/heart-logo.webp" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
+    <p class="eyebrow rise" style="animation-delay:.1s">Album cưới</p>
+    <h1 class="title rise" style="animation-delay:.18s">Tìm ảnh của bạn</h1>
+    <i class="ornament rise" style="animation-delay:.26s" aria-hidden="true"></i>
+    <p class="lead rise" style="animation-delay:.32s">Chỉ cần một tấm selfie, chúng tôi sẽ tìm những khoảnh khắc có bạn trong ngày cưới của Khắc Doãn &amp; Đông Tiên.</p>
+  </header>
+
+  <section class="card stage rise" id="stage" style="animation-delay:.4s" aria-live="polite">
+    <!-- 1. mở đầu: chọn ảnh -->
+    <div id="st-idle" class="idle">
+      <div class="actions touch-only">
+        <label class="btn btn--solid btn--wide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.1-1.6A1.5 1.5 0 0 1 10 4.8h4a1.5 1.5 0 0 1 1.2.6L16.3 7h2.2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.6" r="3.3"/></svg>Chụp ảnh selfie<input class="sr" type="file" id="in-cam" accept="image/*" capture="user"></label>
+        <label class="btn btn--wide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 5-4.5 3.5 3 3-2.5L20 17"/></svg>Chọn từ thư viện<input class="sr" type="file" id="in-lib-touch" accept="image/*"></label>
+      </div>
+      <label class="drop desktop-only" id="drop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.6"/><path d="M5 20c.6-3.6 3.4-5.6 7-5.6s6.4 2 7 5.6"/></svg>
+        <span class="drop-t">Kéo thả ảnh selfie vào đây</span>
+        <span class="drop-s">hoặc</span>
+        <span class="btn btn--solid">Chọn ảnh từ máy</span>
+        <input class="sr" type="file" id="in-lib" accept="image/*">
+      </label>
+      <p class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><span>Ảnh selfie của bạn chỉ được xử lý trong bộ nhớ để so khớp và <b>không bao giờ được lưu lại</b>.</span></p>
+    </div>
+
+    <!-- 2. đã chọn ảnh: xem trước + trạng thái -->
+    <div id="st-work" class="work" hidden>
+      <figure class="selfie" id="selfie-fig">
+        <div class="selfie-in"><img id="selfie" alt="Ảnh selfie bạn vừa chọn"><i class="box" id="selfie-box" hidden></i><i class="scan" aria-hidden="true"></i></div>
+      </figure>
+      <div class="status" id="status" tabindex="-1">
+        <div id="s-loading" class="s-loading" hidden>
+          <p class="s-title script">Đang tìm bạn trong album…</p>
+          <p class="s-text">Chỉ mất vài giây thôi.</p>
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div id="s-msg" class="s-msg" hidden>
+          <p class="s-title script" id="s-title"></p>
+          <p class="s-text" id="s-text"></p>
+          <ul class="tips" id="s-tips" hidden></ul>
+          <p class="notice" id="s-multi" hidden></p>
+        </div>
+        <div class="s-actions" id="s-actions" hidden>
+          <button type="button" class="btn btn--solid" id="b-retry" hidden>Thử lại</button>
+          <button type="button" class="btn btn--quiet" id="b-other">Chọn ảnh khác</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. kết quả -->
+  <section class="results" id="results" hidden aria-label="Kết quả tìm kiếm">
+    <div class="tune" id="tune" hidden>
+      <p class="tune-h">Chế độ chỉnh ngưỡng (chỉ dành cho chủ nhà)</p>
+      <div class="tune-row">
+        <label for="th">Ngưỡng giống nhau: <b id="thv"></b></label>
+        <input type="range" id="th" min="0.15" max="0.8" step="0.01" value="0.40">
+        <span id="count"></span>
+      </div>
+      <p class="tune-s" id="tune-info"></p>
+    </div>
+
+    <div class="group" id="g-main">
+      <div class="g-head">
+        <h2 class="g-title script" id="g-main-t">Ảnh của bạn</h2>
+        <p class="g-count" id="g-main-n"></p>
+      </div>
+      <p class="g-empty" id="g-main-empty" hidden></p>
+      <div class="grid" id="grid-main"></div>
+    </div>
+
+    <p class="trunc" id="trunc" hidden></p>
+
+    <div class="group maybe" id="g-maybe" hidden>
+      <button type="button" class="toggle" id="maybe-toggle" aria-expanded="false" aria-controls="maybe-body">
+        <span class="toggle-t">Có thể cũng là bạn <b id="maybe-n"></b></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div id="maybe-body" hidden>
+        <p class="hint">Những ảnh này giống bạn ở mức vừa phải nên có thể có ảnh của người khác.</p>
+        <div class="grid" id="grid-maybe"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot"><i class="ornament" aria-hidden="true"></i><p>Khắc Doãn &amp; Đông Tiên · 04 · 10 · 2026</p></footer>
+</main>
+
+<!-- khung xem ảnh toàn màn hình -->
+<div class="lb" id="lb" role="dialog" aria-modal="true" aria-label="Xem ảnh" hidden>
+  <div class="lb-top">
+    <span class="lb-count" id="lb-count" aria-live="polite"></span>
+    <button type="button" class="lb-btn" id="lb-close" aria-label="Đóng"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
-  <small>Ảnh của bạn chỉ được xử lý trong bộ nhớ để so khớp, không được lưu lại. Nếu ảnh có nhiều khuôn mặt, hệ thống dùng khuôn mặt <b>to nhất</b>.</small>
-  <p id="msg"></p>
-  <div id="selfie-wrap" hidden><img id="selfie" alt="ảnh của bạn"><div class="box" id="selfie-box"></div></div>
-  <p id="multi" hidden></p>
-  <div id="qinfo"></div>
-</div>
-
-<div class="panel" id="controls" hidden>
-  <div class="row">
-    <label>Ngưỡng giống nhau: <b id="thv"></b>
-      <input type="range" id="th" min="0.15" max="0.8" step="0.01" value="0.35"></label>
-    <span id="count"></span>
+  <div class="lb-stage" id="lb-stage">
+    <img id="lb-img" alt="" draggable="false">
+    <i class="lb-spin" id="lb-spin" aria-hidden="true"></i>
   </div>
-  <small>Điểm là độ giống cosine (1 = giống hệt). Kéo thấp → nhiều ảnh hơn nhưng dễ nhầm người; kéo cao → ít nhầm nhưng có thể sót.</small>
+  <button type="button" class="lb-btn lb-nav lb-prev" id="lb-prev" aria-label="Ảnh trước"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
+  <button type="button" class="lb-btn lb-nav lb-next" id="lb-next" aria-label="Ảnh sau"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+  <div class="lb-bar">
+    <a class="btn btn--solid" id="lb-save" href="#" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg>Lưu ảnh</a>
+    <button type="button" class="btn lb-share" id="lb-share" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M6 11H5.5A1.5 1.5 0 0 0 4 12.5v6A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5H18"/></svg>Chia sẻ</button>
+  </div>
+  <p class="lb-toast" id="lb-toast" role="status"></p>
 </div>
-
-<p id="trunc" hidden></p>
-<div id="grid"></div>
-
-<div id="lb" hidden style="position:fixed;inset:0;background:#000d;z-index:9;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px">
-  <img id="lbimg" alt="" style="max-width:94vw;max-height:86vh;object-fit:contain">
-  <div style="color:#fff"><span id="lbname"></span> · <a id="lbdl" style="color:#9cf" target="_blank">Tải ảnh gốc</a> · <a id="lbclose" href="#" style="color:#fff">Đóng ✕</a></div>
-</div>
-<script>
-const $ = id => document.getElementById(id);
-let results = [], timing = null, info = null;
-
-// Xoá sạch kết quả của lượt trước (tránh khách sau nhìn thấy ảnh của khách trước)
-function clearResults() {
-  results = []; info = null;
-  $("grid").textContent = ""; $("controls").hidden = true; $("trunc").hidden = true;
-  $("qinfo").textContent = ""; $("count").textContent = ""; $("multi").hidden = true;
-}
-
-$("file").onchange = () => {
-  const f = $("file").files[0];
-  $("go").disabled = !f;
-  clearResults();
-  $("selfie-wrap").hidden = true; $("msg").textContent = "";
-  if (f) { $("selfie").src = URL.createObjectURL(f); $("selfie-wrap").hidden = false; $("selfie-box").style.display = "none"; }
-};
-
-function placeBox(box, img, bbox, w, h) {
-  box.style.display = "block";
-  box.style.left = bbox[0] / w * 100 + "%"; box.style.top = bbox[1] / h * 100 + "%";
-  box.style.width = (bbox[2] - bbox[0]) / w * 100 + "%"; box.style.height = (bbox[3] - bbox[1]) / h * 100 + "%";
-}
-
-$("go").onclick = async () => {
-  const f = $("file").files[0];
-  if (!f) return;
-  clearResults();
-  $("msg").textContent = "Đang tìm…"; $("go").disabled = true;
-  const t0 = performance.now();
-  try {
-    const r = await fetch("api/search", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream" } });
-    const e2e = performance.now() - t0;
-    if (r.status === 422) {
-      const e = await r.json();
-      $("msg").textContent = e.error === "face_too_small"
-        ? "Khuôn mặt trong ảnh quá nhỏ. Hãy chụp gần hơn hoặc dùng ảnh khác."
-        : "Không thấy khuôn mặt nào trong ảnh này. Hãy thử ảnh selfie rõ hơn.";
-      return;
-    }
-    if (!r.ok) { $("msg").textContent = (await r.json()).detail || "Có lỗi xảy ra."; return; }
-    const d = await r.json();
-    results = d.results; info = d;
-    $("msg").textContent = "";
-    const q = d.query;
-    placeBox($("selfie-box"), $("selfie"), q.bbox, q.width, q.height);
-    $("qinfo").innerHTML = `<small>Tìm thấy ${q.n_faces} khuôn mặt trong ảnh bạn gửi` +
-      "" +
-      `. Chỉ mục: ${d.indexed_photos} ảnh, ${d.indexed_faces} khuôn mặt. ` +
-      `Xử lý ${d.timing_ms.total.toFixed(0)} ms (máy chủ), ${e2e.toFixed(0)} ms (tổng).</small>`;
-    if (q.n_faces > 1) {
-      $("multi").textContent = `Ảnh bạn gửi có ${q.n_faces} khuôn mặt. Hệ thống chỉ dùng khuôn mặt to và rõ nhất (khung đỏ). ` +
-        `Nếu khung đỏ không phải bạn, hãy gửi ảnh chỉ có một mình bạn.`;
-      $("multi").hidden = false;
-    }
-    $("controls").hidden = false;
-    render();
-  } catch (err) {
-    $("msg").textContent = "Không kết nối được máy chủ.";
-  } finally { $("go").disabled = false; }
-};
-
-$("th").oninput = render;
-
-function openPhoto(x) {
-  $("lbimg").src = x.preview; $("lbname").textContent = `${x.name} — điểm ${x.score.toFixed(3)}`;
-  $("lbdl").href = "originals/" + x.id; $("lb").hidden = false; $("lb").style.display = "flex";
-}
-function closePhoto() { $("lb").hidden = true; $("lb").style.display = "none"; $("lbimg").removeAttribute("src"); }
-$("lbclose").onclick = e => { e.preventDefault(); closePhoto(); };
-$("lb").onclick = e => { if (e.target === $("lb")) closePhoto(); };
-document.onkeydown = e => { if (e.key === "Escape") closePhoto(); };
-
-function render() {
-  const th = parseFloat($("th").value);
-  $("thv").textContent = th.toFixed(2);
-  const shown = results.filter(x => x.score >= th);
-  $("count").textContent = `${shown.length} ảnh (trên ${results.length} ảnh có điểm ≥ 0.15)`;
-  // danh sách bị cắt ở ảnh điểm thấp nhất: chỉ cảnh báo khi ngưỡng đang thấp hơn điểm đó
-  const cut = info && info.truncated && results.length && th <= results[results.length - 1].score;
-  $("trunc").hidden = !cut;
-  if (cut) $("trunc").textContent = `Có ${info.total_matches} ảnh khớp nhưng chỉ hiển thị ${results.length} ảnh điểm cao nhất. Hãy tăng ngưỡng để thu hẹp danh sách.`;
-  const grid = $("grid"); grid.textContent = "";
-  for (const x of shown) {
-    const card = document.createElement("div"); card.className = "card";
-    const t = document.createElement("div"); t.className = "thumb";
-    const img = document.createElement("img"); img.src = x.thumb; img.loading = "lazy"; img.alt = x.name;
-    const box = document.createElement("div"); box.className = "box";
-    placeBox(box, img, x.bbox, x.width, x.height);
-    t.append(img, box);
-    const m = document.createElement("div"); m.className = "meta";
-    m.innerHTML = `<span class="name"></span><span class="score">${x.score.toFixed(3)}</span>`;
-    m.firstChild.textContent = x.name; m.firstChild.title = `${x.name} — ${x.n_faces} mặt trong ảnh`;
-    card.append(t, m); grid.append(card);
-    card.style.cursor = "zoom-in"; card.onclick = () => openPhoto(x);
-  }
-}
-</script>
+<script src="/static/guest.js"></script>
 </body>
 </html>

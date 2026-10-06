@@ -2,131 +2,79 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>Tải ảnh &amp; Xử lý</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 900px; margin-inline: auto; color: #222; }
-  h1 { font-size: 1.4rem; }
-  .panel { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-  progress { width: 100%; height: 18px; }
-  #files { list-style: none; padding: 0; margin: 8px 0 0; max-height: 260px; overflow: auto; font-size: .85rem; }
-  #files li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; border-bottom: 1px solid #eee; }
-  .ok { color: #070; } .err { color: #a00; } .dup { color: #a60; }
-  button { padding: 8px 16px; font-size: 1rem; }
-  #drop { border: 2px dashed #aaa; border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 8px; }
-  #drop.over { background: #eef6ff; }
-  #errors { color: #a00; font-size: .85rem; white-space: pre-wrap; }
-</style>
+<meta name="theme-color" content="#fffaf3">
+<title>Quản lý album · Tải ảnh &amp; Xử lý</title>
+<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/fonts.css">
+<link rel="stylesheet" href="/static/album.css">
+<link rel="stylesheet" href="/static/manage.css">
 </head>
 <body>
-<h1>Tải ảnh lên &amp; Xử lý</h1>
-<p><a href="/">← Tìm ảnh bằng selfie</a> · <span id="stats"></span></p>
-<p id="disk"></p>
+<div class="frame" aria-hidden="true"></div>
+<img class="flower flower--tl" src="/static/img/bloom-corner.webp" width="400" height="451" alt="" aria-hidden="true">
 
-<div class="panel">
-  <h2>1. Tải ảnh gốc lên</h2>
-  <div id="drop">Kéo thả ảnh vào đây hoặc <input type="file" id="pick" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple></div>
-  <progress id="upbar" value="0" max="1" hidden></progress>
-  <div id="upsum"></div>
-  <ul id="files"></ul>
-</div>
+<main class="page narrow">
+  <header class="intro">
+    <img class="logo" src="/static/img/heart-logo.webp" width="320" height="236" alt="Khắc Doãn và Đông Tiên">
+    <p class="eyebrow">Trang dành cho chủ nhà</p>
+    <h1 class="title">Quản lý album</h1>
+    <i class="ornament" aria-hidden="true"></i>
+    <p class="lead">Tải ảnh cưới lên, bấm <b>Xử lý</b> để khách có thể tìm ảnh bằng selfie.</p>
+    <p class="back"><a href="/">← Xem trang khách</a></p>
+  </header>
 
-<div class="panel">
-  <h2>2. Xử lý (lập chỉ mục khuôn mặt)</h2>
-  <button id="proc">Xử lý</button> <span id="pmsg"></span>
-  <progress id="pbar" value="0" max="1" hidden></progress>
-  <div id="pinfo"></div>
-  <div id="errors"></div>
-</div>
+  <section class="card panel" aria-labelledby="h-status">
+    <h2 class="h" id="h-status">Tình trạng</h2>
+    <div class="tiles" id="stats" aria-live="polite">
+      <div class="stat"><b id="n-orig">–</b><span>ảnh gốc</span></div>
+      <div class="stat"><b id="n-done">–</b><span>đã xử lý</span></div>
+      <div class="stat"><b id="n-pend">–</b><span>chờ xử lý</span></div>
+      <div class="stat"><b id="n-faces">–</b><span>khuôn mặt</span></div>
+    </div>
+    <div class="disk">
+      <div class="meter" role="img" aria-label="Dung lượng ổ đĩa đã dùng"><i id="disk-bar"></i></div>
+      <p id="disk" class="disk-t">Đang kiểm tra ổ đĩa…</p>
+    </div>
+  </section>
 
-<script>
-const $ = id => document.getElementById(id);
-const fmt = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
-const dur = s => s >= 60 ? Math.floor(s / 60) + " phút " + Math.round(s % 60) + " giây" : s.toFixed(0) + " giây";
+  <section class="card panel" aria-labelledby="h-up">
+    <h2 class="h" id="h-up"><span class="num">1</span>Tải ảnh gốc lên</h2>
+    <label class="drop" id="drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5V4.5m0 0L8 8.5m4-4 4 4M5 14v3.5A1.5 1.5 0 0 0 6.5 19h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>
+      <span class="drop-t">Kéo thả nhiều ảnh vào đây</span>
+      <span class="drop-s">hoặc</span>
+      <span class="btn btn--solid">Chọn ảnh từ máy</span>
+      <small id="drop-hint">JPG, PNG, WEBP · tối đa 60 MB mỗi ảnh</small>
+      <input class="sr" type="file" id="pick" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple>
+    </label>
+    <div class="overall" id="overall" hidden>
+      <div class="bar" role="progressbar" aria-label="Tiến độ tải lên" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="upbar-wrap"><i id="upbar"></i></div>
+      <p id="upsum" class="sum"></p>
+      <div class="chips" id="upchips"></div>
+    </div>
+    <ul id="files" class="files" aria-label="Danh sách ảnh đang tải"></ul>
+  </section>
 
-async function refreshStats() {
-  try {
-    const d = await (await fetch("api/stats")).json();
-    maxMB = d.max_upload_mb;
-    $("disk").textContent = `Ổ đĩa: còn trống ${(d.disk_free / 2**30).toFixed(1)} GB / ${(d.disk_total / 2**30).toFixed(1)} GB`;
-    $("stats").textContent = `${d.originals} ảnh gốc · ${d.photos} đã xử lý · ${d.pending} chờ xử lý · ${d.faces} khuôn mặt`;
-  } catch (e) {}
-}
-
-// ---- tải lên: từng file một request, 3 request song song, có tiến độ byte ----
-let queue = [], active = 0, total = 0, sent = 0, doneN = 0, failN = 0, dupN = 0;
-let maxMB = 60;
-function addFiles(list) {
-  for (const f of list) {
-    if (f.size > maxMB * 1048576) {  // báo ngay ở trình duyệt, khỏi gửi rồi mới bị đóng kết nối
-      const bad = document.createElement("li"); bad.innerHTML = "<span></span><span class='err'></span>";
-      bad.firstChild.textContent = f.name; bad.lastChild.textContent = `✗ quá lớn (tối đa ${maxMB} MB)`;
-      $("files").prepend(bad); failN++; continue;
-    }
-    const li = document.createElement("li");
-    li.innerHTML = "<span></span><span>chờ…</span>"; li.firstChild.textContent = f.name;
-    $("files").prepend(li);
-    queue.push({ f, li, loaded: 0 }); total += f.size;
-  }
-  $("upbar").hidden = false; $("upbar").max = total; pump();
-}
-function pump() {
-  while (active < 3 && queue.length) { active++; upload(queue.shift()); }
-  const done = doneN + failN + dupN;
-  $("upsum").textContent = `Đã gửi ${fmt(sent)} / ${fmt(total)} — xong ${doneN}, trùng ${dupN}, lỗi ${failN}` + (active || queue.length ? "…" : ". Hoàn tất.");
-  $("upbar").value = sent;
-}
-function upload(it, tries = 0) {
-  const st = it.li.lastChild, x = new XMLHttpRequest();
-  const retry = () => {  // máy chủ bận (503) hoặc đứt kết nối: thử lại tối đa 4 lần, chậm dần
-    if (tries >= 4) return false;
-    sent -= it.loaded; it.loaded = 0; st.textContent = "chờ thử lại…";
-    setTimeout(() => upload(it, tries + 1), 2000 * (tries + 1)); return true;
-  };
-  x.open("POST", "api/upload?name=" + encodeURIComponent(it.f.name));
-  x.setRequestHeader("Content-Type", "application/octet-stream");
-  x.upload.onprogress = e => { sent += e.loaded - it.loaded; it.loaded = e.loaded; st.textContent = Math.round(e.loaded / e.total * 100) + "%"; pump(); };
-  const fin = () => { sent += it.f.size - it.loaded; it.loaded = it.f.size; active--; pump(); refreshStats(); };
-  x.onload = () => {
-    let d = {}; try { d = JSON.parse(x.responseText); } catch (e) {}
-    if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : ""); st.className = "ok"; doneN++; }
-    else if (x.status === 200) { st.textContent = "trùng với " + d.name; st.className = "dup"; dupN++; }
-    else if (x.status === 503 && retry()) return;
-    else { st.textContent = "✗ " + (d.detail || ("lỗi " + x.status)); st.className = "err"; failN++; }
-    fin();
-  };
-  x.onerror = () => { if (retry()) return; st.textContent = "✗ mất kết nối"; st.className = "err"; failN++; fin(); };
-  x.send(it.f);
-}
-$("pick").onchange = () => { addFiles($("pick").files); $("pick").value = ""; };
-$("drop").ondragover = e => { e.preventDefault(); $("drop").classList.add("over"); };
-$("drop").ondragleave = () => $("drop").classList.remove("over");
-$("drop").ondrop = e => { e.preventDefault(); $("drop").classList.remove("over"); addFiles(e.dataTransfer.files); };
-
-// ---- xử lý nền ----
-let timer = null;
-function showStatus(s) {
-  const run = s.state === "running";
-  $("proc").disabled = run;
-  $("pbar").hidden = s.state === "idle"; $("pbar").max = Math.max(s.total, 1); $("pbar").value = s.done;
-  let t = { idle: "", running: "Đang xử lý…", done: "Hoàn tất ✓", error: "Có lỗi — xem bên dưới" }[s.state];
-  $("pmsg").textContent = t;
-  $("pinfo").textContent = s.state === "idle" ? "" :
-    `${s.done}/${s.total} ảnh · ${s.faces} khuôn mặt · ${s.failed} lỗi · ${dur(s.elapsed)}` + (s.current ? ` · đang làm: ${s.current}` : "");
-  $("errors").textContent = (s.rejected.length ? "Đã loại (làm sập khi giải mã, nằm trong thư mục rejected/): " + s.rejected.join(", ") + "\n" : "") + s.errors.join("\n");
-  if (run && !timer) timer = setInterval(poll, 1000);
-  if (!run && timer) { clearInterval(timer); timer = null; refreshStats(); }
-}
-async function poll() { try { showStatus(await (await fetch("api/process")).json()); } catch (e) {} }
-$("proc").onclick = async () => {
-  const r = await fetch("api/process", { method: "POST" });
-  const d = await r.json();
-  if (r.status === 409) $("pmsg").textContent = d.message;
-  showStatus(d);
-  if (r.status === 200 && !timer) timer = setInterval(poll, 1000);
-};
-refreshStats(); poll();
-</script>
+  <section class="card panel" aria-labelledby="h-proc">
+    <h2 class="h" id="h-proc"><span class="num">2</span>Xử lý (lập chỉ mục khuôn mặt)</h2>
+    <p class="note">Chỉ xử lý những ảnh chưa được lập chỉ mục. Khách vẫn tìm được trong lúc xử lý, và thấy ảnh mới ngay khi mỗi ảnh xong.</p>
+    <div class="proc-row">
+      <button type="button" class="btn btn--solid" id="proc">Xử lý</button>
+      <span id="pmsg" class="pmsg" role="status"></span>
+    </div>
+    <div class="bar" id="pbar-wrap" role="progressbar" aria-label="Tiến độ xử lý" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><i id="pbar"></i></div>
+    <div class="tiles tiles--sm" id="ptiles" hidden>
+      <div class="stat"><b id="p-done">0</b><span>đã xong</span></div>
+      <div class="stat"><b id="p-faces">0</b><span>khuôn mặt</span></div>
+      <div class="stat" id="p-failed-w"><b id="p-failed">0</b><span>lỗi</span></div>
+      <div class="stat" id="p-rej-w"><b id="p-rej">0</b><span>bị loại</span></div>
+    </div>
+    <p id="pinfo" class="sum"></p>
+    <div id="errors" class="errors" hidden></div>
+  </section>
+</main>
+<script src="/static/manage.js"></script>
 </body>
 </html>

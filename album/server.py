@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
+from starlette.staticfiles import StaticFiles
 
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
@@ -43,6 +44,17 @@ MAX_BODY_SLOTS = 8        # số body selfie đang nhận cùng lúc (mỗi cái
 DISK_CHECK_EVERY = 8 * 1024 * 1024
 PHOTO_ID = re.compile(r"^[0-9a-f]{16}$")
 INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
+
+
+class CachedStatic(StaticFiles):
+    """File tĩnh của giao diện. Font/ảnh đổi tên khi đổi nội dung nên cache lâu; CSS/JS không có hash
+    trong tên nên chỉ cache ngắn (sửa giao diện là khách thấy trong vài phút)."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        long = str(full_path).lower().endswith((".woff2", ".webp", ".svg"))
+        resp.headers["Cache-Control"] = "public, max-age=2592000" if long else "public, max-age=300"
+        return resp
 
 
 class NoIndexMiddleware:
@@ -423,6 +435,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     @app.get("/manage")
     def manage():
         return FileResponse(os.path.join(HERE, "static", "manage.html"), headers={"Cache-Control": "no-store"})
+
+    # CSS/JS/font/hoạ tiết của giao diện: chỉ file tĩnh cục bộ, không nạp gì từ ngoài
+    app.mount("/static", CachedStatic(directory=os.path.join(HERE, "static")), name="static")
 
     app.add_middleware(NoIndexMiddleware)
     return app

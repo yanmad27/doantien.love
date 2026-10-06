@@ -22,8 +22,9 @@ python3 -m venv .venv                          # venv cục bộ, không cài gl
 DATA_DIR=./data PORT=8000 ALBUM_HOST=0.0.0.0 .venv/bin/python server.py
 ```
 
-- `http://localhost:8000/manage` — tải ảnh lên (kéo thả nhiều ảnh, mỗi ảnh một request, tiến độ từng ảnh + tổng) và nút **Xử lý**.
-- `http://localhost:8000/` — khách tải selfie, tìm ảnh, kéo ngưỡng, bấm ảnh để mở bản xem 2000 px (có link tải ảnh gốc).
+- `http://localhost:8000/manage` — trang chủ nhà: kéo thả/chọn nhiều ảnh (mỗi ảnh một request, tiến độ từng ảnh + tổng, trạng thái trùng/lỗi/quá lớn), dung lượng đĩa, nút **Xử lý** kèm tiến độ và số đã xong/lỗi/bị loại.
+- `http://localhost:8000/` — trang khách: "Chụp ảnh selfie" (`capture="user"`) và "Chọn từ thư viện" trên điện thoại, một ô chọn/kéo thả trên máy tính; kết quả là lưới ảnh, bấm ảnh mở lightbox (vuốt/mũi tên/phím, **Lưu ảnh** tải ảnh gốc, nút Chia sẻ khi trình duyệt hỗ trợ Web Share file).
+- Khách **không thấy điểm**. Hai mức cắt là hằng số ở đầu `static/guest.js`: `CONFIDENT_CUT = 0.40` ("Ảnh của bạn") và `MAYBE_CUT = 0.28` ("Có thể cũng là bạn", thu gọn). Chủ nhà xem điểm + thanh trượt ngưỡng ở `/?tune=1` (không có link tới đó từ trang khách).
 - Dữ liệu trong `DATA_DIR`: `originals/` (ảnh gốc), `previews/` (2000 px), `thumbs/` (640 px), `index.db`, `tmp/` (upload dở dang). Khởi động lại với cùng `DATA_DIR` là tìm được ngay, không phải Xử lý lại.
 
 **Xử lý:** chạy trong thread nền của chính server (dùng lại model đã nạp), chỉ một job một lúc (bấm lần hai khi đang chạy → 409 "Đang xử lý rồi"), chỉ làm ảnh chưa lập chỉ mục. `GET /api/process` trả tiến độ (done/total, mặt, lỗi, thời gian). Ảnh lỗi chỉ báo lỗi, không dừng job. Tìm kiếm trong lúc xử lý vẫn chạy (chậm hơn) và thấy kết quả mới ngay khi mỗi ảnh xong.
@@ -117,8 +118,18 @@ Với ảnh thật 6000 px+ mặt sẽ nhỏ hơn sau khi thu; nếu đánh giá
 .venv/bin/pip install -r requirements-dev.txt && .venv/bin/playwright install chromium
 .venv/bin/python dev/e2e.py --photos a.jpg b.jpg big24mp.jpg --selfie s.jpg --out /tmp/shots --pid <PID server>
 ```
-Lái trình duyệt thật: tải lô ảnh lên → Xử lý → tìm bằng selfie → mở ảnh, chụp từng bước (và đo RSS nếu có `--pid`).
+Lái trình duyệt thật (desktop cho /manage, điện thoại 390×844 cho trang khách): tải lô ảnh lên → Xử lý → tìm bằng selfie → mở lightbox → Lưu ảnh (kiểm file tải về), chụp từng bước, khẳng định không có request nào ra ngoài localhost (và đo RSS nếu có `--pid`). `--reduced-motion` chạy với `prefers-reduced-motion: reduce`.
 
 ## Không commit
 
 `.venv/`, `data/`, `models/`, ảnh, selfie, chỉ mục — đã nằm trong `.gitignore`.
+
+## Giao diện (static/)
+
+Cùng bộ nhận diện với thiệp mời (giấy ngà, hoa màu nước, viền san hô mảnh; token màu copy từ `styles.css` của thiệp). Mọi thứ phục vụ cục bộ dưới `/static/` — **không** gọi Google Fonts/CDN nào lúc chạy.
+
+- `index.html` + `guest.css`/`guest.js` (khách), `manage.html` + `manage.css`/`manage.js` (chủ nhà), `album.css` (dùng chung).
+- Font self-host trong `fonts/` (woff2, tập con vietnamese + latin): Style Script (tên/tiêu đề), Cormorant Garamond (nội dung), Be Vietnam Pro (nhãn/nút). Khai báo ở `fonts.css`.
+- Hoạ tiết trong `img/` (webp thu nhỏ từ `assets/` của thiệp: `bloom-corner`, `bloom-side`, `heart-logo`) + `favicon.svg`. Tổng `static/` ≈ 330 KB. `*.png` bị `.gitignore`: nếu cần icon PNG, `git add -f` có chủ ý.
+- Tôn trọng `prefers-reduced-motion` (tắt mọi animation/transition); nút ≥ 44 px; focus rõ.
+- Selfie lớn hơn 2400 px được thu về 2000 px ở trình duyệt trước khi gửi (chỉ để gửi nhanh và khỏi vướng giới hạn 40 MP); vẫn chỉ nằm trong RAM của máy chủ.
