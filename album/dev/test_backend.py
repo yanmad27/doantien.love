@@ -260,7 +260,7 @@ class GateTests(unittest.TestCase):
         for path, ct in (("/thumbs/%s.jpg", "image/jpeg"), ("/previews/%s.jpg", "image/jpeg")):
             st, h, _, _ = call(self.app, "GET", path % p[0])
             self.assertEqual((st, h["content-type"]), (200, ct), path)
-            self.assertEqual(h["cache-control"], "public, max-age=3600")
+            self.assertEqual(h["cache-control"], "public, max-age=300")
         self.assertEqual(call(self.app, "HEAD", f"/i/{p[0]}-{p[4]}-480.webp")[0], 200)
         import mimetypes
         self.assertEqual(mimetypes.guess_type("a.webp")[0], "image/webp")

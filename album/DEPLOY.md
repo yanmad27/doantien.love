@@ -150,8 +150,18 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 
 - Trạng thái ẩn nằm trong `index.db` (bảng `photo_hidden`, `settings`; tạo tự động khi khởi động, DB cũ nâng cấp tại chỗ). **Trước lần deploy đầu có tính năng này, sao lưu DB:** `sqlite3 /data/index.db ".backup /data/index-pre-hidden.db"` (an toàn khi có job chạy). Cũng nên sao lưu sau mỗi đợt ẩn/hiện lớn.
 - **Rollback về image cũ: ảnh đã ẩn HIỆN LẠI với khách** (code cũ không biết `photo_hidden`; bảng thừa bị bỏ qua, DB vẫn chạy được). Đã ẩn ảnh riêng tư thì đừng rollback; nếu buộc phải, tạm đóng tên miền công khai trước.
-- Mọi route chủ nhà (`/api/admin/*`, `GET /api/stats`, `GET /api/process`) cần `ALBUM_ADMIN_TOKEN`; không đặt thì chúng mở cho mọi người. Cần thêm file bí mật `DATA_DIR/.image_secret` (tự tạo, 0600, nằm trong volume): xoá nó chỉ làm token ảnh đang lưu trong trang khách hết hiệu lực.
+- `/api/admin/*` cần `ALBUM_ADMIN_TOKEN`; không đặt thì trả 403 (đóng, không thể ẩn/hiện). `GET /api/stats` và `GET /api/process` không đặt mã thì vẫn mở như trước. Cần thêm file bí mật `DATA_DIR/.image_secret` (tự tạo, 0600, nằm trong volume): xoá nó chỉ làm token ảnh đang lưu trong trang khách hết hiệu lực.
 - Đổi tên file ảnh = id mới = ảnh hiện (dòng ẩn của id cũ thành mồ côi, vô hại). Proxy phải giữ nguyên header `Host` (kiểm `Origin` của POST chủ nhà so với `Host`).
+
+### Giới hạn của việc ẩn (đọc kỹ)
+
+- **Ẩn không thu hồi URL `/i/{id}-{v}-{size}.webp` mà ai đó đã có**: các URL này bất biến, CDN (Cloudflare) cache tới một năm, và ảnh ẩn vẫn được phục vụ ở `/i/` (v là mã nội dung, không đoán được nhưng chỉ **24 bit** — đừng coi là bí mật mạnh). Với ảnh nhạy cảm, sau khi ẩn hãy **purge cache Cloudflare** (theo URL hoặc purge everything).
+- `/thumbs` và `/previews` cache công khai `max-age=300`: ảnh vừa ẩn còn nằm ở CDN/trình duyệt tối đa khoảng 5 phút. `/originals` không qua CDN.
+- Token ảnh ẩn (`?t=`) sống tối đa 24 h và bị vô hiệu khi ẩn/ẩn lại ảnh đó hoặc khi đổi cài đặt tìm kiếm.
+
+### `--rebuild`
+
+**Dừng app trước khi chạy `index_photos.py --rebuild`** (đang chạy thì web có thể ghi vào DB cũ giữa chừng). Lệnh sao `index.db` (+`-wal`/`-shm`) sang `index.db.bak-<ts>`, đọc ảnh đã ẩn + cài đặt từ bản sao rồi mới xoá DB cũ và chép trạng thái sang DB mới. DB hỏng/không đọc được → dừng với thông báo trỏ tới bản sao (chưa xoá gì); thêm `--discard-owner-state` để vẫn làm tiếp và bỏ trạng thái ẩn (ảnh đã ẩn sẽ HIỆN LẠI). Bản sao không tự xoá: dọn tay khi đã kiểm tra.
 
 ## 10. Kiểm tra sau deploy
 

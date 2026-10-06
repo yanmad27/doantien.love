@@ -5,7 +5,10 @@ Chạy lại được: ảnh không đổi (cùng đường dẫn, kích thướ
 import argparse
 import json
 import os
+import shutil
+import sqlite3
 import sys
+import time
 
 from PIL import Image
 
@@ -26,6 +29,8 @@ def main():
     ap.add_argument("--providers", default=os.environ.get("ALBUM_PROVIDERS", "CPUExecutionProvider"),
                     help="onnxruntime providers, cách nhau dấu phẩy")
     ap.add_argument("--rebuild", action="store_true", help="xoá chỉ mục cũ, làm lại từ đầu")
+    ap.add_argument("--discard-owner-state", action="store_true",
+                    help="với --rebuild: nếu không đọc được ảnh đã ẩn/cài đặt từ chỉ mục cũ (DB hỏng) thì vẫn làm tiếp và bỏ chúng")
     ap.add_argument("--prune", action="store_true", help="xoá khỏi chỉ mục ảnh không còn trong thư mục")
     ap.add_argument("--no-derive", action="store_true", help="không sinh WebP (240/480/2000) + photo_meta sau khi lập chỉ mục")
     ap.add_argument("--limit", type=int, default=0, help="chỉ xử lý N ảnh đầu (thử nghiệm)")
@@ -38,11 +43,28 @@ def main():
         sys.exit(f"Không thấy thư mục ảnh: {root}")
     owner_state = ([], [])
     if a.rebuild:
-        owner_state = store.keep_owner_state(store.db_path(a.data_dir))  # ảnh đã ẩn + cài đặt của chủ nhà sống sót qua --rebuild
-        for f in (store.db_path(a.data_dir),):
+        # Sao DB cũ (+ -wal/-shm) sang index.db.bak-<ts> TRƯỚC, đọc ảnh đã ẩn + cài đặt từ bản sao trên đĩa (không có đoạn chỉ nằm trong RAM);
+        # DB cũ chỉ bị xoá sau khi đọc được. Hỏng/không đọc được → dừng, trỏ tới bản sao, trừ khi --discard-owner-state.
+        dbf = store.db_path(a.data_dir)
+        if os.path.exists(dbf):
+            bak, n = f"{dbf}.bak-{time.strftime('%Y%m%d-%H%M%S')}", 1
+            while os.path.exists(bak):  # không bao giờ ghi đè một bản sao có sẵn
+                n += 1
+                bak = f"{dbf}.bak-{time.strftime('%Y%m%d-%H%M%S')}-{n}"
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(dbf + suffix):
+                    shutil.copy2(dbf + suffix, bak + suffix)
+            try:
+                owner_state = store.keep_owner_state(bak)
+            except sqlite3.DatabaseError as e:
+                if not a.discard_owner_state:
+                    sys.exit(f"DỪNG: không đọc được trạng thái ẩn/hiện + cài đặt từ chỉ mục cũ ({e}). Chưa xoá gì; bản sao: {bak}. "
+                             f"Sửa/khôi phục DB, hoặc chạy lại với --discard-owner-state để bỏ trạng thái đó (ảnh đã ẩn sẽ HIỆN LẠI).")
+                print(f"CẢNH BÁO: bỏ trạng thái ẩn/hiện (không đọc được: {e}); bản sao DB cũ: {bak}", file=sys.stderr)
+            print(f"Bản sao chỉ mục cũ: {bak}")
             for suffix in ("", "-wal", "-shm"):  # -wal còn sót sẽ bị SQLite áp lên DB mới
-                if os.path.exists(f + suffix):
-                    os.remove(f + suffix)
+                if os.path.exists(dbf + suffix):
+                    os.remove(dbf + suffix)
     db = store.connect(a.data_dir)
     store.restore_owner_state(db, *owner_state)
     old_root = db.execute("SELECT value FROM meta WHERE key='photos_root'").fetchone()

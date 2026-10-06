@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS photo_hidden (  -- ảnh chủ nhà ẩn khỏi thư 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);  -- search_includes_hidden: vắng = '1' (BẬT)
 """
 SEARCH_HIDDEN_KEY = "search_includes_hidden"
+EPOCH_KEY = "settings_epoch"  # tăng mỗi khi cài đặt trên đổi giá trị: vô hiệu token ảnh của ảnh ẩn
 META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))
 EXTRA_COLUMNS = {"photo_meta": META_COLUMNS, "derive_failed": (("deriv_ver", "INTEGER"),)}  # thêm vào bảng photo_meta đã có từ bản trước (ALTER, an toàn)
 
@@ -97,8 +98,10 @@ def keep_owner_state(db_file):
         for q in ("SELECT id, hidden_at FROM photo_hidden", "SELECT key, value FROM settings"):
             try:
                 out.append(db.execute(q).fetchall())
-            except sqlite3.OperationalError:  # DB từ bản trước chưa có bảng
-                out.append([])
+            except sqlite3.OperationalError as e:
+                if "no such table" not in str(e):  # DB hỏng: báo lỗi chứ không coi như "chưa ai bị ẩn"
+                    raise
+                out.append([])  # DB từ bản trước chưa có bảng
         return out[0], out[1]
     finally:
         db.close()

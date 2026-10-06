@@ -73,7 +73,7 @@ IMAGE_TOKEN_TTL = 24 * 3600  # giây: token ?t= cho ảnh đã ẩn trong kết 
 ADMIN_BODY_MAX = 256 * 1024
 ADMIN_MAX_IDS = 5000
 IMMUTABLE = "public, max-age=31536000, immutable"
-LEGACY_CACHE = "public, max-age=3600"  # /thumbs, /previews không đặt tên theo nội dung → chỉ cache ngắn
+LEGACY_CACHE = "public, max-age=300"  # /thumbs, /previews không đặt tên theo nội dung → cache ngắn (ảnh vừa ẩn còn ở CDN tối đa ~5 phút)
 INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
 
 
@@ -381,7 +381,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     app.state.job = job  # cho test: job.thread.join()
     cache = {"mtime": None, "sig": None, "t": None}  # t = (E, rows, photos) công bố bằng MỘT phép gán
     # gal["g"] là MỘT bản chụp bất biến (manifest + meta + ẩn + cài đặt), thay nguyên cả bản bằng một phép gán; người đọc lấy g = gallery_state() rồi chỉ dùng g
-    gal = {"g": dict(mtime=None, ts=0.0, meta={}, hidden=frozenset(), include_hidden=True, pub_b={}, pos={}, admin=b"", raw=b"", gz=b"", mv=""),
+    gal = {"g": dict(mtime=None, ts=0.0, meta={}, hidden=frozenset(), include_hidden=True, hats={}, epoch=0, pub_b={}, pos={}, admin=b"", raw=b"", gz=b"", mv=""),
            "fresh_at": 0.0}
     glock = threading.Lock()
     lock = threading.Lock()
@@ -486,15 +486,15 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     def build_gallery(m):
         """MỘT SELECT (LEFT JOIN photo_hidden) + cài đặt trong cùng một giao dịch đọc → ảnh chụp nhất quán."""
-        meta, rows, arows, order, hidden, include = {}, [], [], [], set(), True
+        meta, rows, arows, order, hidden, include, hats, epoch = {}, [], [], [], set(), True, {}, 0
         if m is not None:
             db = store.connect_ro(data_dir)
             try:
                 db.execute("BEGIN")
-                q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst, h.id IS NOT NULL "
+                q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst, h.id IS NOT NULL, h.hidden_at "
                      "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id LEFT JOIN photo_hidden h ON h.id=p.id "
                      "ORDER BY m.taken IS NULL, m.taken, p.path")
-                for pid, w, h, t, v, c, name, b, hid in db.execute(q):
+                for pid, w, h, t, v, c, name, b, hid, hat in db.execute(q):
                     if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
                         continue
                     t = None if t is None else round(t, 3)
@@ -502,11 +502,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     arows.append([pid, w, h, t, v, c, name, b, 1 if hid else 0])
                     if hid:
                         hidden.add(pid)
+                        hats[pid] = "n" if hat is None else repr(float(hat))
                     else:
                         rows.append([pid, w, h, t, v, c, name, None])
                         order.append((pid, b))
                 r = db.execute("SELECT value FROM settings WHERE key=?", (store.SEARCH_HIDDEN_KEY,)).fetchone()
                 include = r is None or r[0] != "0"
+                r = db.execute("SELECT value FROM settings WHERE key=?", (store.EPOCH_KEY,)).fetchone()
+                epoch = int(r[0]) if r and r[0].isdigit() else 0
                 db.rollback()
             finally:
                 db.close()
@@ -521,7 +524,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                                 settings={store.SEARCH_HIDDEN_KEY: include}), ensure_ascii=False, separators=(",", ":")).encode()
         # thứ tự manifest của MỌI khung (kể cả ẩn): search dùng để xếp khung đầu của nhóm burst ẩn
         pos = {a[0]: i for i, a in enumerate(arows)}
-        return dict(mtime=m, ts=time.time(), meta=meta, hidden=hidden, include_hidden=include, pub_b=pub, pos=pos, admin=admin,
+        return dict(mtime=m, ts=time.time(), meta=meta, hidden=hidden, include_hidden=include, hats=hats, epoch=epoch, pub_b=pub, pos=pos, admin=admin,
                     raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
 
     def gallery_state(fresh=False, force=False):
@@ -590,7 +593,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", preview=f"previews/{pid}.jpg", width=ph["width"], height=ph["height"],
                             n_faces=ph["n_faces"], bbox=[round(x, 1) for x in rows[i]["bbox"]],
-                            v=v, w=w, h=h, c=c, b=hb.get(pid) if hid else g["pub_b"].get(pid), t=image_token(pid, exp)))
+                            v=v, w=w, h=h, c=c, b=hb.get(pid) if hid else g["pub_b"].get(pid), t=image_token(pid, exp, g)))
         t4 = time.perf_counter()
         return dict(
             query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
@@ -606,15 +609,19 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     image_secret = load_session_secret(data_dir, ".image_secret")  # luôn tạo (kể cả khi chưa đặt ALBUM_ADMIN_TOKEN)
 
-    def image_token(pid, exp):
-        """"<hết hạn>.<HMAC-SHA256 128 bit của id + hết hạn>": cho phép lấy bản gốc/xem/thumb của ảnh ĐÃ ẨN trong kết quả tìm kiếm của chính khách."""
-        return f"{exp}.{hmac.new(image_secret, f'{pid}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32]}"
+    def image_token(pid, exp, g):
+        """Token "<hết hạn>.<HMAC-SHA256 128 bit>": cho phép lấy bản gốc/xem/thumb của ảnh ĐÃ ẩn trong kết quả tìm kiếm của chính khách. Thông điệp ký =
+        id + hết hạn + hidden_at hiện tại (0 khi hiện) + với ảnh ẩn: epoch cài đặt. Nên ẩn một ảnh (hoặc ẩn lại sau khi hiện) làm token cấp trước đó vô hiệu,
+        đổi cài đặt tìm kiếm làm vô hiệu mọi token của ảnh ẩn, còn token của ảnh hiện vẫn sống khi ẩn ảnh KHÁC."""
+        hat = g["hats"].get(pid)
+        msg = f"{pid}|{exp}|0|0" if hat is None else f"{pid}|{exp}|{hat}|{g['epoch']}"
+        return f"{exp}.{hmac.new(image_secret, msg.encode(), hashlib.sha256).hexdigest()[:32]}"
 
-    def token_ok(pid, t):
+    def token_ok(pid, t, g):
         if not t or not re.fullmatch(r"\d{1,12}\.[0-9a-f]{32}", t):
             return False
         exp = int(t.split(".")[0])
-        return exp >= time.time() and hmac.compare_digest(t.encode(), image_token(pid, exp).encode())
+        return exp >= time.time() and hmac.compare_digest(t.encode(), image_token(pid, exp, g).encode())
 
     def admin_state(request: Request, header=True):
         """'ok' | 'none' (không đưa thông tin xác thực → KHÔNG tính lượt thử) | 'bad' (đưa sai, đã tính) | 'limited' (quá ngưỡng).
@@ -797,6 +804,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     # ---------- chủ nhà: ẩn/hiện ảnh + cài đặt tìm kiếm (mọi response no-store; require_admin chạy TRƯỚC khi đọc body) ----------
     NOSTORE = {"Cache-Control": "no-store"}
 
+    def admin_enabled():
+        """Không có ALBUM_ADMIN_TOKEN → route ẩn/hiện KHÔNG bao giờ dùng được (đóng khi thiếu cấu hình; stats/process GET vẫn mở như trước)."""
+        if not token:
+            raise HTTPException(403, "Chưa đặt ALBUM_ADMIN_TOKEN: tính năng chủ nhà bị tắt.")
+
     def same_origin_or_403(request: Request):
         """Trình duyệt gửi Origin/Sec-Fetch-Site trên POST: phải cùng origin (chống CSRF dù cookie SameSite=Strict). Không có cả hai
         (curl, script của chủ nhà) → cho qua, vẫn cần cookie/header xác thực."""
@@ -811,6 +823,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 raise HTTPException(403, "Yêu cầu khác origin.")
 
     async def admin_json(request: Request):
+        admin_enabled()
         require_admin(request)
         same_origin_or_403(request)
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
@@ -833,6 +846,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     @app.get("/api/admin/photos")
     async def api_admin_photos(request: Request):
+        admin_enabled()
         require_admin(request)
         return Response((await run_in_threadpool(gallery_state))["admin"], media_type="application/json", headers=NOSTORE)
 
@@ -867,7 +881,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         data = await admin_json(request)
         ids, hide = data.get("ids"), data.get("hidden")
         if set(data) != {"ids", "hidden"} or not isinstance(hide, bool) or not isinstance(ids, list) \
-                or not 1 <= len(ids) <= ADMIN_MAX_IDS or not all(isinstance(i, str) and PHOTO_ID.match(i) for i in ids):
+                or not 1 <= len(ids) <= ADMIN_MAX_IDS or not all(isinstance(i, str) and PHOTO_ID.fullmatch(i) for i in ids):
             raise HTTPException(400, f'Cần {{"ids": [1..{ADMIN_MAX_IDS} mã 16 hex], "hidden": true|false}}.')
         out = await run_in_threadpool(set_visibility, list(dict.fromkeys(ids)), hide)
         await run_in_threadpool(gallery_state, force=True)  # CHẶN: dựng lại manifest công khai trước khi trả lời, kể cả khi đang Xử lý
@@ -876,8 +890,16 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     def set_include_hidden(on):
         db = store.connect(data_dir, init=False)
         try:
+            db.execute("BEGIN IMMEDIATE")
+            r = db.execute("SELECT value FROM settings WHERE key=?", (store.SEARCH_HIDDEN_KEY,)).fetchone()
+            if (r is None or r[0] != "0") != on:  # đổi giá trị thật sự → tăng epoch (vô hiệu token ảnh ẩn đã cấp)
+                e = db.execute("SELECT value FROM settings WHERE key=?", (store.EPOCH_KEY,)).fetchone()
+                db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (store.EPOCH_KEY, str((int(e[0]) if e and e[0].isdigit() else 0) + 1)))
             db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (store.SEARCH_HIDDEN_KEY, "1" if on else "0"))
             db.commit()
+        except BaseException:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -1023,14 +1045,15 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     def gate_hidden(pid, request):
         """Ảnh ẩn: 404 y hệt id không tồn tại (cùng HTTPException) trừ khi có ?t= hợp lệ cho đúng id này. True = vào bằng token."""
-        if pid in gallery_state()["hidden"]:
-            if not token_ok(pid, request.query_params.get("t")):
+        g = gallery_state()
+        if pid in g["hidden"]:
+            if not token_ok(pid, request.query_params.get("t"), g):
                 raise HTTPException(404)
             return True
         return False
 
     def photo_file(folder, pid, request, ext=".jpg"):
-        if not PHOTO_ID.match(pid):
+        if not PHOTO_ID.fullmatch(pid):
             raise HTTPException(404)
         by_token = gate_hidden(pid, request)
         p = os.path.join(folder, pid + ext)

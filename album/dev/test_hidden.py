@@ -382,7 +382,81 @@ class HiddenTests(Base):
         self.assertTrue(os.path.exists(os.path.join(d, ".image_secret")))
 
 
+class TokenInvalidationTests(Base):
+    def tokens(self, q=None):
+        return {x["id"]: x["t"] for x in search(self.app, q or self.q)["results"]}
+
+    def code(self, pid, t, route="thumbs/{}.jpg"):
+        return call(self.app, "GET", f"/{route.format(pid)}?t={t}")[0]
+
+    def test_token_issued_while_visible_dies_when_hidden_and_survives_other_hides(self):
+        tok = self.tokens()
+        a1, s1 = PID["a1"], PID["s1"]
+        self.assertEqual(self.code(a1, tok[a1]), 200)  # ảnh hiện: token hợp lệ (và không cần)
+        hide(self.app, ["s2"])  # ẩn ảnh KHÁC: token của ảnh hiện vẫn sống
+        self.assertEqual((self.code(a1, tok[a1]), self.code(s1, tok[s1])), (200, 200))
+        hide(self.app, ["a1"])
+        self.assertEqual(call(self.app, "GET", f"/thumbs/{a1}.jpg")[0], 404)
+        self.assertEqual(self.code(a1, tok[a1]), 404)  # cấp lúc còn hiện → ẩn → hết hiệu lực
+        self.assertEqual(self.code(PID["a2"], self.tokens()[PID["a2"]]), 200)
+
+    def test_unhide_then_rehide_invalidates(self):
+        hide(self.app, ["a1"])
+        a1 = PID["a1"]
+        t1 = self.tokens()[a1]
+        self.assertEqual(self.code(a1, t1), 200)
+        hide(self.app, ["a1"], hidden=False)
+        hide(self.app, ["a1"])
+        self.assertEqual(self.code(a1, t1), 404)
+        self.assertEqual(self.code(a1, self.tokens()[a1]), 200)
+
+    def test_setting_change_invalidates_hidden_tokens(self):
+        hide(self.app, ["a1"])
+        a1, s1 = PID["a1"], PID["s1"]
+        tok = self.tokens()  # search ON: ảnh ẩn trúng, mang t
+        self.assertEqual(self.code(a1, tok[a1]), 200)
+        post(self.app, "/api/admin/settings", {"search_includes_hidden": True})  # không đổi giá trị → epoch giữ nguyên
+        self.assertEqual(self.code(a1, tok[a1]), 200)
+        post(self.app, "/api/admin/settings", {"search_includes_hidden": False})
+        self.assertEqual(self.code(a1, tok[a1]), 404)
+        self.assertEqual(self.code(s1, tok[s1]), 200)  # ảnh hiện không bị ảnh hưởng
+        post(self.app, "/api/admin/settings", {"search_includes_hidden": True})
+        self.assertEqual(self.code(a1, tok[a1]), 404)  # bật lại cũng không hồi sinh token cũ
+        self.assertEqual(self.code(a1, self.tokens()[a1]), 200)
+        app2 = make_app(self.d)  # epoch bền qua khởi động lại
+        self.assertEqual(call(app2, "GET", f"/thumbs/{a1}.jpg?t={tok[a1]}")[0], 404)
+
+    def test_legacy_cache_is_five_minutes(self):
+        h = call(self.app, "GET", f"/thumbs/{PID['s1']}.jpg")[1]
+        self.assertEqual(h["cache-control"], "public, max-age=300")
+        self.assertEqual(call(self.app, "GET", f"/previews/{PID['s1']}.jpg")[1]["cache-control"], "public, max-age=300")
+
+
 class AdminTests(Base):
+    def test_fail_closed_without_admin_token(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        build_originals(d)
+        app = make_app(d, admin_token="")
+        process_open = call(app, "POST", "/api/process")
+        self.assertEqual(process_open[0], 200)  # upload/process mở như trước khi chưa đặt mã
+        app.state.job.thread.join(60)
+        before = gallery(app)[2]
+        for h in (None, {"Origin": "http://localhost"}, {"X-Album-Token": TOKEN}):
+            self.assertEqual(call(app, "GET", "/api/admin/photos", headers=h)[0], 403)
+            for path, obj in (("/api/admin/visibility", {"ids": [PID["a1"]], "hidden": True}), ("/api/admin/settings", {"search_includes_hidden": False})):
+                self.assertEqual(post(app, path, obj, headers=h or {})[0], 403, (path, h))
+        self.assertEqual(gallery(app)[2], before)  # không có gì đổi
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(db.execute("SELECT count(*) FROM photo_hidden").fetchone()[0], 0)
+        db.close()
+        for path in ("/api/stats", "/api/process"):
+            self.assertEqual(call(app, "GET", path)[0], 200)  # vẫn mở như trước
+
+    def test_ids_reject_trailing_newline(self):
+        self.assertEqual(post(self.app, "/api/admin/visibility", {"ids": [PID["a1"] + "\n"], "hidden": True})[0], 400)
+        self.assertEqual(len(gal_rows(self.app)), 11)
+
     def test_admin_only_401(self):
         ip = {"X-Forwarded-For": "5.5.5.5"}
         for hdr in (ip, dict(ip, **{"X-Album-Token": "wrong"}), dict(ip, **{"Cookie": "album_session=bad"})):
@@ -494,6 +568,32 @@ class OwnerStateTests(Base):
         self.assertEqual(c["counts"], dict(all=10, shown=9, hidden=1))  # mồ côi không tính
         self.assertEqual(c["settings"], {"search_includes_hidden": False})
         self.assertNotIn(PID["a1"], [x["id"] for x in search(app, self.q)["results"]])
+
+    def test_rebuild_backs_up_and_aborts_on_corrupt_db(self):
+        hide(self.app, ["a1"])
+        want = self.hidden_rows()
+        dbf = store.db_path(self.d)
+        baks = lambda: sorted(f for f in os.listdir(self.d) if f.startswith("index.db.bak-") and not f.endswith(("-wal", "-shm")))
+        self.run_cli("--rebuild")
+        self.assertEqual(self.hidden_rows(), want)
+        self.assertEqual(len(baks()), 1)  # bản sao DB cũ còn trên đĩa
+        bak = sqlite3.connect(os.path.join(self.d, baks()[0]))
+        self.assertEqual(bak.execute("SELECT id FROM photo_hidden").fetchall(), want[0])
+        bak.close()
+        # DB hỏng: dừng, không xoá, trỏ tới bản sao
+        open(dbf, "wb").write(b"this is not a sqlite database" * 100)
+        garbage = open(dbf, "rb").read()
+        with self.assertRaises(SystemExit) as cm:
+            self.run_cli("--rebuild")
+        self.assertIn("index.db.bak-", str(cm.exception))
+        self.assertIn("--discard-owner-state", str(cm.exception))
+        self.assertEqual(open(dbf, "rb").read(), garbage)  # DB cũ chưa bị đụng
+        self.assertTrue(any(open(os.path.join(self.d, f), "rb").read() == garbage for f in baks()))
+        self.run_cli("--rebuild", "--discard-owner-state")  # chủ nhà chấp nhận bỏ trạng thái
+        self.assertEqual(self.hidden_rows(), ([], []))
+        db = sqlite3.connect(dbf)
+        self.assertEqual(db.execute("SELECT count(*) FROM photos").fetchone()[0], 11)
+        db.close()
 
     def test_new_upload_visible_and_table_created_on_old_db(self):
         db = sqlite3.connect(store.db_path(self.d))
