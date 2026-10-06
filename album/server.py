@@ -120,7 +120,7 @@ class ProcessJob:
 
     def _run(self):
         try:
-            db = store.connect(self.data_dir)  # kết nối riêng của luồng này
+            db = store.connect(self.data_dir, init=False)  # kết nối riêng của luồng này (bảng đã tạo lúc khởi động)
             root = store.originals_dir(self.data_dir)
             self.recover(db)
             todo, _ = pending_photos(db, root, self.det_size)
@@ -167,16 +167,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     body_slots = threading.BoundedSemaphore(MAX_BODY_SLOTS)
     quota = {"reserved": 0}
     quota_lock = threading.Lock()
-    _db = store.connect(data_dir)  # lần chạy trước chết giữa lúc xử lý một ảnh → loại ảnh đó ngay khi khởi động
+    _db = store.connect(data_dir)  # tạo bảng một lần ở đây; lần chạy trước chết giữa lúc xử lý một ảnh → loại ảnh đó ngay
     job.recover(_db)
+    stored = {"bytes": _db.execute("SELECT COALESCE(SUM(size),0) FROM originals").fetchone()[0]}  # tổng ảnh gốc, giữ trong RAM
     _db.close()
 
     def stored_bytes():
-        db = store.connect(data_dir)
-        try:
-            return db.execute("SELECT COALESCE(SUM(size),0) FROM originals").fetchone()[0]
-        finally:
-            db.close()
+        return stored["bytes"]
 
     class Busy(Exception):
         pass
@@ -270,7 +267,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     @app.get("/api/stats")
     def stats():
         _, rows, photos = index()
-        db = store.connect(data_dir)
+        db = store.connect(data_dir, init=False)
         try:
             todo, _ = pending_photos(db, store.originals_dir(data_dir), det_size)
             n_orig = len(find_photos(store.originals_dir(data_dir)))
@@ -345,7 +342,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         if w * hgt > UPLOAD_MAX_PIXELS:
             raise HTTPException(413, "Ảnh có quá nhiều điểm ảnh")
         with upload_lock:
-            db = store.connect(data_dir)
+            db = store.connect(data_dir, init=False)
             try:
                 dup = db.execute("SELECT name FROM originals WHERE sha256=?", (digest,)).fetchone()
                 if dup:
@@ -361,6 +358,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 os.replace(part, os.path.join(root, final))
                 db.execute("INSERT INTO originals VALUES (?,?,?)", (final, digest, size))
                 db.commit()
+                stored["bytes"] += size
             finally:
                 db.close()
         return dict(status="ok", name=final, renamed=final != fname, width=w, height=hgt)

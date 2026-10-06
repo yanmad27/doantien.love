@@ -49,10 +49,13 @@ def originals_dir(data_dir):
     return os.path.join(data_dir, "originals")
 
 
-def connect(data_dir):
+def connect(data_dir, init=True):
+    """init=False: bỏ qua tạo bảng (mở kết nối mỗi request không nên chạy executescript — chồng chéo với
+    giao dịch của kết nối khác dễ gây 'disk I/O error' của SQLite)."""
     os.makedirs(thumb_dir(data_dir), exist_ok=True)
     db = sqlite3.connect(db_path(data_dir), timeout=30)
-    db.executescript(SCHEMA)
+    if init:
+        db.executescript(SCHEMA)
     return db
 
 
