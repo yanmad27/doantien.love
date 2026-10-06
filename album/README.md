@@ -25,9 +25,9 @@ DATA_DIR=./data PORT=8000 ALBUM_HOST=0.0.0.0 .venv/bin/python server.py
 - `http://localhost:8000/manage` — trang chủ nhà: kéo thả/chọn nhiều ảnh (mỗi ảnh một request, tiến độ từng ảnh + tổng, trạng thái trùng/lỗi/quá lớn), dung lượng đĩa, nút **Xử lý** kèm tiến độ và số đã xong/lỗi/bị loại.
 - `http://localhost:8000/` — trang khách: "Chụp ảnh selfie" (`capture="user"`) và "Chọn từ thư viện" trên điện thoại, một ô chọn/kéo thả trên máy tính; kết quả là lưới ảnh, bấm ảnh mở lightbox (vuốt/mũi tên/phím, **Lưu ảnh** tải ảnh gốc, nút Chia sẻ khi trình duyệt hỗ trợ Web Share file).
 - Khách **không thấy điểm**. Hai mức cắt là hằng số ở đầu `static/guest.js`: `CONFIDENT_CUT = 0.40` ("Ảnh của bạn") và `MAYBE_CUT = 0.28` ("Có thể cũng là bạn", thu gọn). Chủ nhà xem điểm + thanh trượt ngưỡng ở `/?tune=1` (không có link tới đó từ trang khách).
-- Dữ liệu trong `DATA_DIR`: `originals/` (ảnh gốc), `previews/` (2000 px), `thumbs/` (640 px), `index.db`, `tmp/` (upload dở dang). Khởi động lại với cùng `DATA_DIR` là tìm được ngay, không phải Xử lý lại.
+- Dữ liệu trong `DATA_DIR`: `originals/` (ảnh gốc), `previews/` (2000 px JPEG) + `thumbs/` (640 px JPEG) (bản cũ, dự phòng), `i/` (WebP 240/480/2000 px đặt tên theo nội dung), `index.db`, `tmp/` (upload dở dang). Khởi động lại với cùng `DATA_DIR` là tìm được ngay, không phải Xử lý lại.
 
-**Xử lý:** chạy trong thread nền của chính server (dùng lại model đã nạp), chỉ một job một lúc (bấm lần hai khi đang chạy → 409 "Đang xử lý rồi"), chỉ làm ảnh chưa lập chỉ mục. `GET /api/process` trả tiến độ (done/total, mặt, lỗi, thời gian). Ảnh lỗi chỉ báo lỗi, không dừng job. Tìm kiếm trong lúc xử lý vẫn chạy (chậm hơn) và thấy kết quả mới ngay khi mỗi ảnh xong.
+**Xử lý:** chạy trong thread nền của chính server (dùng lại model đã nạp), chỉ một job một lúc (bấm lần hai khi đang chạy → 409 "Đang xử lý rồi"), làm ảnh chưa lập chỉ mục (giai đoạn `index`: dò mặt) rồi sinh WebP + metadata cho ảnh còn thiếu (giai đoạn `derive`: **không dò mặt**, ảnh đã lập chỉ mục từ bản cũ cũng được bù ở đây; lỗi chỉ ghi log, không bao giờ chuyển ảnh sang `rejected/`). `GET /api/process` trả tiến độ (`phase`: `index`/`derive`/null, done/total của giai đoạn hiện tại, mặt, lỗi, `derive_failed`, thời gian). Ảnh lỗi chỉ báo lỗi, không dừng job. Tìm kiếm trong lúc xử lý vẫn chạy (chậm hơn) và thấy kết quả mới ngay khi mỗi ảnh xong.
 
 Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/python index_photos.py --photos <thư mục ảnh> --data-dir <DATA_DIR>`; ghi cả thumbnail và bản xem, nhưng dùng thư mục ảnh riêng (không phải `originals/`) thì không hiện nút tải ảnh gốc trên web khi `originals/` không chứa ảnh đó.
 
@@ -36,6 +36,16 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 ```sh
 .venv/bin/python measure.py --photos <thư mục/file ảnh, nên kèm 1 ảnh 20–45 MP> --queries <selfie...> [--env ALBUM_LOW_MEM=1]
 ```
+
+## Trang công khai (gallery) + CDN
+
+- `GET /api/gallery`: manifest gọn `{mv, cdn, dv, photos:[[id,w,h,t,v,c,name],…]}` (gzip, ETag/304, `max-age=60`; không có mặt/embedding). `t` = giờ chụp (EXIF DateTimeOriginal + SubSec, epoch giây; giờ trên ảnh coi như UTC, chỉ để sắp xếp), `v` = mã nội dung 8 hex (`sha256(gốc)[:6]` + `DERIV_VERSION` 2 hex), `c` = màu chủ đạo. Thứ tự: có `t` trước, rồi `t`, rồi tên. Dữ liệu ở bảng riêng `photo_meta` (không đụng bảng `photos`, nên quay về bản cũ vẫn chạy).
+- `GET /i/{id}-{v}-{240|480|2000}.webp`: WebP (q78, sRGB theo ICC nhúng, đã xoay EXIF), `public, max-age=31536000, immutable`. Sai id/`v`/cỡ → 404 `no-store`. Đổi ảnh gốc hoặc `DERIV_VERSION` (`indexer.py`) → `v` đổi → URL mới.
+- Ảnh gốc luôn cùng origin: `/originals/{id}` (attachment). `/thumbs`, `/previews` là bản JPEG cũ (`public, max-age=3600`) cho ảnh chưa có WebP.
+- **Chặn theo Host:** chỉ host trong `ALBUM_APP_HOSTS` thấy cả app; host khác (tên miền CDN) chỉ GET/HEAD/OPTIONS `/i/`, `/thumbs/`, `/previews/`, `/static/`, `/healthz`, `/robots.txt`, còn lại 404 `no-store` (chạy trước khi đọc body).
+- **Mã chủ nhà tuỳ chọn:** đặt `ALBUM_ADMIN_TOKEN` thì `POST /api/upload` và `POST /api/process` cần header `X-Album-Token` hoặc cookie `album_token` (sai → 401); trang `/manage`, `GET /api/process`, `/api/stats` vẫn mở. Chưa đặt = mở như trước.
+- `ALBUM_CDN_ORIGIN` điền vào `cdn` của manifest (và `<link rel=preconnect>` thay cho `<!--__CDN_PRECONNECT__-->` trong HTML); để trống = cùng origin (công tắc tắt CDN).
+- Kiểm: `.venv/bin/python -m unittest discover -s dev -p 'test_*.py'` (test migration cần model + `/tmp/album-test/photos`, tự bỏ qua nếu thiếu).
 
 ## Cấu hình (biến môi trường hoặc tham số dòng lệnh)
 
@@ -50,6 +60,10 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 | `ALBUM_INDEX_WINDOW` | — | `1` (tuần tự; `2` = giải mã trước một ảnh, nhanh hơn nhưng tốn RAM) |
 | `ALBUM_THREADS` | `--threads` | `0` (theo số lõi; container đặt `2`) |
 | `ALBUM_LOW_MEM` | — | chưa đặt; `1` = tắt arena onnxruntime (RAM đỉnh thấp hơn; container đặt sẵn) |
+| `ALBUM_APP_HOSTS` | — | `album.doantien.love,localhost,127.0.0.1` (host được dùng cả app) |
+| `ALBUM_CDN_ORIGIN` | — | trống = cùng origin; vd. `https://img.rsrm.dev` |
+| `ALBUM_ADMIN_TOKEN` | — | trống = không cần mã |
+| `ALBUM_DERIVE_WORKERS` | — | `2` (số ảnh sinh WebP cùng lúc) |
 | `ALBUM_DET_SIZE` | `index_photos.py --det-size` | `1600` |
 | `ALBUM_PROVIDERS` | `--providers` | `CPUExecutionProvider` |
 
@@ -66,7 +80,7 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 
 - CLI quét đệ quy `--photos` (jpg/png/webp/bmp/tif); web quét `DATA_DIR/originals/`, áp EXIF orientation, dò **mọi** khuôn mặt
   (ảnh nhóm cũng vậy), lưu embedding 512-d (float16) + bbox + điểm dò vào `data/index.db`
-  , thumbnail 640 px vào `thumbs/` và bản xem 2000 px vào `previews/`.
+  , thumbnail 640 px vào `thumbs/` và bản xem 2000 px vào `previews/`; sau đó (CLI cũng vậy, tắt bằng `--no-derive`) WebP 240/480/2000 vào `i/` + `photo_meta`.
 - **Chạy lại được, theo kiểu tăng dần:** ảnh không đổi (cùng đường dẫn + kích thước + mtime +
   det-size) bị bỏ qua. `--prune` xoá ảnh đã biến mất khỏi thư mục; `--rebuild` làm lại từ đầu.
   Một `--data-dir` ứng với đúng một thư mục ảnh.

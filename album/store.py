@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS failed (  -- ảnh không xử lý được: không t
   path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, reason TEXT);
 CREATE TABLE IF NOT EXISTS originals (  -- ảnh gốc tải lên qua web: tên đã chuẩn hoá + SHA-256 để chống trùng
   name TEXT PRIMARY KEY, sha256 TEXT UNIQUE, size INTEGER);
+CREATE TABLE IF NOT EXISTS photo_meta (  -- bảng riêng (không thêm cột vào photos: INSERT positional của indexer + rollback về bản cũ)
+  id TEXT PRIMARY KEY, taken REAL, v TEXT, color TEXT, deriv_ver INTEGER, w INTEGER, h INTEGER,
+  size INTEGER, mtime_ns INTEGER);  -- size/mtime_ns của file gốc lúc tạo: đổi file thì tạo lại
 """
 
 
@@ -39,6 +42,11 @@ def thumb_dir(data_dir):
 
 def preview_dir(data_dir):
     return os.path.join(data_dir, "previews")
+
+
+def deriv_dir(data_dir):
+    """WebP đặt tên theo nội dung: {id}-{v}-{size}.webp"""
+    return os.path.join(data_dir, "i")
 
 
 def rejected_dir(data_dir):

@@ -3,24 +3,39 @@
 Với mỗi ảnh: giải mã, dò mọi khuôn mặt, nhúng, ghi vào SQLite, làm thumbnail 640 px và
 bản xem 2000 px. Mỗi ảnh một giao dịch, ảnh hỏng chỉ bị báo lỗi chứ không dừng cả lượt.
 """
+import calendar
+import hashlib
+import io
 import json
+import logging
 import os
 import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageCms, features
 
 import store
-from faces import load_image
+from faces import ImageTooLarge, load_image
 
+log = logging.getLogger("album")
 EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 THUMB_SIDE = 640
 PREVIEW_SIDE = 2000
 DEFAULT_MIN_FACE = 40
 DEFAULT_DET_SIZE = 1600
+
+# --- bộ WebP cho trang công khai (xem derive_one) ---
+DERIV_VERSION = 1       # đổi khi đổi cách sinh WebP (cỡ, chất lượng, màu): v đổi theo → URL mới, CDN không giữ bản cũ
+THUMB_WIDTHS = (240, 480)  # bề rộng điểm ảnh của thumb (srcset)
+WEBP_PREVIEW_SIDE = 2000   # cạnh dài của bản xem
+WEBP_SIZES = THUMB_WIDTHS + (WEBP_PREVIEW_SIDE,)
+WEBP_QUALITY = 78
+WEBP_METHOD = 4            # 0..6; 4 là mặc định, 6 chậm gấp ~2 mà chỉ nhỏ hơn vài %
+DERIVE_MAX_PIXELS = 200_000_000
 
 
 def find_photos(root):
@@ -231,4 +246,182 @@ def index_photos(db, engine, root, data_dir, todo, det_size=DEFAULT_DET_SIZE, mi
                 win.append(submit(todo[nxt]))
                 nxt += 1
     st["wall"] = time.perf_counter() - wall0
+    return st
+
+
+# ---------------------------------------------------------------------------------------------
+# WebP cho trang công khai + metadata (photo_meta). Không dò mặt, không chạm decoding.json/failed.
+# ---------------------------------------------------------------------------------------------
+_TRANSPOSE = {2: Image.FLIP_LEFT_RIGHT, 3: Image.ROTATE_180, 4: Image.FLIP_TOP_BOTTOM, 5: Image.TRANSPOSE,
+              6: Image.ROTATE_270, 7: Image.TRANSVERSE, 8: Image.ROTATE_90}
+
+
+def require_webp():
+    """Pillow phải có libwebp + littlecms: thiếu thì dừng ngay lúc khởi động, không để mọi ảnh lỗi âm thầm."""
+    for f in ("webp", "littlecms2"):
+        if not features.check(f):
+            raise RuntimeError(f"Pillow thiếu hỗ trợ {f} — cần bản wheel chính thức (pillow=={Image.__version__})")
+
+
+def content_version(sha256_hex):
+    """v (8 hex) = 6 hex đầu SHA-256 của file gốc + 2 hex của DERIV_VERSION: đổi file hoặc đổi cách sinh đều đổi v."""
+    return sha256_hex[:6] + format(DERIV_VERSION & 0xFF, "02x")
+
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for c in iter(lambda: fh.read(1 << 20), b""):
+            h.update(c)
+    return h.hexdigest()
+
+
+def exif_taken(im):
+    """DateTimeOriginal + SubSecTimeOriginal → giây epoch (giờ trên ảnh coi như UTC, chỉ để sắp xếp); thiếu/hỏng → None."""
+    try:
+        sub = im.getexif().get_ifd(0x8769)
+        raw = sub.get(0x9003)
+        if isinstance(raw, bytes):
+            raw = raw.decode("ascii", "ignore")
+        t = calendar.timegm(datetime.strptime(raw.strip("\x00 "), "%Y:%m:%d %H:%M:%S").timetuple())
+        frac = sub.get(0x9291)
+        if isinstance(frac, bytes):
+            frac = frac.decode("ascii", "ignore")
+        frac = str(frac or "").strip("\x00 ")
+        return t + (float("0." + frac) if frac.isdigit() else 0.0)
+    except Exception:
+        return None
+
+
+_SRGB = {}
+
+
+def to_srgb(im):
+    """Về RGB sRGB, theo profile ICC nhúng (Display-P3, Adobe RGB, CMYK…) để ảnh không bị nhạt màu; không profile = coi như sRGB."""
+    icc = im.info.get("icc_profile")
+    if icc and im.mode in ("RGB", "CMYK"):
+        try:
+            src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+            if "sRGB" not in (ImageCms.getProfileDescription(src) or ""):
+                dst = _SRGB.get("p") or _SRGB.setdefault("p", ImageCms.createProfile("sRGB"))
+                return ImageCms.profileToProfile(im, src, dst, outputMode="RGB")
+        except Exception:
+            pass  # profile hỏng: coi như sRGB
+    return im if im.mode == "RGB" else im.convert("RGB")
+
+
+def derive_one(path, data_dir, pid, sha, max_pixels=DERIVE_MAX_PIXELS):
+    """Giải mã MỘT lần (JPEG/MPO dùng draft: giải mã thu nhỏ 1/2,1/4,1/8 rất nhanh), xoay EXIF, sang sRGB, ghi
+    {pid}-{v}-{240,480,2000}.webp vào deriv_dir. Trả dict(v, taken, color, w, h) (w,h = kích thước hiển thị đầy đủ, sau xoay).
+    Ghi từng file qua .part + rename; chưa chạm DB."""
+    v = content_version(sha)
+    with Image.open(path) as im:
+        w0, h0 = im.size
+        if max_pixels and w0 * h0 > max_pixels:
+            raise ImageTooLarge(f"{w0}x{h0}")
+        taken = exif_taken(im)
+        if im.mode.startswith(("I", "F")):  # xám 16-bit…: dùng đường chung của faces.load_image (chuẩn hoá về 8-bit, đã xoay)
+            prev = Image.fromarray(load_image(path, max_pixels))
+            dims = prev.size
+            sc = min(1.0, WEBP_PREVIEW_SIDE / max(dims))
+            if sc < 1:
+                prev = prev.resize((max(1, round(dims[0] * sc)), max(1, round(dims[1] * sc))), Image.LANCZOS)
+            return _write_set(prev, data_dir, pid, v, taken, dims)
+        orient = im.getexif().get(0x0112, 1)
+        sc = min(1.0, WEBP_PREVIEW_SIDE / max(w0, h0))
+        pw, ph = max(1, round(w0 * sc)), max(1, round(h0 * sc))
+        if im.format in ("JPEG", "MPO") and sc < 1 and im.mode in ("RGB", "L"):
+            im.draft(im.mode, (pw, ph))  # giữ ≥ cỡ yêu cầu theo cả hai chiều
+        im.load()
+        small = im if im.size == (pw, ph) else im.resize((pw, ph), Image.LANCZOS, reducing_gap=3.0)
+        prev = to_srgb(small)
+        if orient in _TRANSPOSE:
+            prev = prev.transpose(_TRANSPOSE[orient])
+    dims = (h0, w0) if orient in (5, 6, 7, 8) else (w0, h0)
+    return _write_set(prev, data_dir, pid, v, taken, dims)
+
+
+def _write_set(prev, data_dir, pid, v, taken, dims):
+    d = store.deriv_dir(data_dir)
+    os.makedirs(d, exist_ok=True)
+
+    def save(img, size):
+        out = os.path.join(d, f"{pid}-{v}-{size}.webp")
+        img.save(out + ".part", "WEBP", quality=WEBP_QUALITY, method=WEBP_METHOD)
+        os.replace(out + ".part", out)
+
+    save(prev, WEBP_PREVIEW_SIDE)
+    pw, ph = prev.size
+    src, thumbs = prev, {}
+    for tw in sorted(THUMB_WIDTHS, reverse=True):  # 480 từ bản xem, 240 từ 480
+        if tw < src.size[0]:
+            src = src.resize((tw, max(1, round(ph * tw / pw))), Image.LANCZOS)
+        thumbs[tw] = src  # ảnh gốc hẹp hơn tw: giữ nguyên, không phóng to
+        save(src, tw)
+    r, g, b = thumbs[min(THUMB_WIDTHS)].resize((1, 1), Image.BOX).getpixel((0, 0))
+    return dict(v=v, taken=taken, color=f"#{r:02x}{g:02x}{b:02x}", w=dims[0], h=dims[1])
+
+
+def pending_derive(db):
+    """Ảnh đã lập chỉ mục mà chưa có photo_meta hợp lệ: thiếu, khác DERIV_VERSION, hoặc file gốc đã đổi từ lúc sinh."""
+    return db.execute(
+        "SELECT p.id, p.path, p.size, p.mtime_ns FROM photos p LEFT JOIN photo_meta m ON m.id=p.id "
+        "WHERE m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns ORDER BY p.path",
+        (DERIV_VERSION,)).fetchall()
+
+
+def drop_stale_derivatives(data_dir, pid, keep_v=None):
+    d = store.deriv_dir(data_dir)
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        if n.startswith(pid + "-") and (keep_v is None or not n.startswith(f"{pid}-{keep_v}-")):
+            try:
+                os.remove(os.path.join(d, n))
+            except OSError:
+                pass
+
+
+def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, on_progress=None, should_stop=None):
+    """Sinh WebP + photo_meta cho ảnh còn thiếu (ảnh mới và ảnh đã lập chỉ mục từ bản cũ). KHÔNG dò mặt, KHÔNG đánh dấu
+    failed/decoding.json: lỗi chỉ được ghi log + đếm, ảnh giữ nguyên (v=null → giao diện dùng thumb cũ).
+    Bộ nhớ chặn: tối đa `workers` ảnh cùng lúc. `db` tạo ở luồng gọi. on_progress(i, n, rel, err). Trả dict(ok, bad, wall)."""
+    todo = pending_derive(db)
+    known = {r[0]: (r[1], r[2]) for r in db.execute("SELECT name, sha256, size FROM originals")}
+    st = dict(ok=0, bad=0, total=len(todo), wall=0.0)
+    t0 = time.perf_counter()
+
+    def job(row):
+        pid, rel, size, _ = row
+        try:
+            path = os.path.join(root, rel)
+            k = known.get(rel)
+            sha = k[0] if k and k[1] == size and k[0] else file_sha256(path)  # upload web đã có SHA-256 trong DB
+            return row, derive_one(path, data_dir, pid, sha, max_pixels), None
+        except Exception as e:
+            return row, None, e
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        win, nxt = deque(), 0
+        for i in range(1, len(todo) + 1):
+            while nxt < len(todo) and len(win) < workers:
+                win.append(pool.submit(job, todo[nxt]))
+                nxt += 1
+            if should_stop and should_stop():
+                break
+            (pid, rel, size, mtime_ns), m, err = win.popleft().result()
+            if err is None:
+                db.execute("INSERT OR REPLACE INTO photo_meta VALUES (?,?,?,?,?,?,?,?,?)",
+                           (pid, m["taken"], m["v"], m["color"], DERIV_VERSION, m["w"], m["h"], size, mtime_ns))
+                db.commit()
+                drop_stale_derivatives(data_dir, pid, m["v"])
+                st["ok"] += 1
+            else:
+                log.warning("WebP bỏ qua %s: %s: %s", rel, type(err).__name__, err)
+                st["bad"] += 1
+            if on_progress:
+                on_progress(i, len(todo), rel, err)
+    st["wall"] = time.perf_counter() - t0
     return st

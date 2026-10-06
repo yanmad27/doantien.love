@@ -1,15 +1,24 @@
 """Web app album.doantien.love (không mật khẩu): tải ảnh lên → nút "Xử lý" lập chỉ mục
 nền → khách tải selfie lên và tìm ảnh có mặt mình.
 
-Mọi thứ bền vững nằm trong DATA_DIR (ảnh gốc, thumbnail, bản xem, index.db). Selfie chỉ nằm
+Mọi thứ bền vững nằm trong DATA_DIR (ảnh gốc, thumbnail, bản xem, WebP, index.db). Selfie chỉ nằm
 trong RAM: gửi dạng body thô (không multipart nên không có file tạm), xử lý xong là bỏ.
+
+Trang công khai: `GET /api/gallery` (manifest gọn, không có mặt/embedding) + `/i/{id}-{v}-{size}.webp` đặt tên theo nội dung
+(CDN cache vô hạn). Host ngoài ALBUM_APP_HOSTS (vd. tên miền CDN) chỉ lấy được file ảnh/tĩnh — xem HostGate.
 """
 import argparse
+import gzip
 import hashlib
+import hmac
+import html as htmllib
+import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -19,15 +28,20 @@ import uuid
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
-from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, mark_failed, pending_photos,
-                     recover_crashed, restore_rejected, CRASH_REASON)
+from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, DERIV_VERSION, WEBP_SIZES, CRASH_REASON, derive_pending,
+                     find_photos, index_photos, mark_failed, pending_derive, pending_photos, recover_crashed,
+                     require_webp, restore_rejected)
+
+# Container (python:slim) không có /etc/mime.types: .webp/.woff2 sẽ thành text/plain, cùng nosniff → trình duyệt chặn ảnh chéo origin (ORB).
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("font/woff2", ".woff2")
 
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +57,13 @@ MAX_SEARCH_SLOTS = 2      # số truy vấn selfie tính toán cùng lúc (mỗi
 MAX_BODY_SLOTS = 8        # số body selfie đang nhận cùng lúc (mỗi cái ≤ 25 MB)
 DISK_CHECK_EVERY = 8 * 1024 * 1024
 PHOTO_ID = re.compile(r"^[0-9a-f]{16}$")
+DERIVE_WORKERS = int(os.environ.get("ALBUM_DERIVE_WORKERS", 2))  # số ảnh sinh WebP cùng lúc (JPEG giải mã thu nhỏ nên nhẹ RAM)
+DEFAULT_APP_HOSTS = "album.doantien.love,localhost,127.0.0.1"
+PUBLIC_PREFIXES = ("/i/", "/thumbs/", "/previews/", "/static/")  # host ngoài (CDN) chỉ được GET/HEAD/OPTIONS các đường này
+PUBLIC_EXACT = ("/healthz", "/robots.txt")
+WEBP_NAME = re.compile(r"^([0-9a-f]{16})-([0-9a-f]{8})-(\d+)\.webp$")
+IMMUTABLE = "public, max-age=31536000, immutable"
+LEGACY_CACHE = "public, max-age=3600"  # /thumbs, /previews không đặt tên theo nội dung → chỉ cache ngắn
 INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
 
 
@@ -75,14 +96,16 @@ def static_version():
     return _ver["v"]
 
 
-def static_page(name):
+def static_page(name, cdn=""):
     with open(os.path.join(HERE, "static", name), encoding="utf-8") as fh:
         html = fh.read().replace("__V__", static_version())
+    if cdn:
+        html = html.replace("<!--__CDN_PRECONNECT__-->", f'<link rel="preconnect" href="{htmllib.escape(cdn, quote=True)}">')
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 class NoIndexMiddleware:
-    """Mọi response mang X-Robots-Tag: noindex + vài header an toàn cơ bản."""
+    """Mọi response mang X-Robots-Tag: noindex + vài header an toàn cơ bản; lỗi (>=400) không bao giờ cacheable."""
 
     def __init__(self, app):
         self.app = app
@@ -90,11 +113,57 @@ class NoIndexMiddleware:
     async def __call__(self, scope, receive, send):
         async def send2(msg):
             if msg["type"] == "http.response.start":
-                msg.setdefault("headers", []).extend([
-                    (b"x-robots-tag", b"noindex, nofollow"), (b"x-content-type-options", b"nosniff"),
-                    (b"referrer-policy", b"no-referrer")])
+                hs = msg.setdefault("headers", [])
+                hs.extend([(b"x-robots-tag", b"noindex, nofollow"), (b"x-content-type-options", b"nosniff"),
+                           (b"referrer-policy", b"no-referrer")])
+                if msg["status"] >= 400:
+                    msg["headers"] = [h for h in hs if h[0].lower() != b"cache-control"] + [(b"cache-control", b"no-store")]
             await send(msg)
         await self.app(scope, receive, send2 if scope["type"] == "http" else send)
+
+
+def host_of(scope):
+    """Tên host (không cổng, chữ thường) từ header Host; không có → ''."""
+    for k, v in scope.get("headers", ()):
+        if k == b"host":
+            h = v.decode("latin-1").strip().lower()
+            if h.startswith("["):  # IPv6 [::1]:8000
+                return h[:h.find("]") + 1] if "]" in h else h
+            return h.rsplit(":", 1)[0] if ":" in h else h
+    return ""
+
+
+class HostGate:
+    """Mặc định chặn: chỉ host trong ALBUM_APP_HOSTS thấy toàn bộ app. Host khác (tên miền CDN trỏ vào cùng container)
+    chỉ GET/HEAD/OPTIONS ảnh + file tĩnh + /healthz + /robots.txt; mọi thứ còn lại 404 no-store — chạy trước khi đọc body,
+    nên selfie/upload không bao giờ đi qua CDN. Đường công khai thêm Access-Control-Allow-Origin: * (ảnh/font cho trang ở host khác)."""
+
+    def __init__(self, app, app_hosts):
+        self.app, self.app_hosts = app, frozenset(app_hosts)
+
+    def allowed(self, scope):
+        if host_of(scope) in self.app_hosts:
+            return True
+        path = scope["path"]
+        return scope["method"] in ("GET", "HEAD", "OPTIONS") and (path in PUBLIC_EXACT or path.startswith(PUBLIC_PREFIXES))
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            return await self.app(scope, receive, send)
+        if scope["type"] != "http":  # websocket… app không dùng
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        if not self.allowed(scope):
+            await JSONResponse({"detail": "Not Found"}, status_code=404, headers={"Cache-Control": "no-store"})(scope, receive, send)
+            return
+        if scope["path"].startswith(PUBLIC_PREFIXES):
+            async def send2(msg):
+                if msg["type"] == "http.response.start":
+                    msg.setdefault("headers", []).append((b"access-control-allow-origin", b"*"))
+                await send(msg)
+            return await self.app(scope, receive, send2)
+        await self.app(scope, receive, send)
 
 
 def safe_name(raw):
@@ -116,8 +185,9 @@ class ProcessJob:
     def __init__(self, data_dir, engine, det_size, min_face):
         self.data_dir, self.engine, self.det_size, self.min_face = data_dir, engine, det_size, min_face
         self.lock = threading.Lock()
-        self.s = dict(state="idle", total=0, done=0, failed=0, faces=0, current=None, errors=[], rejected=[],
-                      started_at=None, finished_at=None, elapsed=0.0)
+        self.thread = None
+        self.s = dict(state="idle", phase=None, total=0, done=0, failed=0, derive_failed=0, faces=0, current=None,
+                      errors=[], rejected=[], started_at=None, finished_at=None, elapsed=0.0)
 
     def status(self):
         with self.lock:
@@ -131,9 +201,10 @@ class ProcessJob:
         with self.lock:
             if self.s["state"] == "running":
                 return False
-            self.s = dict(state="running", total=0, done=0, failed=0, faces=0, current=None, errors=[],
-                          rejected=self.s["rejected"], started_at=time.time(), finished_at=None, elapsed=0.0)
-        threading.Thread(target=self._run, daemon=True, name="process").start()
+            self.s = dict(state="running", phase="index", total=0, done=0, failed=0, derive_failed=0, faces=0, current=None,
+                          errors=[], rejected=self.s["rejected"], started_at=time.time(), finished_at=None, elapsed=0.0)
+        self.thread = threading.Thread(target=self._run, daemon=True, name="process")
+        self.thread.start()
         return True
 
     def _clean(self, e):
@@ -174,25 +245,49 @@ class ProcessJob:
 
             index_photos(db, self.engine, root, self.data_dir, todo, self.det_size, self.min_face,
                          window=INDEX_WINDOW, workers=1, max_pixels=UPLOAD_MAX_PIXELS, on_progress=progress)
+            # Giai đoạn 2: WebP + metadata cho ảnh mới và ảnh đã lập chỉ mục từ bản cũ. Không dò mặt, không động tới decoding.json.
+            self._upd(phase="derive", total=len(pending_derive(db)), done=0, current=None)
+
+            def dprogress(i, n, rel, err):
+                with self.lock:
+                    self.s["done"] = i
+                    self.s["current"] = rel
+                    if err is not None:
+                        self.s["derive_failed"] += 1
+                        self.s["errors"] = (self.s["errors"] + [f"WebP {rel}: {self._clean(err)}"])[-20:]
+
+            derive_pending(db, root, self.data_dir, workers=DERIVE_WORKERS, max_pixels=UPLOAD_MAX_PIXELS, on_progress=dprogress)
             db.close()
             now = time.time()
-            self._upd(state="done", current=None, finished_at=now, elapsed=now - self.s["started_at"])
+            self._upd(state="done", phase=None, current=None, finished_at=now, elapsed=now - self.s["started_at"])
         except Exception as e:
             log.exception("xử lý lỗi")
-            self._upd(state="error", current=None, finished_at=time.time(), elapsed=time.time() - self.s["started_at"],
+            self._upd(state="error", phase=None, current=None, finished_at=time.time(), elapsed=time.time() - self.s["started_at"],
                       errors=self.s["errors"] + [f"Lỗi chung: {self._clean(e)}"])
 
 
 def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                max_upload=60 * 1024 * 1024, det_size=DEFAULT_DET_SIZE, min_free=5120 * 1024 * 1024,
-               max_total=20 * 1024 ** 3):
+               max_total=20 * 1024 ** 3, app_hosts=None, cdn_origin=None, admin_token=None):
+    require_webp()
+    if app_hosts is None:
+        app_hosts = env("ALBUM_APP_HOSTS", default=DEFAULT_APP_HOSTS)
+    app_hosts = [h.strip().lower() for h in (app_hosts.split(",") if isinstance(app_hosts, str) else app_hosts) if h.strip()]
+    cdn = (env("ALBUM_CDN_ORIGIN", default="") if cdn_origin is None else cdn_origin).strip().rstrip("/")
+    if cdn and not re.match(r"^https?://[^/\s]+$", cdn):
+        log.error("ALBUM_CDN_ORIGIN=%r không phải origin hợp lệ (cần http(s)://host) — bỏ qua, dùng cùng origin", cdn)
+        cdn = ""
+    token = env("ALBUM_ADMIN_TOKEN", default="") if admin_token is None else admin_token
     app = FastAPI(title="Tìm ảnh cưới", docs_url=None, redoc_url=None, openapi_url=None)  # docs mặc định nạp JS từ CDN
     for d in (store.originals_dir(data_dir), store.thumb_dir(data_dir), store.preview_dir(data_dir),
               os.path.join(data_dir, "tmp")):
         os.makedirs(d, exist_ok=True)
     engine = FaceEngine(model_dir, providers=providers, threads=threads)
     job = ProcessJob(data_dir, engine, det_size, DEFAULT_MIN_FACE)
-    cache = {"mtime": None, "E": None, "rows": None, "photos": None}
+    app.state.job = job  # cho test: job.thread.join()
+    cache = {"mtime": None, "sig": None, "E": None, "rows": None, "photos": None}
+    gal = {"mtime": None, "meta": {}, "raw": b"", "gz": b"", "mv": ""}
+    glock = threading.Lock()
     lock = threading.Lock()
     upload_lock = threading.Lock()
     tmp_dir = os.path.join(data_dir, "tmp")
@@ -223,14 +318,52 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         finally:
             search_slots.release()
 
-    def index():
+    def db_mtime():
         p = store.db_path(data_dir)
-        m = os.stat(p).st_mtime_ns if os.path.exists(p) else None
+        return os.stat(p).st_mtime_ns if os.path.exists(p) else None
+
+    def faces_sig():
+        """Chữ ký phần ảnh/khuôn mặt của chỉ mục: ghi photo_meta (sinh WebP) làm đổi mtime của DB nhưng không đổi chữ ký
+        này, nên tìm kiếm không phải nạp lại ma trận embedding sau mỗi ảnh khi backfill."""
+        db = sqlite3.connect(f"file:{store.db_path(data_dir)}?mode=ro", uri=True, timeout=30)
+        try:
+            return (db.execute("SELECT count(*), total(mtime_ns), total(det_size), total(n_faces), total(width) FROM photos").fetchone(),
+                    db.execute("SELECT count(*) FROM faces").fetchone())
+        finally:
+            db.close()
+
+    def index():
+        m = db_mtime()
         with lock:
             if cache["mtime"] != m or cache["E"] is None:
-                cache["E"], cache["rows"], cache["photos"] = store.load_matrix(data_dir)
+                sig = faces_sig() if m is not None else None
+                if cache["E"] is None or sig is None or sig != cache["sig"]:
+                    cache["E"], cache["rows"], cache["photos"] = store.load_matrix(data_dir)
+                    cache["sig"] = sig
                 cache["mtime"] = m
             return cache["E"], cache["rows"], cache["photos"]
+
+    def gallery_state():
+        """Manifest + bảng meta trong RAM, dựng lại khi DB đổi (đọc mtime TRƯỚC khi truy vấn: ghi chen vào thì lần sau dựng lại)."""
+        m = db_mtime()
+        with glock:
+            if gal["mtime"] != m or not gal["raw"]:
+                meta, rows = {}, []
+                if m is not None:
+                    db = sqlite3.connect(f"file:{store.db_path(data_dir)}?mode=ro", uri=True, timeout=30)
+                    try:
+                        q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path "
+                             "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id ORDER BY m.taken IS NULL, m.taken, p.path")
+                        for pid, w, h, t, v, c, name in db.execute(q):
+                            rows.append([pid, w, h, None if t is None else round(t, 3), v, c, name])
+                            meta[pid] = (v, c)
+                    finally:
+                        db.close()
+                photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+                mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
+                raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"photos":{photos_json}}}').encode()
+                gal.update(mtime=m, meta=meta, raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
+            return gal
 
     def search(body):
         t0 = time.perf_counter()
@@ -254,13 +387,15 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             pid = rows[i]["photo_id"]
             if pid not in best or sims[i] > sims[best[pid]]:
                 best[pid] = i
+        meta = gallery_state()["meta"]
         res = []
         ranked = sorted(best.items(), key=lambda kv: -sims[kv[1]])
         for pid, i in ranked[:MAX_RESULTS]:
             ph = photos[pid]
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", preview=f"previews/{pid}.jpg", width=ph["width"], height=ph["height"],
-                            n_faces=ph["n_faces"], bbox=[round(v, 1) for v in rows[i]["bbox"]]))
+                            n_faces=ph["n_faces"], bbox=[round(v, 1) for v in rows[i]["bbox"]],
+                            v=meta.get(pid, (None, None))[0], w=ph["width"], h=ph["height"], c=meta.get(pid, (None, None))[1]))
         t4 = time.perf_counter()
         return dict(
             query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
@@ -269,6 +404,29 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             indexed_photos=len(photos), indexed_faces=len(rows),
             timing_ms=dict(decode=(t1 - t0) * 1e3, detect=(t2 - t1) * 1e3, embed=(t3 - t2) * 1e3,
                            compare=(t4 - t3) * 1e3, total=(t4 - t0) * 1e3))
+
+    def require_admin(request: Request):
+        """ALBUM_ADMIN_TOKEN chưa đặt = mở như cũ. Đặt rồi: header X-Album-Token hoặc cookie album_token, so sánh thời gian hằng."""
+        if not token:
+            return
+        want = token.encode()
+        for got in (request.headers.get("x-album-token"), request.cookies.get("album_token")):
+            if got and hmac.compare_digest(got.encode(), want):
+                return
+        raise HTTPException(401, "Cần mã chủ nhà (X-Album-Token) để thực hiện thao tác này.")
+
+    @app.get("/api/gallery")
+    def api_gallery(request: Request):
+        g = gallery_state()
+        gz = "gzip" in request.headers.get("accept-encoding", "").lower()
+        etag = f'"{g["mv"]}-gz"' if gz else f'"{g["mv"]}"'
+        hdr = {"ETag": etag, "Cache-Control": "public, max-age=60", "Vary": "Accept-Encoding"}
+        inm = [t.strip().removeprefix("W/") for t in request.headers.get("if-none-match", "").split(",")]
+        if etag in inm or "*" in inm:
+            return Response(status_code=304, headers=hdr)
+        if gz:
+            hdr["Content-Encoding"] = "gzip"
+        return Response(g["gz"] if gz else g["raw"], media_type="application/json", headers=hdr)
 
     @app.post("/api/search")
     async def api_search(request: Request):
@@ -307,11 +465,12 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         db = store.connect(data_dir, init=False)
         try:
             todo, _ = pending_photos(db, store.originals_dir(data_dir), det_size)
+            n_derive = len(pending_derive(db))
             n_orig = len(find_photos(store.originals_dir(data_dir)))
         finally:
             db.close()
         du = shutil.disk_usage(data_dir)
-        return dict(photos=len(photos), faces=len(rows), originals=n_orig, pending=len(todo),
+        return dict(photos=len(photos), faces=len(rows), originals=n_orig, pending=len(todo), pending_derive=n_derive,
                     max_upload_mb=max_upload // 2**20, disk_free=du.free, disk_total=du.total,
                     stored_bytes=stored_bytes(), max_total_bytes=max_total)
 
@@ -326,6 +485,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     # ---------- tải ảnh lên: body thô theo từng file, ghi thẳng ra đĩa theo từng mảnh ----------
     @app.post("/api/upload")
     async def api_upload(request: Request, name: str = ""):
+        require_admin(request)
         fname = safe_name(name)
         if fname is None:
             raise HTTPException(400, "Chỉ nhận ảnh .jpg, .jpeg, .png, .webp")
@@ -406,7 +566,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     # ---------- xử lý nền ----------
     @app.post("/api/process")
-    def api_process():
+    def api_process(request: Request):
+        require_admin(request)
         if not job.start():
             return JSONResponse(dict(started=False, message="Đang xử lý rồi — hãy đợi lượt hiện tại xong.",
                                      **job.status()), status_code=409)
@@ -416,24 +577,39 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     def api_process_status():
         return JSONResponse(job.status(), headers={"Cache-Control": "no-store"})
 
-    # ---------- ảnh: thumbnail, bản xem, bản gốc (đều sau đăng nhập, do middleware chặn) ----------
+    # ---------- ảnh: WebP đặt tên theo nội dung, thumbnail/bản xem cũ, bản gốc (host ngoài chỉ lấy được ba nhóm đầu: HostGate) ----------
+    @app.api_route("/i/{fname}", methods=["GET", "HEAD"])
+    def deriv(fname: str):
+        """/i/{id}-{v}-{size}.webp: chỉ 200 khi id tồn tại, v đúng bản hiện tại và size hợp lệ — mọi URL khác 404 (no-store
+        do middleware), nên CDN không bao giờ cache URL đoán mò hay bản cũ."""
+        m = WEBP_NAME.match(fname)
+        if not m or int(m.group(3)) not in WEBP_SIZES:
+            raise HTTPException(404)
+        v = gallery_state()["meta"].get(m.group(1), (None,))[0]
+        if v is None or v != m.group(2):
+            raise HTTPException(404)
+        p = os.path.join(store.deriv_dir(data_dir), fname)
+        if not os.path.exists(p):
+            raise HTTPException(404)
+        return FileResponse(p, media_type="image/webp", headers={"Cache-Control": IMMUTABLE})
+
     def photo_file(folder, pid, ext=".jpg"):
         if not PHOTO_ID.match(pid):
             raise HTTPException(404)
         p = os.path.join(folder, pid + ext)
         if not os.path.exists(p):
             raise HTTPException(404)
-        return FileResponse(p, headers={"Cache-Control": "private, max-age=86400"})
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": LEGACY_CACHE})
 
-    @app.get("/thumbs/{pid}.jpg")
+    @app.api_route("/thumbs/{pid}.jpg", methods=["GET", "HEAD"])
     def thumb(pid: str):
         return photo_file(store.thumb_dir(data_dir), pid)
 
-    @app.get("/previews/{pid}.jpg")
+    @app.api_route("/previews/{pid}.jpg", methods=["GET", "HEAD"])
     def preview(pid: str):
         return photo_file(store.preview_dir(data_dir), pid)
 
-    @app.get("/originals/{pid}")
+    @app.get("/originals/{pid}")  # cùng origin, tải về dạng attachment; không qua CDN
     def original(pid: str):
         _, _, photos = index()
         if pid not in photos:
@@ -443,26 +619,27 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             raise HTTPException(404)
         return FileResponse(path, filename=photos[pid]["path"], headers={"Cache-Control": "private, max-age=86400"})
 
-    @app.get("/healthz")
+    @app.api_route("/healthz", methods=["GET", "HEAD"])
     def healthz():
         du = shutil.disk_usage(data_dir)  # không chứa dữ liệu ảnh; deploy dùng để kiểm đĩa trước khi tải ảnh
         return dict(ok=True, disk_free=du.free, disk_total=du.total)
 
-    @app.get("/robots.txt")
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"])
     def robots():
         return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
     @app.get("/")
     def home():
-        return static_page("index.html")
+        return static_page("index.html", cdn)
 
     @app.get("/manage")
     def manage():
-        return static_page("manage.html")
+        return static_page("manage.html", cdn)
 
     # CSS/JS/font/hoạ tiết của giao diện: chỉ file tĩnh cục bộ, không nạp gì từ ngoài
     app.mount("/static", CachedStatic(directory=os.path.join(HERE, "static")), name="static")
 
+    app.add_middleware(HostGate, app_hosts=app_hosts)  # trong cùng NoIndex: 404 của cổng cũng có header an toàn
     app.add_middleware(NoIndexMiddleware)
     return app
 

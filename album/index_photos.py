@@ -11,7 +11,8 @@ from PIL import Image
 
 import store
 from faces import FaceEngine
-from indexer import DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, find_photos, index_photos, pending_photos
+from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, derive_pending, drop_stale_derivatives, find_photos, index_photos,
+                     pending_photos, require_webp)
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -26,10 +27,12 @@ def main():
                     help="onnxruntime providers, cách nhau dấu phẩy")
     ap.add_argument("--rebuild", action="store_true", help="xoá chỉ mục cũ, làm lại từ đầu")
     ap.add_argument("--prune", action="store_true", help="xoá khỏi chỉ mục ảnh không còn trong thư mục")
+    ap.add_argument("--no-derive", action="store_true", help="không sinh WebP (240/480/2000) + photo_meta sau khi lập chỉ mục")
     ap.add_argument("--limit", type=int, default=0, help="chỉ xử lý N ảnh đầu (thử nghiệm)")
     a = ap.parse_args()
     Image.MAX_IMAGE_PIXELS = None  # ảnh cưới 45 MP+ là ảnh của chủ nhà; chỉ nới ở indexer, không ở server
 
+    require_webp()
     root = os.path.abspath(a.photos)
     if not os.path.isdir(root):
         sys.exit(f"Không thấy thư mục ảnh: {root}")
@@ -56,6 +59,8 @@ def main():
             pid = store.photo_id(rel)
             db.execute("DELETE FROM faces WHERE photo_id=?", (pid,))
             db.execute("DELETE FROM photos WHERE id=?", (pid,))
+            db.execute("DELETE FROM photo_meta WHERE id=?", (pid,))
+            drop_stale_derivatives(a.data_dir, pid)
             for d in (store.thumb_dir(a.data_dir), store.preview_dir(a.data_dir)):
                 tp = os.path.join(d, pid + ".jpg")
                 if os.path.exists(tp):
@@ -74,6 +79,10 @@ def main():
                   f"(giải mã {info['td']:.2f}s, dò {info['tdet']:.2f}s, nhúng {info['temb']:.2f}s)", flush=True)
 
     st = index_photos(db, eng, root, a.data_dir, todo, a.det_size, a.min_face, on_progress=progress)
+    if not a.no_derive:
+        dst = derive_pending(db, root, a.data_dir,
+                             on_progress=lambda i, n, rel, err: print(f"[WebP {i}/{n}] {rel}" + (f" LỖI: {err}" if err else ""), flush=True))
+        print(f"WebP: {dst['ok']} ảnh ({dst['bad']} lỗi) trong {dst['wall']:.1f}s")
     n_ok, n_bad, n_faces, wall = st["ok"], st["bad"], st["faces"], st["wall"]
     db.commit()
     total_photos, total_faces = db.execute("SELECT COUNT(*), COALESCE(SUM(n_faces),0) FROM photos").fetchone()

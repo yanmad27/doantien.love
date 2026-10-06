@@ -1,6 +1,6 @@
 # Triển khai album.doantien.love lên Dokploy
 
-Ứng dụng **không có mật khẩu** (quyết định của chủ dự án): ai biết URL đều tải ảnh lên, bấm Xử lý và tìm ảnh được. Đã có các chặn lạm dụng cơ bản (chỉ nhận ảnh, giới hạn dung lượng file, một job Xử lý một lúc, chặn khi ổ đĩa gần đầy, `noindex`) — xem README. Đừng đưa URL ra công khai khi chưa muốn.
+Ứng dụng **mặc định không có mật khẩu** (quyết định của chủ dự án): ai biết URL đều tải ảnh lên, bấm Xử lý và tìm ảnh được. Muốn khoá riêng việc tải lên/Xử lý: đặt `ALBUM_ADMIN_TOKEN` (mục 2). Đã có các chặn lạm dụng cơ bản (chỉ nhận ảnh, giới hạn dung lượng file, một job Xử lý một lúc, chặn khi ổ đĩa gần đầy, `noindex`) — xem README. Đừng đưa URL ra công khai khi chưa muốn.
 
 > Model InsightFace `buffalo_l` chỉ cho dùng **phi thương mại**.
 
@@ -27,6 +27,10 @@ Không có bí mật nào. Tất cả đều có mặc định trong image; ch�
 | `ALBUM_MAX_TOTAL_GB` | `20` | **Hạn mức tổng** dung lượng ảnh gốc trong album (tính cả phần đã đặt chỗ cho các upload đang chạy). Hết hạn mức → 507. Đặt theo đĩa thực có |
 | `ALBUM_THREADS` | `2` | Số luồng onnxruntime (image đặt sẵn 2 để không chiếm hết CPU của VPS dùng chung) |
 | `ALBUM_INDEX_WINDOW` | `1` | Số ảnh giải mã cùng lúc khi Xử lý. `1` = tuần tự (RAM đỉnh thấp nhất); `2` = giải mã trước một ảnh, nhanh hơn ~10–20% nhưng đỉnh RAM thêm ~0.5–1 GB với ảnh 60 MP |
+| `ALBUM_APP_HOSTS` | `album.doantien.love,localhost,127.0.0.1` | Danh sách host (cách nhau dấu phẩy) được dùng **toàn bộ app**. Host khác trỏ vào cùng container (tên miền CDN, mục 4b) chỉ lấy được ảnh + file tĩnh + `/healthz` + `/robots.txt`; mọi thứ khác 404 |
+| `ALBUM_CDN_ORIGIN` | trống | Origin CDN cho ảnh WebP, vd. `https://img.rsrm.dev` (không có đường dẫn). Điền vào `cdn` của `/api/gallery` + `<link rel=preconnect>`. **Trống = ảnh cùng origin = công tắc tắt CDN** (xem 4b) |
+| `ALBUM_ADMIN_TOKEN` | trống | Đặt thì `POST /api/upload` và `POST /api/process` cần header `X-Album-Token: <mã>` (hoặc cookie `album_token`), sai → 401; `/manage` hiện ô nhập mã. Trống = mở như trước. Đây là bí mật: đặt trong tab Environment, đừng commit |
+| `ALBUM_DERIVE_WORKERS` | `2` | Số ảnh sinh WebP cùng lúc khi Xử lý (mỗi ảnh JPEG chỉ giải mã thu nhỏ nên nhẹ RAM) |
 | `ALBUM_LOW_MEM` | `1` | Tắt arena cấp phát của onnxruntime (RSS đỉnh thấp hơn ~20%, tốc độ như nhau) |
 
 ## 3. Volume (bắt buộc — nếu không, mất hết ảnh khi redeploy)
@@ -43,6 +47,16 @@ Container chạy bằng user không phải root (uid 10001). Named volume mới 
 Tab **Domains → Add Domain**:
 - Host `album.doantien.love`, **Container Port `8000`** (= `PORT`), Path `/`, HTTPS bật, Certificate = Let's Encrypt.
 - DNS: bản ghi A/AAAA của `album.doantien.love` trỏ về VPS (việc ở DNS do chủ dự án làm).
+
+## 4b. Tên miền CDN cho ảnh (tuỳ chọn)
+
+Trang công khai tải ảnh WebP từ `/i/{id}-{v}-{240|480|2000}.webp` — URL đặt tên theo nội dung, trả `Cache-Control: public, max-age=31536000, immutable` và `Content-Type: image/webp`, nên Cloudflare cache được (đã quan sát MISS → HIT với `.webp` qua rsrm.dev).
+
+1. Dokploy → app `album` → **Domains → Add Domain**: thêm một tên miền thuộc rsrm.dev (vd. `img.rsrm.dev`), Container Port `8000`, HTTPS bật. DNS qua Cloudflare (proxy bật).
+2. Đặt `ALBUM_CDN_ORIGIN=https://img.rsrm.dev` và `ALBUM_APP_HOSTS` giữ mặc định (**không** đưa tên miền CDN vào đây). Redeploy.
+3. Tên miền CDN đi vào cùng container nhưng bị `HostGate` chặn: chỉ GET/HEAD/OPTIONS ảnh + `/static/` + `/healthz` + `/robots.txt`; `/`, `/manage`, `/api/*`, `/originals/*` đều 404 `no-store`. Nên selfie và upload không bao giờ đi qua CDN (kể cả khi host test cũ có Cloudflare proxy). Ảnh gốc luôn tải cùng origin `https://album.doantien.love/originals/{id}`.
+4. **Công tắc tắt:** xoá `ALBUM_CDN_ORIGIN` (hoặc để trống) và redeploy → manifest `cdn:""`, trang tải ảnh từ chính `album.doantien.love/i/…`; không cần dọn gì ở Cloudflare. Khi trang không tải được ảnh từ CDN nó tự thử lại cùng origin.
+5. Lỗi (404, sai `v`) không bao giờ cacheable (`no-store`) nên không có gì bị Cloudflare giữ nhầm. Sau khi đổi ảnh gốc, `v` đổi → URL mới, không cần purge.
 
 ## 5. Giới hạn bộ nhớ và CPU (BẮT BUỘC)
 
@@ -99,6 +113,7 @@ Trang `/manage` cũng hiện dung lượng trống.
 
 ## 8. Dùng
 
+0. **Lần deploy đầu có WebP:** sau khi deploy, mở `/manage` và **bấm Xử lý một lần**. Giai đoạn `derive` sinh WebP + metadata cho mọi ảnh đã lập chỉ mục từ bản cũ (**không dò mặt lại**, kết quả tìm kiếm không đổi; lỗi một ảnh chỉ ghi log, ảnh không bị chuyển sang `rejected/`). Trong lúc đó và với ảnh chưa có WebP, trang dùng thumbnail JPEG cũ. Cơ sở dữ liệu nâng cấp tại chỗ (`CREATE TABLE IF NOT EXISTS photo_meta`, bảng cũ không đổi) nên quay về image cũ vẫn chạy được. Tiến độ: `GET /api/process` (`phase` = `index`/`derive`, `done`/`total`).
 1. Mở `https://album.doantien.love/manage` → kéo thả ảnh gốc vào → đợi "Hoàn tất".
 2. Bấm **Xử lý**: lập chỉ mục mọi ảnh chưa xử lý (tăng dần: tải thêm ảnh rồi bấm lại chỉ xử lý ảnh mới). Thanh tiến độ hiện số ảnh/khuôn mặt/lỗi/thời gian. Đóng trình duyệt cũng không dừng job; mở lại trang sẽ thấy tiến độ.
 3. Khách vào `https://album.doantien.love/`, tải selfie, kéo thanh ngưỡng, bấm ảnh để xem bản lớn / tải ảnh gốc.
@@ -107,7 +122,7 @@ Restart/redeploy container: dữ liệu trong volume còn nguyên, tìm kiếm c
 
 ## 9. Sao lưu
 
-Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`, `thumbs/`, `index.db`). Ảnh gốc là phần không thể tạo lại; còn lại sinh lại được bằng cách xoá `index.db`, `previews/`, `thumbs/` rồi bấm Xử lý.
+Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`, `thumbs/`, `i/`, `index.db`). Ảnh gốc là phần không thể tạo lại; còn lại sinh lại được bằng cách xoá `index.db`, `previews/`, `thumbs/`, `i/` rồi bấm Xử lý.
 
 - Dokploy → **Volume Backups** (nếu bản của bạn có) → đích S3, lịch hằng đêm; hoặc trên VPS:
   `docker run --rm -v album-data:/data -v $PWD:/backup alpine tar czf /backup/album-$(date +%F).tgz -C /data .`
@@ -117,6 +132,7 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 
 1. Logs không có `LỖI:`; `curl https://album.doantien.love/healthz` trả `ok:true`.
 2. `/robots.txt` có `Disallow: /`, response có `X-Robots-Tag: noindex, nofollow`.
-3. Tải 3–5 ảnh, bấm Xử lý, tìm bằng selfie, bấm một kết quả mở được ảnh.
-4. Redeploy một lần, kiểm tra ảnh/chỉ mục còn nguyên. `docker stats` xem RSS khi Xử lý (so với mục 5).
+3. `curl -sI https://img.rsrm.dev/healthz` trả 200 và `curl -s -o /dev/null -w '%{http_code}' https://img.rsrm.dev/api/stats` trả **404** (host CDN không thấy API); `curl -sI https://<host CDN>/i/<id>-<v>-480.webp` có `content-type: image/webp` + `immutable`.
+4. Tải 3–5 ảnh, bấm Xử lý, tìm bằng selfie, bấm một kết quả mở được ảnh.
+5. Redeploy một lần, kiểm tra ảnh/chỉ mục còn nguyên. `docker stats` xem RSS khi Xử lý (so với mục 5).
 5. Đừng redeploy khi đang Xử lý (`GET /api/process` có `state:"running"`): redeploy làm gián đoạn lượt đó (ảnh đang xử lý được thử lại, chỉ bị loại nếu chết hai lần liền).
