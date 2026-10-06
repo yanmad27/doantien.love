@@ -11,7 +11,7 @@ from PIL import Image
 
 import store
 from faces import FaceEngine
-from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, derive_pending, drop_stale_derivatives, find_photos, index_photos,
+from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, compute_bursts, derive_pending, drop_stale_derivatives, find_photos, index_photos,
                      pending_photos, require_webp)
 
 def main():
@@ -82,6 +82,7 @@ def main():
     if not a.no_derive:
         dst = derive_pending(db, root, a.data_dir,
                              on_progress=lambda i, n, rel, err: print(f"[WebP {i}/{n}] {rel}" + (f" LỖI: {err}" if err else ""), flush=True))
+        compute_bursts(db)
         print(f"WebP: {dst['ok']} ảnh ({dst['bad']} lỗi) trong {dst['wall']:.1f}s")
     n_ok, n_bad, n_faces, wall = st["ok"], st["bad"], st["faces"], st["wall"]
     db.commit()

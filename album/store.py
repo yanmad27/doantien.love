@@ -19,8 +19,11 @@ CREATE TABLE IF NOT EXISTS originals (  -- ảnh gốc tải lên qua web: tên 
   name TEXT PRIMARY KEY, sha256 TEXT UNIQUE, size INTEGER);
 CREATE TABLE IF NOT EXISTS photo_meta (  -- bảng riêng (không thêm cột vào photos: INSERT positional của indexer + rollback về bản cũ)
   id TEXT PRIMARY KEY, taken REAL, v TEXT, color TEXT, deriv_ver INTEGER, w INTEGER, h INTEGER,
-  size INTEGER, mtime_ns INTEGER);  -- size/mtime_ns của file gốc lúc tạo: đổi file thì tạo lại
+  size INTEGER, mtime_ns INTEGER,  -- size/mtime_ns của file gốc lúc tạo: đổi file thì tạo lại
+  cam TEXT, sig BLOB, burst TEXT);  -- máy ảnh (Make|Model|Serial), chữ ký 16x16 xám từ thumb 240, nhóm chụp liên tiếp (id khung đầu; NULL = đứng một mình)
 """
+META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))  # thêm vào bảng photo_meta đã có từ bản trước (ALTER, an toàn)
+
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -64,6 +67,11 @@ def connect(data_dir, init=True):
     db = sqlite3.connect(db_path(data_dir), timeout=30)
     if init:
         db.executescript(SCHEMA)
+        have = {r[1] for r in db.execute("PRAGMA table_info(photo_meta)")}
+        for col, typ in META_COLUMNS:
+            if col not in have:
+                db.execute(f"ALTER TABLE photo_meta ADD COLUMN {col} {typ}")
+        db.commit()
     return db
 
 

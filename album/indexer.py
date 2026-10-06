@@ -276,6 +276,22 @@ def file_sha256(path):
     return h.hexdigest()
 
 
+def exif_camera(im):
+    """Make|Model|BodySerial từ EXIF ('' nếu không có): để không ghép khung của hai máy ảnh vào một nhóm chụp liên tiếp."""
+    try:
+        ex = im.getexif()
+        sub = ex.get_ifd(0x8769)
+        parts = [ex.get(0x010F), ex.get(0x0110), sub.get(0xA431)]
+        return "|".join(str(x).strip("\x00 ") for x in parts if x)
+    except Exception:
+        return ""
+
+
+SIG_SIDE = 16
+BURST_MAX_GAP = 1.0   # giây giữa hai khung liền nhau
+BURST_MAX_DIFF = 6.0  # sai khác điểm ảnh trung bình (0..255) trên chữ ký xám 16x16
+
+
 def exif_taken(im):
     """DateTimeOriginal + SubSecTimeOriginal → giây epoch (giờ trên ảnh coi như UTC, chỉ để sắp xếp); thiếu/hỏng → None."""
     try:
@@ -320,13 +336,14 @@ def derive_one(path, data_dir, pid, sha, max_pixels=DERIVE_MAX_PIXELS):
         if max_pixels and w0 * h0 > max_pixels:
             raise ImageTooLarge(f"{w0}x{h0}")
         taken = exif_taken(im)
+        cam = exif_camera(im)
         if im.mode.startswith(("I", "F")):  # xám 16-bit…: dùng đường chung của faces.load_image (chuẩn hoá về 8-bit, đã xoay)
             prev = Image.fromarray(load_image(path, max_pixels))
             dims = prev.size
             sc = min(1.0, WEBP_PREVIEW_SIDE / max(dims))
             if sc < 1:
                 prev = prev.resize((max(1, round(dims[0] * sc)), max(1, round(dims[1] * sc))), Image.LANCZOS)
-            return _write_set(prev, data_dir, pid, v, taken, dims)
+            return _write_set(prev, data_dir, pid, v, taken, dims, cam)
         orient = im.getexif().get(0x0112, 1)
         sc = min(1.0, WEBP_PREVIEW_SIDE / max(w0, h0))
         pw, ph = max(1, round(w0 * sc)), max(1, round(h0 * sc))
@@ -338,10 +355,10 @@ def derive_one(path, data_dir, pid, sha, max_pixels=DERIVE_MAX_PIXELS):
         if orient in _TRANSPOSE:
             prev = prev.transpose(_TRANSPOSE[orient])
     dims = (h0, w0) if orient in (5, 6, 7, 8) else (w0, h0)
-    return _write_set(prev, data_dir, pid, v, taken, dims)
+    return _write_set(prev, data_dir, pid, v, taken, dims, cam)
 
 
-def _write_set(prev, data_dir, pid, v, taken, dims):
+def _write_set(prev, data_dir, pid, v, taken, dims, cam=""):
     d = store.deriv_dir(data_dir)
     os.makedirs(d, exist_ok=True)
 
@@ -359,14 +376,15 @@ def _write_set(prev, data_dir, pid, v, taken, dims):
         thumbs[tw] = src  # ảnh gốc hẹp hơn tw: giữ nguyên, không phóng to
         save(src, tw)
     r, g, b = thumbs[min(THUMB_WIDTHS)].resize((1, 1), Image.BOX).getpixel((0, 0))
-    return dict(v=v, taken=taken, color=f"#{r:02x}{g:02x}{b:02x}", w=dims[0], h=dims[1])
+    sig = thumbs[min(THUMB_WIDTHS)].convert("L").resize((SIG_SIDE, SIG_SIDE), Image.BOX).tobytes()
+    return dict(v=v, taken=taken, color=f"#{r:02x}{g:02x}{b:02x}", w=dims[0], h=dims[1], cam=cam, sig=sig)
 
 
 def pending_derive(db):
     """Ảnh đã lập chỉ mục mà chưa có photo_meta hợp lệ: thiếu, khác DERIV_VERSION, hoặc file gốc đã đổi từ lúc sinh."""
     return db.execute(
         "SELECT p.id, p.path, p.size, p.mtime_ns FROM photos p LEFT JOIN photo_meta m ON m.id=p.id "
-        "WHERE m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns ORDER BY p.path",
+        "WHERE m.id IS NULL OR m.deriv_ver!=? OR m.size!=p.size OR m.mtime_ns!=p.mtime_ns OR m.sig IS NULL ORDER BY p.path",
         (DERIV_VERSION,)).fetchall()
 
 
@@ -413,8 +431,9 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
                 break
             (pid, rel, size, mtime_ns), m, err = win.popleft().result()
             if err is None:
-                db.execute("INSERT OR REPLACE INTO photo_meta VALUES (?,?,?,?,?,?,?,?,?)",
-                           (pid, m["taken"], m["v"], m["color"], DERIV_VERSION, m["w"], m["h"], size, mtime_ns))
+                db.execute("INSERT OR REPLACE INTO photo_meta (id, taken, v, color, deriv_ver, w, h, size, mtime_ns, cam, sig) "
+                           "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                           (pid, m["taken"], m["v"], m["color"], DERIV_VERSION, m["w"], m["h"], size, mtime_ns, m["cam"], m["sig"]))
                 db.commit()
                 drop_stale_derivatives(data_dir, pid, m["v"])
                 st["ok"] += 1
@@ -425,3 +444,30 @@ def derive_pending(db, root, data_dir, workers=2, max_pixels=DERIVE_MAX_PIXELS, 
                 on_progress(i, len(todo), rel, err)
     st["wall"] = time.perf_counter() - t0
     return st
+
+
+def compute_bursts(db):
+    """Gán photo_meta.burst = id khung đầu cho các khung chụp liên tiếp (ít nhất 2 khung), còn lại NULL. Chỉ là DỮ LIỆU:
+    không đổi cách liệt kê/đếm. Trong từng (máy ảnh, kích thước), theo thời gian chụp: khung nối vào khung liền trước khi
+    cách ≤ BURST_MAX_GAP giây VÀ sai khác điểm ảnh trung bình < BURST_MAX_DIFF (chuỗi nối tiếp). Ảnh không có giờ chụp thì không thuộc nhóm nào.
+    Chạy lại được bất cứ lúc nào (tính lại toàn bộ trong một giao dịch); trả số nhóm."""
+    rows = db.execute("SELECT id, taken, cam, w, h, sig FROM photo_meta WHERE taken IS NOT NULL AND sig IS NOT NULL "
+                      "ORDER BY cam, w, h, taken, id").fetchall()
+    groups, cur, prev = [], [], None
+    for pid, taken, cam, w, h, sig in rows:
+        arr = np.frombuffer(sig, np.uint8).astype(np.int16)
+        if prev and prev[0] == (cam, w, h) and 0 <= taken - prev[1] <= BURST_MAX_GAP \
+                and np.abs(arr - prev[2]).mean() < BURST_MAX_DIFF:
+            cur.append(pid)
+        else:
+            if len(cur) > 1:
+                groups.append(cur)
+            cur = [pid]
+        prev = ((cam, w, h), taken, arr)
+    if len(cur) > 1:
+        groups.append(cur)
+    db.execute("UPDATE photo_meta SET burst=NULL WHERE burst IS NOT NULL")
+    for g in groups:
+        db.executemany("UPDATE photo_meta SET burst=? WHERE id=?", [(g[0], pid) for pid in g])
+    db.commit()
+    return len(groups)

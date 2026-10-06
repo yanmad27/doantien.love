@@ -277,7 +277,7 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", h)
 
     def test_cache_key_strict(self):
-        pid, _, _, _, v, _, _ = self.gal["photos"][0]
+        pid, _, _, _, v, _, _, _ = self.gal["photos"][0]
         ok = call(self.app, "GET", f"/i/{pid}-{v}-2000.webp")
         self.assertEqual(ok[0], 200)
         self.assertEqual(ok[1]["cache-control"], "public, max-age=31536000, immutable")
@@ -303,7 +303,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(g["cdn"], "https://cdn.example.test")
         self.assertEqual(g["dv"], indexer.DERIV_VERSION)
         self.assertEqual(len(g["photos"]), 3)
-        for pid, w, h, t, v, c, name in g["photos"]:
+        for pid, w, h, t, v, c, name, b in g["photos"]:
             self.assertRegex(pid, r"^[0-9a-f]{16}$")
             self.assertRegex(v, r"^[0-9a-f]{8}$")
             self.assertRegex(c, r"^#[0-9a-f]{6}$")
@@ -355,7 +355,7 @@ class GateTests(unittest.TestCase):
         db = sqlite3.connect(store.db_path(self.d))
         pid = ids[0]
         with self.assertRaises(sqlite3.IntegrityError):  # photo_meta.id là khoá chính → join không thể nhân đôi dòng
-            db.execute("INSERT INTO photo_meta VALUES (?,?,?,?,?,?,?,?,?)", (pid, None, "x", "#000000", 1, 1, 1, 1, 1))
+            db.execute("INSERT INTO photo_meta (id, v) VALUES (?,?)", (pid, "x"))
         with self.assertRaises(sqlite3.IntegrityError):
             db.execute("INSERT INTO photos VALUES (?,?,?,?,?,?,?,?)", (pid, "other.jpg", 1, 1, 1, 1, 1, 0))
         # originals có nhiều dòng cũng không ảnh hưởng manifest (manifest không join originals)
@@ -397,6 +397,55 @@ class GateTests(unittest.TestCase):
         self.assertEqual(len(g["photos"]), 2)
         self.assertEqual(len({p[0] for p in g["photos"]}), 2)
 
+    def test_burst_groups(self):
+        """Chuỗi khung chụp liên tiếp: cùng máy+kích thước, cách ≤1 s nối tiếp, ảnh giống nhau (sai khác < 6)."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        o = os.path.join(d, "originals")
+        os.makedirs(o)
+
+        def frame(name, sec, make="Cam", shade=100, size=(1200, 800), sub=None):
+            im = Image.new("RGB", size, (shade, shade, shade))
+            for x in range(0, size[0], 100):
+                im.paste((shade // 2 + x % 90,) * 3, (x, 0, x + 50, size[1] // 2))
+            ex = Image.Exif()
+            ex[0x010F], ex[0x0110] = make, "M1"
+            ifd = ex.get_ifd(0x8769)
+            ifd[0x9003] = "2026:05:01 12:00:%02d" % sec
+            if sub:
+                ifd[0x9291] = sub
+            im.save(os.path.join(o, name), "JPEG", quality=90, exif=ex)
+
+        frame("a1.jpg", 10, sub="100")
+        frame("a2.jpg", 10, sub="270", shade=102)           # +0.17 s, gần như y hệt → cùng nhóm
+        frame("a3.jpg", 11, sub="100", shade=104)           # +0.83 s so với a2 → nối chuỗi
+        frame("b1.jpg", 11, sub="150", shade=240)           # khác hẳn về điểm ảnh → không nhóm
+        frame("c1.jpg", 10, sub="120", make="Other")        # máy khác → không nhóm
+        frame("d1.jpg", 13, shade=104)                      # cách 2 s → không nhóm
+        frame("e1.jpg", 10, sub="130", size=(800, 1200))    # kích thước khác
+        Image.new("RGB", (1200, 800), (100, 100, 100)).save(os.path.join(o, "noexif.jpg"))
+        app = app_with(d)
+        run_process(app)
+        g = json.loads(call(app, "GET", "/api/gallery")[2])
+        by = {p[6]: p for p in g["photos"]}
+        ids = {n: store.photo_id(n) for n in by}
+        grp = {n: by[n][7] for n in by}
+        self.assertEqual(grp["a1.jpg"], ids["a1.jpg"])      # id khung đầu
+        self.assertEqual(grp["a2.jpg"], grp["a1.jpg"])
+        self.assertEqual(grp["a3.jpg"], grp["a1.jpg"])
+        for n in ("b1.jpg", "c1.jpg", "d1.jpg", "e1.jpg", "noexif.jpg"):
+            self.assertIsNone(grp[n], n)
+        self.assertEqual(len(g["photos"]), 8)               # đếm/liệt kê không đổi
+        self.assertTrue(all(len(p) == 8 for p in g["photos"]))
+        # tính lại là idempotent
+        db = sqlite3.connect(store.db_path(d))
+        self.assertEqual(indexer.compute_bursts(db), 1)
+        self.assertEqual(db.execute("SELECT count(*) FROM photo_meta WHERE burst IS NOT NULL").fetchone()[0], 3)
+        db.close()
+
+    def test_max_results_default_covers_album(self):
+        self.assertGreaterEqual(server.MAX_RESULTS, 3000)
+
     def test_cdn_kill_switch_and_html(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -408,7 +457,7 @@ class GateTests(unittest.TestCase):
         with mock.patch.object(server, "load_image", side_effect=AssertionError("không cần")):
             pass
         # kiểm shape qua cache nội bộ: meta có v/c cho mọi ảnh đã backfill
-        for pid, w, h, t, v, c, name in self.gal["photos"]:
+        for pid, w, h, t, v, c, name, b in self.gal["photos"]:
             self.assertTrue(v and c)
 
     # ---- token chủ nhà ----
@@ -561,7 +610,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(st, 200)
             return json.loads(b)
 
-        strip = lambda r: [{k: v for k, v in x.items() if k not in ("v", "w", "h", "c")} for x in r["results"]]
+        strip = lambda r: [{k: v for k, v in x.items() if k not in ("v", "w", "h", "c", "b")} for x in r["results"]]
         s_before = search()
         self.assertEqual(strip(s_before), strip(before_old))  # code mới = code cũ trên cùng chỉ mục
         self.assertTrue(all(x["v"] is None for x in s_before["results"]))

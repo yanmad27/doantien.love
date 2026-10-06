@@ -35,7 +35,7 @@ from starlette.staticfiles import StaticFiles
 
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
-from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, DERIV_VERSION, WEBP_SIZES, CRASH_REASON, derive_pending,
+from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, DERIV_VERSION, WEBP_SIZES, CRASH_REASON, compute_bursts, derive_pending,
                      find_photos, index_photos, mark_failed, pending_derive, pending_photos, recover_crashed,
                      require_webp, restore_rejected)
 
@@ -47,7 +47,7 @@ log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 25 * 1024 * 1024
 SCORE_FLOOR = 0.15  # dưới mức này không bao giờ là cùng người, khỏi gửi về
-MAX_RESULTS = 300
+MAX_RESULTS = int(os.environ.get("ALBUM_MAX_RESULTS", 5000))  # phủ cả album (giao diện ảo hoá, hiện được hết); đặt nhỏ lại nếu cần giới hạn
 QUERY_MIN_FACE = 40  # cạnh ngắn (px) tối thiểu của mặt trong selfie, khớp --min-face của indexer
 UPLOAD_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 UPLOAD_FORMATS = {"JPEG", "MPO", "PNG", "WEBP"}  # MPO: JPEG máy ảnh/điện thoại có kèm ảnh xem trước (MPF)
@@ -265,6 +265,7 @@ class ProcessJob:
                         self.s["errors"] = (self.s["errors"] + [f"WebP {rel}: {self._clean(err)}"])[-20:]
 
             derive_pending(db, root, self.data_dir, workers=DERIVE_WORKERS, max_pixels=UPLOAD_MAX_PIXELS, on_progress=dprogress)
+            compute_bursts(db)
             db.close()
             now = time.time()
             self._upd(state="done", phase=None, current=None, finished_at=now, elapsed=now - self.s["started_at"])
@@ -361,13 +362,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 if m is not None:
                     db = sqlite3.connect(f"file:{store.db_path(data_dir)}?mode=ro", uri=True, timeout=30)
                     try:
-                        q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path "
+                        q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst "
                              "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id ORDER BY m.taken IS NULL, m.taken, p.path")
-                        for pid, w, h, t, v, c, name in db.execute(q):
+                        for pid, w, h, t, v, c, name, b in db.execute(q):
                             if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
                                 continue
-                            rows.append([pid, w, h, None if t is None else round(t, 3), v, c, name])
-                            meta[pid] = (v, c)
+                            rows.append([pid, w, h, None if t is None else round(t, 3), v, c, name, b])
+                            meta[pid] = (v, c, b)
                     finally:
                         db.close()
                 photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
@@ -406,7 +407,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", preview=f"previews/{pid}.jpg", width=ph["width"], height=ph["height"],
                             n_faces=ph["n_faces"], bbox=[round(v, 1) for v in rows[i]["bbox"]],
-                            v=meta.get(pid, (None, None))[0], w=ph["width"], h=ph["height"], c=meta.get(pid, (None, None))[1]))
+                            v=meta.get(pid, (None,) * 3)[0], w=ph["width"], h=ph["height"], c=meta.get(pid, (None,) * 3)[1],
+                            b=meta.get(pid, (None,) * 3)[2]))
         t4 = time.perf_counter()
         return dict(
             query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
