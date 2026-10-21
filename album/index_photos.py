@@ -41,7 +41,7 @@ def main():
     root = os.path.abspath(a.photos)
     if not os.path.isdir(root):
         sys.exit(f"Không thấy thư mục ảnh: {root}")
-    owner_state = ([], [])
+    owner_state = ([], [], [])
     if a.rebuild:
         # Sao DB cũ (+ -wal/-shm) sang index.db.bak-<ts> TRƯỚC, đọc ảnh đã ẩn + cài đặt từ bản sao trên đĩa (không có đoạn chỉ nằm trong RAM);
         # DB cũ chỉ bị xoá sau khi đọc được. Hỏng/không đọc được → dừng, trỏ tới bản sao, trừ khi --discard-owner-state.
@@ -58,9 +58,9 @@ def main():
                 owner_state = store.keep_owner_state(bak)
             except sqlite3.DatabaseError as e:
                 if not a.discard_owner_state:
-                    sys.exit(f"DỪNG: không đọc được trạng thái ẩn/hiện + cài đặt từ chỉ mục cũ ({e}). Chưa xoá gì; bản sao: {bak}. "
-                             f"Sửa/khôi phục DB, hoặc chạy lại với --discard-owner-state để bỏ trạng thái đó (ảnh đã ẩn sẽ HIỆN LẠI).")
-                print(f"CẢNH BÁO: bỏ trạng thái ẩn/hiện (không đọc được: {e}); bản sao DB cũ: {bak}", file=sys.stderr)
+                    sys.exit(f"DỪNG: không đọc được trạng thái ẩn/hiện + cài đặt + ngày (4/10, 17/10) của ảnh từ chỉ mục cũ ({e}). Chưa xoá gì; bản sao: {bak}. "
+                             f"Sửa/khôi phục DB, hoặc chạy lại với --discard-owner-state để bỏ trạng thái đó (ảnh đã ẩn sẽ HIỆN LẠI và mọi ảnh về ngày 4/10).")
+                print(f"CẢNH BÁO: bỏ trạng thái ẩn/hiện, cài đặt và ngày của ảnh (ảnh 17/10 sẽ về 4/10) (không đọc được: {e}); bản sao DB cũ: {bak}", file=sys.stderr)
             print(f"Bản sao chỉ mục cũ: {bak}")
             for suffix in ("", "-wal", "-shm"):  # -wal còn sót sẽ bị SQLite áp lên DB mới
                 if os.path.exists(dbf + suffix):

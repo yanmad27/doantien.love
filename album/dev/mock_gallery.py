@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageEnhance, ImageOps
 
@@ -55,6 +55,8 @@ ap.add_argument("--quota-gb", type=float, default=0, help="0 = không có hạn 
 ap.add_argument("--dup", action="store_true", help="cố ý đưa dòng trùng vào manifest và vào kết quả /api/search (client phải chỉ hiện mỗi ảnh một lần)")
 ap.add_argument("--search-n", type=int, default=70, help="số ảnh /api/search trả về (tới cả album; hợp đồng §10: trần >= 3000)")
 ap.add_argument("--admin-delay", type=float, default=0, help="giây trễ thêm cho POST /api/admin/visibility (thử cập nhật lạc quan)")
+ap.add_argument("--events", action="store_true", help="đưa ~1/3 ảnh sang sự kiện 17/10 (mặc định: tất cả 4/10 như production → bộ chọn ngày không hiện)")
+ap.add_argument("--process-adds", type=int, default=0, help="POST /api/process thêm ngần này ảnh (ngày 17/10) sau ~1.5 s 'running' rồi 'done' — thử lưới /manage tự làm mới sau Xử lý (0 = như cũ: done ngay)")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -160,7 +162,10 @@ if a.dup and len(ROWS) > 800:  # dòng trùng: kề nhau, ở xa, và một bả
     ROWS[200][1] = ROWS[200][2] = 0           # w/h = 0: client phải chặn tỉ lệ khung hình
     ROWS[201][1], ROWS[201][2] = 9000, 100    # panorama cực đoan
 FAIL = {r[0] for r in ROWS if int(hashlib.sha1(r[0].encode()).hexdigest()[:6], 16) / 0xFFFFFF < a.cdn_fail}
+EV_IDS = ("2026-10-04", "2026-10-17")
+EVENT = {r[0]: ("2026-10-17" if a.events and int(r[0][:4], 16) % 3 == 0 else "2026-10-04") for r in ROWS}   # vắng = 4/10 (như bảng photo_event)
 STATE_LOCK = threading.RLock()
+JOB = {"t0": None, "applied": 0, "n": 0}   # job Xử lý giả (--process-adds)
 HIDDEN = set()                      # id ảnh đang ẩn (hợp đồng F.1; mặc định không ẩn gì)
 SETTINGS = {"search_includes_hidden": True}
 SECRET = os.urandom(32)
@@ -174,13 +179,15 @@ def rebuild_public():
         groups = {}
         for r in vis:
             if r[8]:
-                groups.setdefault(r[8], []).append(r[0])
+                groups.setdefault((r[8], EVENT[r[0]]), []).append(r[0])   # chuỗi không vắt qua sự kiện
         pub_b = {}
         for g in groups.values():
             for i in g:
                 pub_b[i] = g[0] if len(g) >= 2 else None
-        rows = [r[:7] + [pub_b.get(r[0])] for r in vis]
-        body = json.dumps(dict(mv=hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:10], cdn=CDN, dv=DV, photos=rows), separators=(",", ":")).encode()
+        rows = [r[:7] + [pub_b.get(r[0]), EVENT[r[0]]] for r in vis]
+        n_ev = {e: sum(1 for r in rows if r[8] == e) for e in EV_IDS}
+        events = [dict(id=e, label={"2026-10-04": "4/10", "2026-10-17": "17/10"}[e], n=n_ev[e]) for e in EV_IDS]
+        body = json.dumps(dict(mv=hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:10], cdn=CDN, dv=DV, events=events, photos=rows), separators=(",", ":")).encode()
         PUB.update(pub_b=pub_b, body=body, gz=gzip.compress(body, 6), etag='"' + hashlib.sha1(body).hexdigest()[:16] + '"')
 
 
@@ -257,7 +264,7 @@ def fresh(rid):
     return ROWS and rid in BY_ID
 
 
-def search_payload(body):
+def search_payload(body, scope='all'):
     rnd = random.Random(hashlib.sha1(body).hexdigest())
     if len(body) < 100:
         return 422, {"error": "no_face"}
@@ -267,7 +274,7 @@ def search_payload(body):
         w, h = 640, 480
     with STATE_LOCK:
         hidden, incl, pub_b = set(HIDDEN), SETTINGS["search_includes_hidden"], dict(PUB["pub_b"])
-    elig = [r for r in UNIQ if incl or r[0] not in hidden]  # tắt: bỏ ảnh ẩn TRƯỚC khi xếp hạng/cắt
+    elig = [r for r in UNIQ if (incl or r[0] not in hidden) and (scope == 'all' or EVENT[r[0]] == scope)]  # tắt: bỏ ảnh ẩn TRƯỚC khi xếp hạng/cắt
     pool = rnd.sample(elig, min(len(elig), a.search_n)) if elig else []
     res = []
     N, MAIN = len(pool), round(len(pool) * 40 / 70)
@@ -276,7 +283,7 @@ def search_payload(body):
         res.append(dict(id=r[0], b=r[8], name=r[6], score=round(score, 4), thumb=f"thumbs/{r[0]}.jpg", preview=f"previews/{r[0]}.jpg",
                         width=r[1], height=r[2], v=r[4], w=r[1], h=r[2], c=r[5], n_faces=1, bbox=[r[1] * .3, r[2] * .2, r[1] * .55, r[2] * .5]))
     # các chuỗi liên thanh có chủ đích (hợp đồng §11): khung điểm cao + khung điểm thấp (một ô, ở nhóm cao), tất cả khung khớp, chỉ 1 khung khớp, chỉ khung điểm thấp
-    groups = [g for g in BURSTS if all(r[0] in BY_ID and (incl or r[0] not in hidden) for r in g)]
+    groups = [g for g in BURSTS if all(r[0] in BY_ID and (incl or r[0] not in hidden) and (scope == 'all' or EVENT[r[0]] == scope) for r in g)]
     plan = [(0, [.62, .33]), (1, [.71, .52]), (2, [.45]), (3, [.31]), (4, [.55, .5])]
     SCEN.clear()
     for gi, scores in plan:
@@ -308,6 +315,7 @@ def search_payload(body):
             hh.setdefault(orig[x["id"]], []).append(x["id"])
     order = {r[0]: i for i, r in enumerate(ROWS)}
     for x in res:
+        x["ev"] = EVENT.get(x["id"], "2026-10-04")
         stale = x.pop("_stale", False)
         if x["id"] in hidden:
             g = sorted(hh.get(orig.get(x["id"]), []), key=order.get)
@@ -418,7 +426,7 @@ class H(BaseHTTPRequestHandler):
             return self.unauth()
         if path == "/api/admin/photos":
             with STATE_LOCK:
-                body = dict(photos=[r[:7] + [r[8], 1 if r[0] in HIDDEN else 0] for r in ROWS], counts=counts(), settings=dict(SETTINGS))
+                body = dict(photos=[r[:7] + [r[8], 1 if r[0] in HIDDEN else 0, EVENT[r[0]]] for r in ROWS], counts=counts(), settings=dict(SETTINGS))
             return self.send(200, json.dumps(body).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/api/stats":
             s = dict(originals=len(ROWS), photos=len(ROWS), pending=0, faces=len(ROWS) * 2, disk_free=50 * 2 ** 30, disk_total=100 * 2 ** 30,
@@ -426,6 +434,21 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/api/process":
             s = dict(state="idle", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")
+            with STATE_LOCK:
+                if JOB["t0"] is not None:
+                    el = time.time() - JOB["t0"]
+                    if el < 1.5:
+                        s.update(state="running", total=a.process_adds, done=int(el / 1.5 * a.process_adds), elapsed=el, current="x.jpg")
+                    else:
+                        if not JOB["applied"]:  # ảnh mới chỉ hiện trong /api/admin/photos + manifest SAU khi job xong
+                            for j in range(a.process_adds):
+                                pid = hashlib.sha1(f"added-{JOB['n']}-{j}".encode()).hexdigest()[:16]
+                                m = VARS[j % len(VARS)]
+                                row = [pid, m["w"], m["h"], 1790900000.0 + j, hashlib.sha256(f"{pid}-{DV}".encode()).hexdigest()[:8], m["c"], f"NEW_{JOB['n']}_{j}.JPG", m["k"], None]
+                                ROWS.append(row); BY_ID[pid] = row; EVENT[pid] = "2026-10-17"
+                            rebuild_public()
+                            JOB["applied"] = 1
+                        s.update(state="done", total=a.process_adds, done=a.process_adds, faces=a.process_adds, elapsed=1.5)
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/__mock/dups":
             return self.send(200, json.dumps(dict(DUPS, bursts=SCEN)).encode(), "application/json", {"Cache-Control": "no-store"}, head)
@@ -472,6 +495,7 @@ class H(BaseHTTPRequestHandler):
             return self.nf()
         if path == "/__mock/unhide":  # đưa mock về trạng thái ban đầu (không ẩn gì, cài đặt mặc định)
             with STATE_LOCK:
+                for k in EVENT: EVENT[k] = '2026-10-17' if a.events and int(k[:4], 16) % 3 == 0 else '2026-10-04'
                 HIDDEN.clear(); SETTINGS["search_includes_hidden"] = True; rebuild_public()
             return self.send(200, b"{}", "application/json")
         if path == "/__mock/reset":
@@ -497,7 +521,7 @@ class H(BaseHTTPRequestHandler):
             with log_lock:
                 FAILS.append(now)
             return self.send(401, b'{"detail":"M\xc3\xa3 kh\xc3\xb4ng \xc4\x91\xc3\xbang."}', "application/json", {"Cache-Control": "no-store"})
-        if path in ("/api/admin/visibility", "/api/admin/settings"):
+        if path in ("/api/admin/visibility", "/api/admin/settings", "/api/admin/event"):
             if a.admin_token and not self.authed():
                 return self.unauth()
             if self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
@@ -508,11 +532,25 @@ class H(BaseHTTPRequestHandler):
             if not self.authed(header=True):
                 return self.send(401, b'{"detail":"C\xe1\xba\xa7n m\xc3\xa3 ch\xe1\xbb\xa7 nh\xc3\xa0."}', "application/json", {"Cache-Control": "no-store"})
         if path == "/api/search":
-            code, obj = search_payload(body)
+            scope = (parse_qs(urlparse(self.path).query).get("scope") or ["all"])[0]
+            if scope != "all" and scope not in EV_IDS:
+                return self.send(400, b'{"detail":"scope"}', "application/json", {"Cache-Control": "no-store"})
+            code, obj = search_payload(body, scope)
             return self.send(code, json.dumps(obj).encode(), "application/json", {"Cache-Control": "no-store"})
         if path == "/api/upload":
-            return self.send(200, json.dumps(dict(status="ok", name="x.jpg")).encode(), "application/json")
+            q = parse_qs(urlparse(self.path).query)
+            ev = (q.get("event") or ["2026-10-04"])[0]
+            if ev not in EV_IDS:
+                return self.send(400, b'{"detail":"event"}', "application/json")
+            nm = (q.get("name") or ["x.jpg"])[0]
+            if nm.startswith("dup"):  # ảnh trùng: giữ sự kiện của ảnh cũ (ở đây luôn 17/10 để thử lời báo)
+                return self.send(200, json.dumps(dict(status="duplicate", name="old-" + nm, event="2026-10-17")).encode(), "application/json")
+            return self.send(200, json.dumps(dict(status="ok", name=nm, renamed=False, event=ev)).encode(), "application/json")
         if path == "/api/process":
+            if a.process_adds:
+                with STATE_LOCK:
+                    JOB.update(t0=time.time(), applied=0, n=JOB["n"] + 1)
+                return self.send(200, json.dumps(dict(state="running", done=0, total=a.process_adds, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")).encode(), "application/json")
             return self.send(200, json.dumps(dict(state="done", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")).encode(), "application/json")
         self.nf()
 
@@ -529,6 +567,18 @@ def _admin_post(self, path, body):
             with STATE_LOCK:
                 SETTINGS["search_includes_hidden"] = v
                 return reply(200, {"settings": dict(SETTINGS)})
+        if path == "/api/admin/event":
+            ids, ev = d["ids"], d["event"]
+            assert ev in EV_IDS and isinstance(ids, list) and 1 <= len(ids) <= 5000 and set(d) == {"ids", "event"}
+            assert all(isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i) for i in ids)
+            ids = list(dict.fromkeys(ids))
+            with STATE_LOCK:
+                known = [i for i in ids if i in BY_ID]
+                changed = sum(1 for i in known if EVENT[i] != ev)
+                for i in known:
+                    EVENT[i] = ev
+                rebuild_public()
+                return reply(200, {"changed": changed, "unknown": len(ids) - len(known), "event": ev})
         ids, hid = d["ids"], d["hidden"]
         assert isinstance(hid, bool) and isinstance(ids, list) and 1 <= len(ids) <= 5000
         assert all(isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i) for i in ids)

@@ -286,12 +286,12 @@ class HiddenTests(Base):
         st, h, body, _ = call(self.app, "GET", "/api/admin/photos", headers=cookie_hdr(self.app))
         self.assertEqual((st, h["cache-control"]), (200, "no-store"))
         d = json.loads(body)
-        self.assertEqual(set(d), {"photos", "counts", "settings"})
+        self.assertEqual(set(d), {"photos", "counts", "settings", "by_event", "events"})
         self.assertEqual(d["counts"], dict(all=11, shown=10, hidden=1))
         self.assertEqual(d["settings"], {"search_includes_hidden": True})
         ids = [p[0] for p in d["photos"]]
         self.assertEqual((len(ids), len(set(ids))), (11, 11))  # duy nhất
-        self.assertTrue(all(len(p) == 9 for p in d["photos"]))
+        self.assertTrue(all(len(p) == 10 for p in d["photos"]))
         by = {p[6]: p for p in d["photos"]}
         self.assertEqual([by[n + ".jpg"][8] for n in ("a1", "a2", "a3")], [0, 1, 0])
         self.assertEqual({by[n + ".jpg"][7] for n in ("a1", "a2", "a3")}, {PID["a1"]})  # b = burst GỐC đầy đủ

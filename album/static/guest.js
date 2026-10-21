@@ -18,6 +18,9 @@ let file = null, selfieUrl = null, runId = 0, ctl = null;
 let data = null;
 let mode = "all";  // all: cả album · mine: kết quả tìm bằng selfie
 let photos = [], galleryReady = false;
+// Hai sự kiện (ngày) trong một album. Bộ chọn chỉ hiện khi ≥ 2 sự kiện có ảnh công khai; hàng manifest cũ (thiếu trường cuối) = sự kiện mặc định.
+const EV_DEFAULT = "2026-10-04";
+let allPhotos = [], events = [{ id: "2026-10-04", label: "4/10" }, { id: "2026-10-17", label: "17/10" }], evShown = false, curEv = EV_DEFAULT, scope = "all";
 
 // ---------- địa chỉ ảnh + đường lùi: CDN → cùng nguồn gốc /i/ → cũ (/thumbs, /previews) ----------
 let CDN = "";
@@ -269,12 +272,21 @@ async function loadGallery() {
   performance.mark("gallery-manifest");
   CDN = String(m.cdn || "").replace(/\/+$/, "");
   preconnect(CDN);
-  photos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
-  burstFrames = new Map(); photoById = new Map(photos.map(p => [p.id, p]));
-  for (const p of photos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
+  if (Array.isArray(m.events) && m.events.length) events = m.events.map(e => ({ id: String(e.id), label: String(e.label || e.id) }));
+  allPhotos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null, ev: p[8] || EV_DEFAULT })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
+  const have = new Set(allPhotos.map(p => p.ev));
+  evShown = events.filter(e => have.has(e.id)).length >= 2;
+  const want = evFromHash();
+  curEv = evShown && events.some(e => e.id === want) ? want : EV_DEFAULT;
+  if (!evShown) scope = "all";
+  else if (scope !== "all" && !events.some(e => e.id === scope)) scope = "all";
+  photos = evShown ? allPhotos.filter(p => p.ev === curEv) : allPhotos;
+  burstFrames = new Map(); photoById = new Map(allPhotos.map(p => [p.id, p]));  // nhóm chụp liên tiếp không vắt qua sự kiện nên dựng từ toàn bộ
+  paintEvents();
+  for (const p of allPhotos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
   galleryReady = true;
   $("skeleton").hidden = true;
-  if (!photos.length) {
+  if (!allPhotos.length) {
     $("count").textContent = "";
     $("cta-row").hidden = true; $("all").hidden = true; document.querySelector(".meta .sep").hidden = true;
     showEmpty("Album đang được cập nhật", "Ảnh cưới sẽ sớm có mặt ở đây. Bạn quay lại sau ít phút nhé.");
@@ -285,6 +297,53 @@ async function loadGallery() {
   if (mode === "all") gAll.setActive(true);
   performance.mark("gallery-rendered");
   watchCta();
+}
+const evLabel = id => (events.find(e => e.id === id) || { label: id }).label;
+function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d)$/.exec(location.hash); return m ? m[1] : null; }  // chọn ngày nằm trên URL: tải lại vẫn giữ
+function paintEvents() {
+  const tabs = $("ev-tabs");
+  tabs.hidden = !evShown;
+  if (tabs.children.length !== events.length) {   // dựng một lần; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
+    tabs.replaceChildren(...events.map(e => {
+      const b = document.createElement("button");
+      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = e.id; b.textContent = `Ngày ${e.label}`;
+      b.onclick = () => setEvent(e.id, true);
+      return b;
+    }));
+  }
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.ev === curEv));
+  if (evShown) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
+  for (const box of document.querySelectorAll(".scope")) {
+    box.hidden = !evShown;
+    if (box.querySelectorAll("button").length !== events.length + 1) {
+      box.replaceChildren(Object.assign(document.createElement("span"), { textContent: "Tìm trong:" }),
+        ...[...events.map(e => [e.id, `Ngày ${e.label}`]), ["all", "Cả hai ngày"]].map(([id, text]) => {
+          const b = document.createElement("button");
+          b.type = "button"; b.dataset.scope = id; b.textContent = text;
+          b.onclick = () => setScope(id);
+          return b;
+        }));
+    }
+    for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.scope === scope));
+  }
+  if (!allPhotos.length) return;
+  $("count").textContent = `${nf.format(photos.length)} ảnh`;
+}
+function setEvent(id, push) {
+  if (!evShown || id === curEv || !events.some(e => e.id === id)) return;
+  curEv = id;
+  if (push) history.replaceState(history.state, "", "#ev=" + id);  // không đẩy mục lịch sử: Back vẫn rời trang/quay về thư viện như cũ
+  photos = allPhotos.filter(p => p.ev === curEv);
+  paintEvents();
+  gAll.set(photos);
+  if (mode === "all") gAll.setActive(true);
+}
+addEventListener("hashchange", () => { const w = evFromHash(); if (w) setEvent(w, false); });
+function setScope(id) {
+  if (id === scope) return;
+  scope = id;
+  paintEvents();
+  if (mode === "mine" && file) search();  // đổi phạm vi khi đang xem kết quả → tìm lại với cùng ảnh selfie
 }
 function showEmpty(t, s, retry) {
   loadDecor();
@@ -397,7 +456,7 @@ async function search() {
     const body = await prepare(file);
     if (my !== runId) return;
     // selfie CHỈ gửi tới đường dẫn tương đối cùng nguồn gốc với trang — không bao giờ tới CDN
-    const r = await fetch("/api/search", { method: "POST", body, headers: { "Content-Type": "application/octet-stream" }, signal: ctl.signal });
+    const r = await fetch("/api/search" + (evShown && scope !== "all" ? "?scope=" + encodeURIComponent(scope) : ""), { method: "POST", body, headers: { "Content-Type": "application/octet-stream" }, signal: ctl.signal });
     if (my !== runId) return;
     if (r.status === 422) {
       const e = await r.json().catch(() => ({}));
@@ -467,9 +526,10 @@ function showResults() {
   $("s-tips").hidden = true;
   const total = data.results.filter(x => x.score >= MAYBE_CUT).length;
   const none = !TUNE && total === 0;
-  const empty = photos.length === 0;
+  const empty = allPhotos.length === 0;
   $("s-title").textContent = empty ? "Album đang được cập nhật" : none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
   if (empty) $("s-text").textContent = "Ảnh cưới chưa được đưa lên đầy đủ. Bạn quay lại sau ít phút nhé.";
+  else if (none && scope !== "all") $("s-text").textContent = `Chưa có ảnh nào khớp trong ngày ${evLabel(scope)}. Bạn thử chọn «Cả hai ngày» hoặc một tấm selfie khác rõ nét hơn.`;
   else if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
   else $("s-text").textContent = "Dưới đây là những khoảnh khắc có bạn.";
   if (q.n_faces > 1) {

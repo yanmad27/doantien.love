@@ -277,7 +277,7 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", h)
 
     def test_cache_key_strict(self):
-        pid, _, _, _, v, _, _, _ = self.gal["photos"][0]
+        pid, _, _, _, v, _, _, _, _ = self.gal["photos"][0]
         ok = call(self.app, "GET", f"/i/{pid}-{v}-2000.webp")
         self.assertEqual(ok[0], 200)
         self.assertEqual(ok[1]["cache-control"], "public, max-age=31536000, immutable")
@@ -299,11 +299,11 @@ class GateTests(unittest.TestCase):
     # ---- /api/gallery ----
     def test_gallery_shape(self):
         g = self.gal
-        self.assertEqual(set(g), {"mv", "cdn", "dv", "photos"})
+        self.assertEqual(set(g), {"mv", "cdn", "dv", "events", "photos"})
         self.assertEqual(g["cdn"], "https://cdn.example.test")
         self.assertEqual(g["dv"], indexer.DERIV_VERSION)
         self.assertEqual(len(g["photos"]), 3)
-        for pid, w, h, t, v, c, name, b in g["photos"]:
+        for pid, w, h, t, v, c, name, b, ev in g["photos"]:
             self.assertRegex(pid, r"^[0-9a-f]{16}$")
             self.assertRegex(v, r"^[0-9a-f]{8}$")
             self.assertRegex(c, r"^#[0-9a-f]{6}$")
@@ -437,7 +437,7 @@ class GateTests(unittest.TestCase):
         for n in ("b1.jpg", "b2.jpg", "c1.jpg", "d1.jpg", "e1.jpg", "noexif.jpg"):
             self.assertIsNone(grp[n], n)
         self.assertEqual(len(g["photos"]), 9)               # đếm/liệt kê không đổi
-        self.assertTrue(all(len(p) == 8 for p in g["photos"]))
+        self.assertTrue(all(len(p) == 9 for p in g["photos"]))
         # tính lại là idempotent + thống kê
         db = sqlite3.connect(store.db_path(d))
         st = indexer.burst_stats(db)
@@ -544,7 +544,7 @@ class GateTests(unittest.TestCase):
         with mock.patch.object(server, "load_image", side_effect=AssertionError("không cần")):
             pass
         # kiểm shape qua cache nội bộ: meta có v/c cho mọi ảnh đã backfill
-        for pid, w, h, t, v, c, name, b in self.gal["photos"]:
+        for pid, w, h, t, v, c, name, b, ev in self.gal["photos"]:
             self.assertTrue(v and c)
 
     # ---- token chủ nhà ----
@@ -783,7 +783,7 @@ class GateTests(unittest.TestCase):
                 st, h, body, _ = call(self.app, "GET", "/static/" + name, host=host)
                 self.assertEqual((st, h["cache-control"]), (404, "no-store"), (host, name))
         self.assertEqual(call(self.app, "GET", "/")[0], 200)  # HTML vẫn phát qua route có templating
-        pid, _, _, _, v, _, _, _ = self.gal["photos"][0]
+        pid, _, _, _, v, _, _, _, _ = self.gal["photos"][0]
         self.assertEqual(call(self.app, "GET", f"/i/{pid}-{v}-240.webp")[0], 200)
         for q in ("?x=1", "?", "?v=1&a=b"):
             st, h, _, _ = call(self.app, "GET", f"/i/{pid}-{v}-240.webp{q}")

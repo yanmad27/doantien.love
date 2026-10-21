@@ -56,6 +56,11 @@
         <button type="button" class="fchip" data-f="shown" aria-pressed="false">Đang hiện <b id="c-shown">–</b></button>
         <button type="button" class="fchip" data-f="hidden" aria-pressed="false">Đang ẩn <b id="c-hidden">–</b></button>
       </div>
+      <div class="filters" role="group" aria-label="Lọc theo ngày" id="evf">
+        <button type="button" class="fchip" data-e="all" aria-pressed="true">Mọi ngày</button>
+        <button type="button" class="fchip" data-e="2026-10-04" aria-pressed="false">Ngày 4/10 <b id="ce-2026-10-04">–</b></button>
+        <button type="button" class="fchip" data-e="2026-10-17" aria-pressed="false">Ngày 17/10 <b id="ce-2026-10-17">–</b></button>
+      </div>
       <div class="vtools">
         <button type="button" class="btn btn--quiet btn--sm" id="v-mode" aria-pressed="false">Chọn</button>
         <button type="button" class="btn btn--quiet btn--sm" id="v-all" hidden>Chọn tất cả (theo bộ lọc)</button>
@@ -68,6 +73,12 @@
 
   <section class="card panel" aria-labelledby="h-up">
     <h2 class="h" id="h-up"><span class="num">1</span>Tải ảnh gốc lên</h2>
+    <fieldset class="evpick" id="up-ev">
+      <legend>Ảnh sắp tải thuộc ngày nào?</legend>
+      <label><input type="radio" name="up-ev" value="2026-10-04" checked><span>Ngày 4/10</span></label>
+      <label><input type="radio" name="up-ev" value="2026-10-17"><span>Ngày 17/10</span></label>
+    </fieldset>
+    <p class="note" id="up-ev-note">Ảnh trùng với một ảnh đã có sẽ <b>giữ nguyên ngày của ảnh cũ</b>; muốn chuyển ngày, chọn ảnh ở mục Ẩn / hiện bên trên rồi bấm “Chuyển sang ngày…”.</p>
     <label class="drop" id="drop">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5V4.5m0 0L8 8.5m4-4 4 4M5 14v3.5A1.5 1.5 0 0 0 6.5 19h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>
       <span class="drop-t">Kéo thả nhiều ảnh vào đây</span>
@@ -111,6 +122,10 @@
     <button type="button" class="btn btn--quiet" id="a-range" aria-pressed="false">Chọn đến đây</button>
     <button type="button" class="btn btn--solid" id="a-hide">Ẩn</button>
     <button type="button" class="btn" id="a-show">Hiện</button>
+  </div>
+  <div class="abar-btns" role="group" aria-label="Chuyển ngày">
+    <button type="button" class="btn btn--quiet" id="a-ev-2026-10-04" data-ev="2026-10-04">Chuyển sang ngày 4/10</button>
+    <button type="button" class="btn btn--quiet" id="a-ev-2026-10-17" data-ev="2026-10-17">Chuyển sang ngày 17/10</button>
   </div>
 </div>
 <div class="toast" id="toast" hidden role="status" aria-live="polite"><span id="toast-t"></span><button type="button" id="toast-undo" hidden>Hoàn tác</button></div>

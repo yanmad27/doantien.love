@@ -55,6 +55,16 @@ Indexer dòng lệnh vẫn dùng được (cùng lõi `indexer.py`): `.venv/bin/
 - Công khai: `/api/gallery` chỉ có ảnh hiện (`Cache-Control: no-cache` + ETag; `b` = nhóm chụp liên tiếp tính lại trên các khung hiện, nhóm < 2 khung hiện → null; hiện lại → ETag y hệt ban đầu). `/originals`, `/thumbs`, `/previews` của ảnh ẩn → 404 y hệt id không tồn tại, trừ khi có `?t=` hợp lệ (token HMAC id + hạn 24 h, bí mật `DATA_DIR/.image_secret` 0600; có token → `Cache-Control: private, no-store`). `/i/{id}-{v}-{size}.webp` vẫn phục vụ ảnh ẩn (v là mã nội dung không đoán được; `v` kiểm theo meta của MỌI ảnh).
 - Tìm kiếm: cài đặt TẮT → ảnh ẩn bị loại trước khi chọn tốt nhất/xếp hạng/cắt/đếm (`total_matches`, `truncated`). BẬT → ảnh ẩn vẫn trúng, không cờ (không tránh được việc suy ra ảnh đang ẩn); mọi kết quả (hiện và ẩn) mang `t`. `b` của ảnh hiện = đúng `b` công khai; ảnh ẩn: `b` = null, trừ khi ≥ 2 khung ẩn cùng nhóm gốc cùng trúng → id khung đầu trong số trúng. Phản hồi không còn `indexed_photos`/`indexed_faces`.
 
+## Hai ngày (4/10 và 17/10) trong một album
+
+- Danh sách ngày cố định trong code (`store.EVENTS`): `2026-10-04` (nhãn "4/10", **mặc định**) và `2026-10-17` ("17/10"). Máy chủ từ chối id lạ (400).
+- Lưu ở bảng `photo_event(photo_id PRIMARY KEY, event)` (không khoá ngoại, không thêm cột vào `photos`, không đổi `DERIV_VERSION`). **Vắng dòng = 4/10**, nên mọi ảnh hiện có tự động thuộc 4/10; chỉ ảnh 17/10 mới có dòng (gán lại về 4/10 thì xoá dòng). Xử lý, backfill, `--prune` không đụng bảng này; `--rebuild` chép nó sang DB mới như `photo_hidden`. Bản code cũ bỏ qua bảng.
+- Tải lên (`POST /api/upload?name=…&event=<id>`, mặc định 4/10): ngày được ghi cùng giao dịch với `originals`, khoá theo id cuối của ảnh (không đợi Xử lý). Ảnh **trùng SHA-256** KHÔNG đổi ngày của ảnh đã có (phản hồi `status: "duplicate"` kèm `event` hiện tại; muốn chuyển, dùng công cụ chuyển ngày). Tải lại ảnh bản gốc bị loại/mất (cùng id) thì ngày vừa chọn ghi đè.
+- Chuyển ngày hàng loạt: `POST /api/admin/event {"ids": [≤5000 mã], "event": "<id>"}` (chủ nhà, cùng khuôn với `/api/admin/visibility`; id lạ bị bỏ qua, ảnh đang ẩn cũng chuyển được; dựng lại manifest trước khi trả lời). Trong /manage: chọn ảnh → "Chuyển sang ngày …" (có Hoàn tác); mỗi ô có huy hiệu ngày; thêm bộ lọc ngày.
+- Manifest `/api/gallery`: mỗi hàng thêm **trường cuối** = id ngày (hàng admin cũng vậy, sau cờ ẩn); thêm `events: [{id, label, n}]` (n = số ảnh hiện, không tính ảnh ẩn). `guest.js` coi hàng thiếu trường = 4/10. Nhóm chụp liên tiếp (`b`) công khai không bao giờ gộp khung của hai ngày (nhóm gốc có thể chứa cả hai; mỗi ngày dồn riêng).
+- Khách: tab "Ngày 4/10 / Ngày 17/10" (mặc định 4/10, chọn nằm trên URL `#ev=<id>` nên tải lại vẫn giữ). Bộ chọn và phạm vi tìm selfie **chỉ hiện khi ≥ 2 ngày có ảnh công khai** — production trông như cũ cho tới khi có ảnh 17/10. Tìm selfie: `POST /api/search?scope=<id>|all` (mặc định `all`, sai → 400), áp cùng chỗ với lọc ảnh ẩn, TRƯỚC best-per-burst/xếp hạng/cắt/đếm; kết quả có thêm trường `ev`.
+- Thử: `.venv/bin/python -m unittest dev/test_events.py`; giao diện: `dev/mock_gallery.py --events --admin-token test-token` rồi `dev/e2e.py --events …`.
+
 ## Cấu hình (biến môi trường hoặc tham số dòng lệnh)
 
 | Env | Tham số | Mặc định |

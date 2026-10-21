@@ -30,6 +30,7 @@
       <label class="btn btn--solid" id="cta-find" for="in-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.4"/><path d="M5.2 20c.7-3.5 3.3-5.4 6.8-5.4s6.1 1.9 6.8 5.4"/></svg>Tìm ảnh của bạn</label>
       <p class="cta-s" id="cta-s">Chỉ cần một tấm selfie. Ảnh selfie <b>không bao giờ được lưu lại</b>.</p>
     </div>
+    <div class="scope" id="scope-hero" role="group" aria-label="Phạm vi tìm ảnh" hidden></div>
     <input class="sr" type="file" id="in-file" accept="image/*" aria-label="Chọn ảnh selfie để tìm ảnh của bạn">
   </header>
 
@@ -51,6 +52,7 @@
           <ul class="tips" id="s-tips" hidden></ul>
           <p class="notice" id="s-multi" hidden></p>
         </div>
+        <div class="scope" id="scope-finder" role="group" aria-label="Phạm vi tìm ảnh" hidden></div>
         <div class="s-actions" id="s-actions" hidden>
           <button type="button" class="btn btn--solid" id="b-retry" hidden>Thử lại</button>
           <label class="btn" for="in-file" id="b-other">Chọn ảnh khác</label>
@@ -97,6 +99,7 @@
 
   <!-- toàn bộ ảnh -->
   <section class="all" id="all" aria-label="Tất cả ảnh">
+    <div class="ev-tabs" id="ev-tabs" role="tablist" aria-label="Chọn ngày" hidden></div>
     <div class="skeleton" id="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
     <div class="vg" id="vg-all" role="group" aria-label="Tất cả ảnh cưới"></div>
   </section>

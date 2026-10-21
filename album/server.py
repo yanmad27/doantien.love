@@ -423,11 +423,11 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     class Busy(Exception):
         pass
 
-    def search_gated(body):
+    def search_gated(body, scope="all"):
         if not search_slots.acquire(blocking=False):
             raise Busy
         try:
-            return search(body)
+            return search(body, scope)
         finally:
             search_slots.release()
 
@@ -476,12 +476,12 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             lock.release()
 
     def public_bursts(order):
-        """order: [(id, burst gốc)] của các khung HIỂN THỊ theo thứ tự manifest → {id: burst công khai}. Nhóm theo burst gốc;
+        """order: [(id, burst gốc, sự kiện)] của các khung HIỂN THỊ theo thứ tự manifest → {id: burst công khai}. Nhóm theo burst gốc;
         burst công khai = id khung hiển thị đầu tiên; nhóm còn < 2 khung hiển thị → không có (None). Mọi id ra khỏi đây đều là ảnh hiện."""
         groups = {}
-        for pid, b in order:
+        for pid, b, ev in order:
             if b:
-                groups.setdefault(b, []).append(pid)
+                groups.setdefault((b, ev), []).append(pid)  # không bao giờ gộp khung của hai sự kiện khác nhau
         return {pid: ids[0] for ids in groups.values() if len(ids) >= 2 for pid in ids}
 
     def build_gallery(m):
@@ -491,21 +491,23 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             db = store.connect_ro(data_dir)
             try:
                 db.execute("BEGIN")
-                q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst, h.id IS NOT NULL, h.hidden_at "
+                q = ("SELECT p.id, COALESCE(m.w,p.width), COALESCE(m.h,p.height), m.taken, m.v, m.color, p.path, m.burst, h.id IS NOT NULL, h.hidden_at, e.event "
                      "FROM photos p LEFT JOIN photo_meta m ON m.id=p.id LEFT JOIN photo_hidden h ON h.id=p.id "
+                     "LEFT JOIN photo_event e ON e.photo_id=p.id "
                      "ORDER BY m.taken IS NULL, m.taken, p.path")
-                for pid, w, h, t, v, c, name, b, hid, hat in db.execute(q):
+                for pid, w, h, t, v, c, name, b, hid, hat, ev in db.execute(q):
                     if pid in meta:  # mỗi id đúng một lần (photos.id là khoá chính, photo_meta.id cũng; phòng thủ thêm)
                         continue
                     t = None if t is None else round(t, 3)
-                    meta[pid] = (v, c, b, bool(hid), w, h)
-                    arows.append([pid, w, h, t, v, c, name, b, 1 if hid else 0])
+                    ev = ev if ev in store.EVENT_IDS else store.DEFAULT_EVENT  # vắng dòng (hoặc giá trị lạ) = sự kiện mặc định
+                    meta[pid] = (v, c, b, bool(hid), w, h, ev)
+                    arows.append([pid, w, h, t, v, c, name, b, 1 if hid else 0, ev])
                     if hid:
                         hidden.add(pid)
                         hats[pid] = "n" if hat is None else repr(float(hat))
                     else:
-                        rows.append([pid, w, h, t, v, c, name, None])
-                        order.append((pid, b))
+                        rows.append([pid, w, h, t, v, c, name, None, ev])
+                        order.append((pid, b, ev))
                 r = db.execute("SELECT value FROM settings WHERE key=?", (store.SEARCH_HIDDEN_KEY,)).fetchone()
                 include = r is None or r[0] != "0"
                 r = db.execute("SELECT value FROM settings WHERE key=?", (store.EPOCH_KEY,)).fetchone()
@@ -518,9 +520,18 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             r[7] = pub.get(r[0])
         photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
         mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
-        raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"photos":{photos_json}}}').encode()
+        n_ev = {e: 0 for e in store.EVENT_IDS}  # số ảnh HIỆN mỗi sự kiện (ảnh ẩn không tính)
+        for r in rows:
+            n_ev[r[8]] += 1
+        events_json = json.dumps([dict(id=e, label=lb, n=n_ev[e]) for e, lb in store.EVENTS], ensure_ascii=False, separators=(",", ":"))
+        raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"events":{events_json},"photos":{photos_json}}}').encode()
         n_hidden = len(hidden)
-        admin = json.dumps(dict(photos=arows, counts=dict(all=len(arows), shown=len(arows) - n_hidden, hidden=n_hidden),
+        by_event = {e: dict(all=0, shown=0, hidden=0) for e in store.EVENT_IDS}
+        for a in arows:
+            by_event[a[9]]["all"] += 1
+            by_event[a[9]]["hidden" if a[8] else "shown"] += 1
+        admin = json.dumps(dict(photos=arows, counts=dict(all=len(arows), shown=len(arows) - n_hidden, hidden=n_hidden), by_event=by_event,
+                                events=[dict(id=e, label=lb) for e, lb in store.EVENTS],
                                 settings={store.SEARCH_HIDDEN_KEY: include}), ensure_ascii=False, separators=(",", ":")).encode()
         # thứ tự manifest của MỌI khung (kể cả ẩn): search dùng để xếp khung đầu của nhóm burst ẩn
         pos = {a[0]: i for i, a in enumerate(arows)}
@@ -552,7 +563,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         finally:
             glock.release()
 
-    def search(body):
+    def search(body, scope="all"):
         t0 = time.perf_counter()
         rgb = load_image(body, QUERY_MAX_PIXELS)
         t1 = time.perf_counter()
@@ -574,7 +585,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         best = {}
         for i in np.flatnonzero(sims >= SCORE_FLOOR):
             pid = rows[i]["photo_id"]
-            if pid not in meta or (pid in hidden and not include):  # ảnh ẩn bị loại TRƯỚC best/xếp hạng/cắt/đếm; ảnh chưa vào manifest chờ lượt dựng sau
+            if pid not in meta or (pid in hidden and not include) or (scope != "all" and meta[pid][6] != scope):  # phạm vi sự kiện + ảnh ẩn bị loại TRƯỚC best/xếp hạng/cắt/đếm; ảnh chưa vào manifest chờ lượt dựng sau
                 continue
             if pid not in best or sims[i] > sims[best[pid]]:
                 best[pid] = i
@@ -583,17 +594,17 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         hid_hits = {}  # burst gốc -> các ảnh ẩn TRÚNG trong phản hồi này
         for pid, _ in top:
             if pid in hidden and meta[pid][2]:
-                hid_hits.setdefault(meta[pid][2], []).append(pid)
+                hid_hits.setdefault((meta[pid][2], meta[pid][6]), []).append(pid)
         hb = {pid: min(ids, key=g["pos"].__getitem__) for ids in hid_hits.values() if len(ids) >= 2 for pid in ids}
         exp = int(time.time()) + IMAGE_TOKEN_TTL
         res = []
         for pid, i in top:
             ph = photos[pid]
-            v, c, _, hid, w, h = meta[pid]
+            v, c, _, hid, w, h, ev = meta[pid]
             res.append(dict(id=pid, name=ph["path"], score=round(float(sims[i]), 4),
                             thumb=f"thumbs/{pid}.jpg", preview=f"previews/{pid}.jpg", width=ph["width"], height=ph["height"],
                             n_faces=ph["n_faces"], bbox=[round(x, 1) for x in rows[i]["bbox"]],
-                            v=v, w=w, h=h, c=c, b=hb.get(pid) if hid else g["pub_b"].get(pid), t=image_token(pid, exp, g)))
+                            v=v, w=w, h=h, c=c, ev=ev, b=hb.get(pid) if hid else g["pub_b"].get(pid), t=image_token(pid, exp, g)))
         t4 = time.perf_counter()
         return dict(
             query=dict(n_faces=len(usable), n_ignored=len(faces) - len(usable), bbox=[round(float(v), 1) for v in face.bbox],
@@ -734,6 +745,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
 
     @app.post("/api/search")
     async def api_search(request: Request):
+        scope = request.query_params.get("scope", "all")
+        if scope != "all" and scope not in store.EVENT_IDS:
+            raise HTTPException(400, "Phạm vi tìm kiếm không hợp lệ.")
         if not body_slots.acquire(blocking=False):
             raise HTTPException(503, "Máy chủ đang bận, hãy thử lại sau ít giây.")
         try:
@@ -749,7 +763,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         if not body:
             raise HTTPException(400, "Không có dữ liệu ảnh")
         try:
-            out = await run_in_threadpool(search_gated, body)
+            out = await run_in_threadpool(search_gated, body, scope)
         except Busy:
             raise HTTPException(503, "Máy chủ đang bận, hãy thử lại sau ít giây.")
         except ImageTooLarge:
@@ -887,6 +901,43 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         await run_in_threadpool(gallery_state, force=True)  # CHẶN: dựng lại manifest công khai trước khi trả lời, kể cả khi đang Xử lý
         return JSONResponse(out, headers=NOSTORE)
 
+    def set_event(ids, event):
+        """MỘT giao dịch, idempotent. Chỉ ảnh có trong photos; mặc định → xoá dòng (vắng = mặc định), còn lại → ghi đè. Ảnh ẩn cũng đổi được."""
+        db = store.connect(data_dir, init=False)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            known = [i for i in ids if db.execute("SELECT 1 FROM photos WHERE id=?", (i,)).fetchone()]
+            changed = 0
+            for i in known:
+                r = db.execute("SELECT event FROM photo_event WHERE photo_id=?", (i,)).fetchone()
+                if (r[0] if r and r[0] in store.EVENT_IDS else store.DEFAULT_EVENT) != event:
+                    changed += 1
+                put_event(db, i, event)
+            db.commit()
+            return dict(changed=changed, unknown=len(ids) - len(known), event=event)
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def put_event(db, pid, event):
+        if event == store.DEFAULT_EVENT:
+            db.execute("DELETE FROM photo_event WHERE photo_id=?", (pid,))
+        else:
+            db.execute("INSERT OR REPLACE INTO photo_event VALUES (?,?)", (pid, event))
+
+    @app.post("/api/admin/event")
+    async def api_admin_event(request: Request):
+        data = await admin_json(request)
+        ids, event = data.get("ids"), data.get("event")
+        if set(data) != {"ids", "event"} or event not in store.EVENT_IDS or not isinstance(ids, list) \
+                or not 1 <= len(ids) <= ADMIN_MAX_IDS or not all(isinstance(i, str) and PHOTO_ID.fullmatch(i) for i in ids):
+            raise HTTPException(400, f'Cần {{"ids": [1..{ADMIN_MAX_IDS} mã 16 hex], "event": {" | ".join(store.EVENT_IDS)}}}.')
+        out = await run_in_threadpool(set_event, list(dict.fromkeys(ids)), event)
+        await run_in_threadpool(gallery_state, force=True)  # CHẶN: dựng lại manifest trước khi trả lời
+        return JSONResponse(out, headers=NOSTORE)
+
     def set_include_hidden(on):
         db = store.connect(data_dir, init=False)
         try:
@@ -928,6 +979,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         fname = safe_name(name)
         if fname is None:
             raise HTTPException(400, "Chỉ nhận ảnh .jpg, .jpeg, .png, .webp")
+        event = request.query_params.get("event", store.DEFAULT_EVENT)
+        if event not in store.EVENT_IDS:
+            raise HTTPException(400, "Sự kiện không hợp lệ.")
         declared = request.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_upload:
             raise HTTPException(413, f"Ảnh quá lớn (tối đa {max_upload // 2**20} MB)")
@@ -958,7 +1012,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     fh.write(c)
             if n == 0:
                 raise HTTPException(400, "File rỗng")
-            return await run_in_threadpool(finalize_upload, part, fname, h.hexdigest(), n)
+            return await run_in_threadpool(finalize_upload, part, fname, h.hexdigest(), n, event)
         finally:
             if os.path.exists(part):
                 os.remove(part)
@@ -967,7 +1021,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     quota["reserved"] -= max_upload
             upload_slots.release()
 
-    def finalize_upload(part, fname, digest, size):
+    def finalize_upload(part, fname, digest, size, event=store.DEFAULT_EVENT):
         try:
             with Image.open(part) as im:  # chỉ đọc header: kiểm định dạng thật + chặn ảnh bom
                 fmt, (w, hgt) = im.format, im.size
@@ -983,7 +1037,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 freed = 0
                 dup = db.execute("SELECT name FROM originals WHERE sha256=?", (digest,)).fetchone()
                 if dup and os.path.exists(os.path.join(store.originals_dir(data_dir), dup[0])):
-                    return dict(status="duplicate", name=dup[0])
+                    r = db.execute("SELECT event FROM photo_event WHERE photo_id=?", (store.photo_id(dup[0]),)).fetchone()
+                    return dict(status="duplicate", name=dup[0], event=r[0] if r and r[0] in store.EVENT_IDS else store.DEFAULT_EVENT)  # giữ nguyên sự kiện đang có
                 if dup:  # bản gốc đã bị loại (rejected/) hoặc mất: cho tải lại, xoá dấu vết để xử lý lại
                     old = db.execute("SELECT size FROM originals WHERE sha256=?", (digest,)).fetchone()
                     db.execute("DELETE FROM originals WHERE sha256=?", (digest,))
@@ -1001,6 +1056,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 try:
                     db.execute("INSERT INTO originals VALUES (?,?,?)", (final, digest, size))
                     db.execute("DELETE FROM failed WHERE path=?", (final,))
+                    put_event(db, store.photo_id(final), event)  # cùng giao dịch với originals: sự kiện có hiệu lực ngay khi ảnh xuất hiện
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -1009,7 +1065,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 stored["bytes"] += size - freed  # chỉ cộng/trừ khi commit đã thành công
             finally:
                 db.close()
-        return dict(status="ok", name=final, renamed=final != fname, width=w, height=hgt)
+        return dict(status="ok", name=final, renamed=final != fname, width=w, height=hgt, event=event)
 
     # ---------- xử lý nền ----------
     @app.post("/api/process")
