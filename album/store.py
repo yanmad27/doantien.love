@@ -25,8 +25,13 @@ CREATE TABLE IF NOT EXISTS photo_meta (  -- bảng riêng (không thêm cột v�
   cam TEXT, sig BLOB, burst TEXT);  -- máy ảnh (Make|Model|Serial), chữ ký 16x16 xám từ thumb 240, nhóm chụp liên tiếp (id khung đầu; NULL = đứng một mình)
 CREATE TABLE IF NOT EXISTS photo_hidden (  -- ảnh chủ nhà ẩn khỏi thư viện công khai. KHÔNG khoá ngoại: Xử lý/backfill/--prune/--rebuild không bao giờ sửa bảng này
   id TEXT PRIMARY KEY, hidden_at REAL);
+CREATE TABLE IF NOT EXISTS photo_event (  -- sự kiện (ngày) của ảnh; vắng dòng = DEFAULT_EVENT. KHÔNG khoá ngoại, KHÔNG cột trong photos: Xử lý/backfill/--prune không sửa bảng này, --rebuild chép sang DB mới; bản cũ bỏ qua bảng
+  photo_id TEXT PRIMARY KEY, event TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);  -- search_includes_hidden: vắng = '1' (BẬT)
 """
+EVENTS = (("2026-10-04", "4/10"), ("2026-10-17", "17/10"))  # danh sách cố định; phần tử đầu là mặc định
+EVENT_IDS = tuple(e[0] for e in EVENTS)
+DEFAULT_EVENT = EVENT_IDS[0]
 SEARCH_HIDDEN_KEY = "search_includes_hidden"
 EPOCH_KEY = "settings_epoch"  # tăng mỗi khi cài đặt trên đổi giá trị: vô hiệu token ảnh của ảnh ẩn
 META_COLUMNS = (("cam", "TEXT"), ("sig", "BLOB"), ("burst", "TEXT"))
@@ -89,27 +94,29 @@ def connect(data_dir, init=True):
 
 
 def keep_owner_state(db_file):
-    """(photo_hidden, settings) đọc từ DB cũ để --rebuild chép sang DB mới; ([], []) nếu chưa có DB/bảng."""
+    """(photo_hidden, settings, photo_event) đọc từ DB cũ để --rebuild chép sang DB mới; ([], [], []) nếu chưa có DB/bảng."""
     if not os.path.exists(db_file):
-        return [], []
+        return [], [], []
     db = sqlite3.connect(db_file, timeout=30)
     try:
         out = []
-        for q in ("SELECT id, hidden_at FROM photo_hidden", "SELECT key, value FROM settings"):
+        for q in ("SELECT id, hidden_at FROM photo_hidden", "SELECT key, value FROM settings",
+                  "SELECT photo_id, event FROM photo_event"):
             try:
                 out.append(db.execute(q).fetchall())
             except sqlite3.OperationalError as e:
                 if "no such table" not in str(e):  # DB hỏng: báo lỗi chứ không coi như "chưa ai bị ẩn"
                     raise
                 out.append([])  # DB từ bản trước chưa có bảng
-        return out[0], out[1]
+        return out[0], out[1], out[2]
     finally:
         db.close()
 
 
-def restore_owner_state(db, hidden, settings):
+def restore_owner_state(db, hidden, settings, events=()):
     db.executemany("INSERT OR IGNORE INTO photo_hidden VALUES (?,?)", hidden)
     db.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", settings)
+    db.executemany("INSERT OR IGNORE INTO photo_event VALUES (?,?)", events)
     db.commit()
 
 

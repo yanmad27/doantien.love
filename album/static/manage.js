@@ -11,6 +11,9 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const toLogin = () => location.reload();
 
 let maxMB = 60;
+const EV_LABEL = { "2026-10-04": "4/10", "2026-10-17": "17/10" }, EV_DEFAULT = "2026-10-04";  // danh sách cố định, khớp store.EVENTS; máy chủ vẫn kiểm lại
+const evLabel = id => EV_LABEL[id] || id;
+const upEvent = () => { const c = document.querySelector('input[name="up-ev"]:checked'); return c ? c.value : EV_DEFAULT; };
 // gọi thoải mái từ mọi nơi nhưng gửi tối đa ~1 request/giây (có lượt cuối để số liệu luôn đúng)
 let statsAt = 0, statsTimer = 0;
 function refreshStats() {
@@ -47,7 +50,7 @@ function addFiles(list) {
     if (f.size > maxMB * 1048576) {  // báo ngay ở trình duyệt, khỏi gửi rồi mới bị đóng kết nối
       st.textContent = `✗ quá lớn (tối đa ${maxMB} MB)`; st.className = "f-st err"; li.classList.add("done"); failN++; continue;
     }
-    queue.push({ f, li, st, fill, loaded: 0 }); total += f.size;
+    queue.push({ f, li, st, fill, loaded: 0, ev: upEvent() });  // ngày chốt lúc thêm vào hàng chờ total += f.size;
   }
   $("overall").hidden = false; pump();
 }
@@ -72,7 +75,7 @@ function upload(it, tries = 0) {
     sent -= it.loaded; it.loaded = 0; it.fill.style.width = "0"; st.textContent = "chờ thử lại…";
     setTimeout(() => upload(it, tries + 1), 2000 * (tries + 1)); return true;
   };
-  x.open("POST", "/api/upload?name=" + encodeURIComponent(it.f.name));
+  x.open("POST", "/api/upload?name=" + encodeURIComponent(it.f.name) + "&event=" + encodeURIComponent(it.ev));
   // hết thời gian theo KHÔNG HOẠT ĐỘNG (không có tiến độ tải lên trong 60 s), không phải tổng thời gian: ảnh gốc 15–25 MB trên mạng yếu vẫn tải được
   let idle = 0;
   const stalled = () => { if (retry()) return; st.textContent = "✗ quá thời gian chờ"; st.className = "f-st err"; failN++; fin(); };
@@ -84,8 +87,8 @@ function upload(it, tries = 0) {
     clearTimeout(idle);
     let d = null; try { d = JSON.parse(x.responseText); } catch (e) {}
     if (!d || typeof d !== "object") d = x.status === 200 ? { detail: "máy chủ trả lời không đọc được" } : {};  // 200 mà không phải JSON: lỗi, không phải "trùng"
-    if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : ""); st.className = "f-st ok"; doneN++; }
-    else if (x.status === 200 && d.name) { st.textContent = "trùng với " + d.name; st.className = "f-st dup"; dupN++; }
+    if (x.status === 200 && d.status === "ok") { st.textContent = "✓ " + fmt(it.f.size) + (d.renamed ? " (đổi tên: " + d.name + ")" : "") + " · ngày " + evLabel(d.event || it.ev); st.className = "f-st ok"; doneN++; }
+    else if (x.status === 200 && d.name) { st.textContent = "trùng với " + d.name + " (giữ nguyên ngày " + evLabel(d.event) + " của ảnh cũ)"; st.className = "f-st dup"; dupN++; }
     else if (x.status === 401) { toLogin(); return; }
     else if ((x.status === 503 || x.status === 429) && retry()) return;
     else { st.textContent = "✗ " + (d.detail || ("lỗi " + x.status)); st.className = "f-st err"; failN++; }
@@ -135,10 +138,12 @@ $("proc").onclick = async () => {
 refreshStats(); poll();
 
 // ---- Ẩn / hiện ảnh (hợp đồng F.4) ----
-// Dữ liệu: GET /api/admin/photos → [id, w, h, t, v, c, name, b, hidden]; b = chuỗi liên thanh GỐC (không phải bản đã dồn của khách).
+// Dữ liệu: GET /api/admin/photos → [id, w, h, t, v, c, name, b, hidden, ev]; b = chuỗi liên thanh GỐC (không phải bản đã dồn của khách).
 const vis = (() => {
   const grid = $("vgrid"), bar = $("abar"), toastEl = $("toast");
   const FILTERS = { all: () => true, shown: p => !p.hidden, hidden: p => p.hidden };
+  let evf = "all";   // lọc theo ngày, kết hợp (AND) với bộ lọc ẩn/hiện
+  const pass = p => FILTERS[filter](p) && (evf === "all" || p.ev === evf);
   const P = [], byId = new Map(), bursts = new Map();   // bursts: b → mọi khung gốc
   let filter = "all", selectMode = false, armed = false, anchor = null, flat = [], idx = new Map(), cells = new Map(), unitByKey = new Map();
   const sel = new Set(), expanded = new Set();
@@ -151,6 +156,7 @@ const vis = (() => {
   function paintCounts() {
     const c = counts();
     for (const k of ["all", "shown", "hidden"]) $("c-" + k).textContent = n0.format(c[k]);
+    for (const e of Object.keys(EV_LABEL)) $("ce-" + e).textContent = n0.format(P.reduce((k, p) => k + (p.ev === e ? 1 : 0), 0));
     return c;
   }
   async function api(path, body) {
@@ -169,8 +175,8 @@ const vis = (() => {
       if (!r.ok) throw new Error("http " + r.status);
       const d = await r.json();
       P.length = 0; byId.clear(); bursts.clear();
-      for (const [id, w, h, t, v, c, name, b, hidden] of d.photos) {
-        const p = { id, w, h, v, c, name, b: b || null, hidden: !!hidden };
+      for (const [id, w, h, t, v, c, name, b, hidden, ev] of d.photos) {
+        const p = { id, w, h, v, c, name, b: b || null, hidden: !!hidden, ev: ev || EV_DEFAULT };
         P.push(p); byId.set(id, p);
         if (p.b) { if (!bursts.has(p.b)) bursts.set(p.b, []); bursts.get(p.b).push(p); }
       }
@@ -186,7 +192,7 @@ const vis = (() => {
 
   // ---- dựng lưới: một ô cho mỗi chuỗi gốc (các khung khớp bộ lọc), ô lẻ cho ảnh không thuộc chuỗi ----
   function build() {
-    flat = P.filter(FILTERS[filter]); idx = new Map(flat.map((p, i) => [p.id, i]));
+    flat = P.filter(pass); idx = new Map(flat.map((p, i) => [p.id, i]));
     const out = [], byB = new Map();
     for (const p of flat) {
       if (p.b) {
@@ -247,6 +253,8 @@ const vis = (() => {
       const allHid = all.reduce((k, p) => k + (p.hidden ? 1 : 0), 0);
       c.classList.toggle("is-hidden", hid === u.frames.length);
       tags.textContent = "";
+      const evs = new Set(u.frames.map(p => p.ev));   // chuỗi gốc có thể gồm khung của hai ngày
+      tags.append(el("span", "tag tag--ev", evs.size === 1 ? evLabel(first(u).ev) : [...evs].map(evLabel).join(" + ")));
       if (burst) tags.append(el("span", "tag tag--n", "×" + u.frames.length));
       if (allHid && allHid < all.length && burst) tags.append(el("span", "tag tag--mix", `${allHid}/${all.length} ẩn`));
       else if (hid === u.frames.length) tags.append(el("span", "tag tag--hid", "Đã ẩn"));
@@ -331,9 +339,11 @@ const vis = (() => {
   $("a-clear").onclick = () => { sel.clear(); armed = false; anchor = null; refresh(); };
   $("a-range").onclick = () => { armed = !armed && !!anchor; if (!anchor) toast("Chạm một ảnh trước, rồi chạm “Chọn đến đây” và ảnh cuối của đoạn."); refresh(); };
   for (const b of document.querySelectorAll(".fchip")) b.onclick = () => {
-    filter = b.dataset.f; anchor = null; armed = false;
-    for (const id of [...sel]) if (!FILTERS[filter](byId.get(id))) sel.delete(id);  // chỉ giữ các khung còn nhìn thấy ở bộ lọc mới
-    for (const x of document.querySelectorAll(".fchip")) x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    const isEv = b.dataset.e != null, group = isEv ? "#evf .fchip" : ".filters:not(#evf) .fchip";
+    if (isEv) evf = b.dataset.e; else filter = b.dataset.f;
+    anchor = null; armed = false;
+    for (const id of [...sel]) if (!pass(byId.get(id))) sel.delete(id);  // chỉ giữ các khung còn nhìn thấy ở bộ lọc mới
+    for (const x of document.querySelectorAll(group)) x.setAttribute("aria-pressed", x === b ? "true" : "false");
     render();
   };
   addEventListener("keydown", e => { if (e.key === "Escape" && selectMode && !document.querySelector("dialog[open]")) setMode(false); });
@@ -345,9 +355,9 @@ const vis = (() => {
     toastEl.hidden = false;
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, undo ? 10000 : 5000);
   }
-  function confirmBig(n, hidden) {
+  function confirmBig(n, hidden, text) {
     const d = $("cf");
-    $("cf-t").textContent = `${hidden ? "Ẩn" : "Hiện"} ${plural(n)}?`;
+    $("cf-t").textContent = text || `${hidden ? "Ẩn" : "Hiện"} ${plural(n)}?`;
     return new Promise(res => {
       const done = v => { d.close(); res(v); };
       $("cf-yes").onclick = () => done(true); $("cf-no").onclick = () => done(false); d.oncancel = () => res(false);
@@ -383,6 +393,35 @@ const vis = (() => {
     });
     return chain;
   }
+  // ---- chuyển ngày hàng loạt: cùng khuôn với ẩn / hiện (lạc quan, quay lại khi lỗi, hoàn tác) ----
+  async function applyEvent(list, ev, isUndo) {
+    const prev = list.filter(p => p.ev !== ev).map(p => [p, p.ev]);
+    if (!prev.length) { if (!isUndo) toast(`Các ảnh đã chọn đã ở ngày ${evLabel(ev)}.`); return; }
+    if (!isUndo && prev.length > 200 && !(await confirmBig(prev.length, null, `Chuyển ${plural(prev.length)} sang ngày ${evLabel(ev)}?`))) return;
+    for (const [p] of prev) p.ev = ev;
+    if (!isUndo) sel.clear();
+    anchor = null; armed = false;
+    for (const id of [...sel]) if (!pass(byId.get(id))) sel.delete(id);
+    render();
+    const undo = () => applyEvent2(prev.map(([p, e]) => [p, e]));
+    toast(isUndo ? `Đã hoàn tác (${plural(prev.length)})` : `Đã chuyển ${plural(prev.length)} sang ngày ${evLabel(ev)}`, isUndo ? null : undo);
+    chain = chain.then(async () => {
+      try { for (let i = 0; i < prev.length; i += 5000) await api("/api/admin/event", { ids: prev.slice(i, i + 5000).map(([p]) => p.id), event: ev }); }
+      catch (e) {
+        if (e.message === "401") return;
+        for (const [p, old] of prev) p.ev = old;
+        render();
+        toast(`Chưa lưu được — ${plural(prev.length)} giữ nguyên ngày cũ. Bạn thử lại nhé.`);
+      }
+    });
+    return chain;
+  }
+  async function applyEvent2(pairs) {   // hoàn tác: mỗi ảnh về đúng ngày trước đó (gộp theo ngày)
+    const by = new Map();
+    for (const [p, e] of pairs) { if (!by.has(e)) by.set(e, []); by.get(e).push(p); }
+    for (const [e, ps] of by) await applyEvent(ps, e, true);
+  }
+  for (const b of document.querySelectorAll("[data-ev]")) if (b.id.startsWith("a-ev-")) b.onclick = () => applyEvent(chosen(), b.dataset.ev);
   const chosen = () => [...sel].map(id => byId.get(id)).filter(Boolean);
   $("a-hide").onclick = () => apply(chosen(), true);
   $("a-show").onclick = () => apply(chosen(), false);
@@ -396,7 +435,7 @@ const vis = (() => {
   function showPv(p) {
     $("pv-img").src = big(p) || thumb(p) || ""; $("pv-img").alt = p.name;
     const all = p.b ? bursts.get(p.b) : null;
-    $("pv-cap").textContent = `${p.name} · ${p.hidden ? "đang ẩn" : "đang hiện"}` + (all ? ` · khung ${all.indexOf(p) + 1}/${all.length} của chuỗi` : "");
+    $("pv-cap").textContent = `${p.name} · ngày ${evLabel(p.ev)} · ${p.hidden ? "đang ẩn" : "đang hiện"}` + (all ? ` · khung ${all.indexOf(p) + 1}/${all.length} của chuỗi` : "");
     $("pv-tog").textContent = p.hidden ? "Hiện ảnh này" : "Ẩn ảnh này";
     $("pv-tog").onclick = async () => { await apply([p], !p.hidden); if (pv.open && byId.get(p.id) === p) showPv(p); };
     $("pv-prev").hidden = $("pv-next").hidden = pvPos < 0 || flat.length < 2;

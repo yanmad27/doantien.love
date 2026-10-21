@@ -41,7 +41,7 @@ def main():
     root = os.path.abspath(a.photos)
     if not os.path.isdir(root):
         sys.exit(f"Không thấy thư mục ảnh: {root}")
-    owner_state = ([], [])
+    owner_state = ([], [], [])
     if a.rebuild:
         # Sao DB cũ (+ -wal/-shm) sang index.db.bak-<ts> TRƯỚC, đọc ảnh đã ẩn + cài đặt từ bản sao trên đĩa (không có đoạn chỉ nằm trong RAM);
         # DB cũ chỉ bị xoá sau khi đọc được. Hỏng/không đọc được → dừng, trỏ tới bản sao, trừ khi --discard-owner-state.

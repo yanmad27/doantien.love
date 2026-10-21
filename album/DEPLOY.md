@@ -163,6 +163,15 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 
 **Dừng app trước khi chạy `index_photos.py --rebuild`** (đang chạy thì web có thể ghi vào DB cũ giữa chừng). Lệnh sao `index.db` (+`-wal`/`-shm`) sang `index.db.bak-<ts>`, đọc ảnh đã ẩn + cài đặt từ bản sao rồi mới xoá DB cũ và chép trạng thái sang DB mới. DB hỏng/không đọc được → dừng với thông báo trỏ tới bản sao (chưa xoá gì); thêm `--discard-owner-state` để vẫn làm tiếp và bỏ trạng thái ẩn (ảnh đã ẩn sẽ HIỆN LẠI). Bản sao không tự xoá: dọn tay khi đã kiểm tra.
 
+## 9c. Hai ngày (4/10 và 17/10): lên production
+
+- **Không cần migrate dữ liệu, không lập chỉ mục lại, không mất trạng thái chủ nhà** (`photo_hidden`, `settings`): bảng `photo_event` tạo tự động khi khởi động (`CREATE TABLE IF NOT EXISTS`); vắng dòng = 4/10 nên mọi ảnh đang có là 4/10.
+- Quy trình: (1) sao lưu DB gồm cả `-wal`/`-shm` nếu có: `sqlite3 /data/index.db ".backup /data/index-pre-events.db"` (hoặc chép cả ba file khi tắt app); (2) deploy; (3) vào /manage, ở mục "Tải ảnh gốc lên" chọn **Ngày 17/10** rồi tải cả đợt ảnh 17/10, bấm **Xử lý**. Trước khi có ảnh 17/10 công khai, trang khách không hiện tab/phạm vi tìm (trông y như cũ).
+- Ảnh trùng SHA-256 với ảnh đã có sẽ **ở nguyên ngày hiện tại** (báo "giữ nguyên ngày …" trong danh sách tải lên). Nếu lỡ tải nhầm ngày, chọn ảnh ở mục Ẩn / hiện và bấm "Chuyển sang ngày …" (hàng loạt, hoàn tác được).
+- Rollback về image cũ an toàn: code cũ bỏ qua bảng `photo_event` và hàng manifest cũ không có trường ngày; ảnh 17/10 sẽ lẫn vào thư viện cũ như ảnh thường (không mất ảnh nào). Mở lại image mới thì ngày vẫn còn.
+- `--rebuild` chép `photo_event` (cùng `photo_hidden`, `settings`) từ bản sao `index.db.bak-<ts>`.
+- Sau deploy: `GET /api/gallery` có `events` và mỗi hàng có 9 phần tử; chưa tải ảnh 17/10 thì `events[1].n` = 0.
+
 ## 10. Kiểm tra sau deploy
 
 1. Logs không có `LỖI:`; `curl https://album.doantien.love/healthz` trả `ok:true`.

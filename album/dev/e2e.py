@@ -30,6 +30,7 @@ ap.add_argument("--big-url", default="", help="máy chủ giả chạy với --s
 ap.add_argument("--open-url", default="", help="máy chủ KHÔNG đặt token: thử /manage mở thẳng")
 ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit"])
 ap.add_argument("--visibility", action="store_true", help="chỉ chạy bộ thử Ẩn / hiện ảnh trong /manage (cần --manage-token nếu máy chủ có khoá; mock: --search-n lớn để ảnh ẩn chắc chắn nằm trong kết quả); trả ảnh về trạng thái hiện hết khi xong")
+ap.add_argument("--events", action="store_true", help="chỉ chạy bộ thử hai ngày (4/10, 17/10): tab khách, phạm vi tìm selfie, /manage tải lên theo ngày + chuyển ngày; mock: --events --admin-token test-token --search-n 70")
 ap.add_argument("--reduced-motion", action="store_true")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
@@ -64,7 +65,7 @@ def watch(ctx):
             check(f"{u.scheme}://{u.netloc}" == APP_ORIGIN, "request có thân (selfie) gửi tới nguồn gốc khác ứng dụng: " + r.url)
         if r.method == "POST" and u.path == "/api/search":
             selfie_posts.append(r.url)
-            check(f"{u.scheme}://{u.netloc}" == APP_ORIGIN and r.url == APP_ORIGIN + "/api/search", "POST /api/search phải là đường dẫn tương đối cùng nguồn gốc: " + r.url)
+            check(f"{u.scheme}://{u.netloc}" == APP_ORIGIN and r.url.split("?")[0] == APP_ORIGIN + "/api/search", "POST /api/search phải là đường dẫn tương đối cùng nguồn gốc: " + r.url)
     ctx.on("request", on_req)
 
 
@@ -94,14 +95,14 @@ def capture_search(pg):
     got = []
     if webkit:
         def on_resp(r):
-            if r.url.endswith("/api/search"):
+            if r.url.split("?")[0].endswith("/api/search"):
                 got.append(r.json())
         pg.on("response", on_resp)
         return got, lambda: pg.remove_listener("response", on_resp)
     def on_route(route):
         r = route.fetch(); got.append(r.json()); route.fulfill(response=r)
-    pg.route("**/api/search", on_route)
-    return got, lambda: pg.unroute("**/api/search", on_route)
+    pg.route("**/api/search*", on_route)
+    return got, lambda: pg.unroute("**/api/search*", on_route)
 
 
 def load_rows(url):
@@ -604,6 +605,154 @@ def vis_suite():
         run(bt, "phone", dict(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm_))
         bt.close()
     print("E2E (ẩn/hiện) OK")
+
+
+def events_suite():
+    """Hai ngày trong một album (mock --events): tab ngày cho khách, URL giữ ngày, phạm vi tìm selfie, tương thích manifest cũ;
+    /manage: chọn ngày khi tải lên, ảnh trùng giữ ngày cũ, huy hiệu ngày, bộ lọc ngày, chuyển ngày hàng loạt + hoàn tác."""
+    E4, E17 = "2026-10-04", "2026-10-17"
+    num = lambda s: int("".join(ch for ch in s if ch.isdigit()) or 0)
+
+    def run(bt, label, kw):
+        ctx = bt.new_context(**kw); pg = ctx.new_page()
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        urllib.request.urlopen(urllib.request.Request(a.url + "/__mock/unhide", method="POST", data=b""))
+        rows, _ = load_rows(a.url)
+        by = {E4: [r for r in rows if r[8] == E4], E17: [r for r in rows if r[8] == E17]}
+        check(by[E4] and by[E17], f"{label}: mock phải có ảnh của cả hai ngày")
+        check(all(not r[7] or r[7] in {x[0] for x in rows if x[8] == r[8]} for r in rows), f"{label}: chuỗi (b) không vắt qua ngày")
+        # ---- khách ----
+        pg.goto(a.url + "/")
+        pg.wait_for_selector("#ev-tabs:not([hidden]) button", timeout=30000); pg.wait_for_selector("#vg-all .tile")
+        check(pg.locator("#ev-tabs button").count() == 2, f"{label}: hai tab ngày")
+        sel = lambda: pg.get_attribute('#ev-tabs button[aria-selected="true"]', "data-ev")
+        check(sel() == E4, f"{label}: tab mặc định 4/10")
+        check(num(pg.inner_text("#count")) == len(by[E4]), f"{label}: đếm 4/10 {pg.inner_text('#count')} vs {len(by[E4])}")
+        tiles, _ = group_tiles(by[E4])
+        check(collect_ids(pg, "#vg-all", label + " 4/10") == [t[0] for t in tiles], f"{label}: thư viện 4/10 đúng manifest")
+        pg.evaluate("scrollTo(0, 0)")
+        pg.click('#ev-tabs button[data-ev="%s"]' % E17); pg.wait_for_function("location.hash === '#ev=%s'" % E17)
+        check(sel() == E17 and num(pg.inner_text("#count")) == len(by[E17]), f"{label}: tab 17/10 + đếm")
+        tiles, _ = group_tiles(by[E17])
+        check(collect_ids(pg, "#vg-all", label + " 17/10") == [t[0] for t in tiles], f"{label}: thư viện 17/10 đúng manifest")
+        shot(pg, "ev-1-guest-tab17.png")
+        pg.reload(); pg.wait_for_selector("#ev-tabs:not([hidden]) button"); pg.wait_for_selector("#vg-all .tile")
+        check(sel() == E17 and num(pg.inner_text("#count")) == len(by[E17]), f"{label}: tải lại vẫn ở 17/10")
+        # ---- phạm vi tìm selfie ----
+        check(pg.get_attribute('#scope-hero button[data-scope="all"]', "aria-pressed") == "true", f"{label}: phạm vi mặc định Cả hai")
+        pg.evaluate("scrollTo(0, 0)")
+        got, stop = capture_search(pg)
+        reqs = []
+        pg.on("request", lambda r: reqs.append(r.url) if r.method == "POST" and "/api/search" in r.url else None)
+        pg.click('#scope-hero button[data-scope="%s"]' % E17)
+        pg.set_input_files("#in-file", a.selfie)
+        pg.wait_for_selector("#results:not([hidden])", timeout=60000)
+        check(reqs and reqs[-1].endswith("/api/search?scope=" + E17), f"{label}: tìm với scope=17/10: {reqs}")
+        check(got[-1]["results"] and all(x["ev"] == E17 for x in got[-1]["results"]), f"{label}: kết quả chỉ 17/10")
+        shot(pg, "ev-2-guest-scope17.png")
+        pg.click('#scope-finder button[data-scope="all"]')
+        pg.wait_for_function("document.querySelector('#scope-finder button[data-scope=\"all\"]').getAttribute('aria-pressed') === 'true'")
+        for _ in range(100):
+            if len(reqs) >= 2: break
+            pg.wait_for_timeout(100)
+        check(len(reqs) >= 2 and reqs[-1].endswith("/api/search"), f"{label}: đổi sang Cả hai → tìm lại không scope: {reqs}")
+        pg.wait_for_selector("#results:not([hidden])")
+        pg.wait_for_timeout(500)
+        check({x["ev"] for x in got[-1]["results"]} == {E4, E17}, f"{label}: Cả hai → có ảnh của cả hai ngày")
+        stop()
+        # ---- manifest cũ (thiếu trường ngày) → không có bộ chọn, mọi ảnh hiện ----
+        pg2 = ctx.new_page(); errs2 = []
+        pg2.on("pageerror", lambda e: errs2.append(str(e)))
+        def old_shape(route):
+            r = route.fetch(); m = r.json(); m.pop("events", None)
+            m["photos"] = [p[:8] for p in m["photos"]]
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(m))
+        pg2.route("**/api/gallery", old_shape)
+        pg2.goto(a.url + "/#ev=" + E17); pg2.wait_for_selector("#vg-all .tile", timeout=30000)
+        check(pg2.locator("#ev-tabs").is_hidden() and pg2.locator("#scope-hero").is_hidden(), f"{label}: manifest cũ: không hiện tab/phạm vi")
+        check(num(pg2.inner_text("#count")) == len(rows) and not errs2, f"{label}: manifest cũ: hiện đủ {len(rows)} ảnh {errs2}")
+        pg2.close()
+        # ---- /manage ----
+        pg.goto(a.url + "/manage")
+        if pg.locator("#login-form").count():
+            pg.fill("#token-in", a.manage_token); pg.click("#login-btn")
+        pg.wait_for_selector("#vgrid .cell", timeout=30000)
+        check(pg.is_checked('input[name="up-ev"][value="%s"]' % E4), f"{label}: tải lên mặc định 4/10")
+        os.makedirs(a.out, exist_ok=True)
+        dup = os.path.join(a.out, "dup-selfie.jpg"); open(dup, "wb").write(open(a.selfie, "rb").read())
+        with pg.expect_request(lambda r: "/api/upload" in r.url) as ri:
+            pg.set_input_files("#pick", a.selfie)
+        check("event=" + E4 in ri.value.url, f"{label}: tải lên mặc định gửi event=4/10: {ri.value.url}")
+        pg.wait_for_function("/xong/.test(document.getElementById('upchips').textContent)", timeout=15000)
+        pg.check('input[name="up-ev"][value="%s"]' % E17, force=True)
+        with pg.expect_request(lambda r: "/api/upload" in r.url) as ri:
+            pg.set_input_files("#pick", a.selfie)
+        check("event=" + E17 in ri.value.url, f"{label}: tải lên 17/10 gửi event=2026-10-17: {ri.value.url}")
+        pg.wait_for_function("document.querySelector('#files li .f-st').textContent.includes('ngày 17/10')", timeout=15000)
+        with pg.expect_request(lambda r: "/api/upload" in r.url):
+            pg.set_input_files("#pick", dup)
+        pg.wait_for_function("document.querySelector('#files li .f-st').textContent.includes('giữ nguyên ngày 17/10')", timeout=15000)
+        print(f"{label}: tải lên theo ngày: mặc định 4/10, chọn 17/10, trùng → '{pg.inner_text('#files li .f-st')}'")
+        d = pg.evaluate("fetch('/api/admin/photos').then(r => r.json())")
+        P = {p[0]: p for p in d["photos"]}
+        check(all(len(p) == 10 for p in P.values()), f"{label}: hàng admin có trường ngày")
+        singles = [p[0] for p in d["photos"] if not p[7] and not p[8]][:3]
+        check(len(singles) == 3, f"{label}: cần 3 ảnh lẻ")
+        # huy hiệu ngày
+        tag = lambda k: pg.inner_text('.cell[data-k="%s"] .tag--ev' % k)
+        for k in singles:
+            pg.evaluate("k => document.querySelector('.cell[data-k=\"' + k + '\"]').scrollIntoView({ block: 'center' })", k)
+            check(tag(k) == ("17/10" if P[k][9] == E17 else "4/10"), f"{label}: huy hiệu ngày {k}")
+        # bộ lọc ngày
+        pg.click('#evf .fchip[data-e="%s"]' % E17)
+        n17 = sum(1 for p in d["photos"] if p[9] == E17)
+        check(pg.locator("#vgrid .cell").count() > 0 and num(pg.inner_text("#ce-" + E17)) == n17, f"{label}: bộ lọc ngày 17/10 ({pg.inner_text('#ce-' + E17)} vs {n17})")
+        check(all(pg.evaluate("[...document.querySelectorAll('#vgrid .tag--ev')].every(t => t.textContent.includes('17/10'))") for _ in [0]), f"{label}: lọc 17/10 chỉ còn ô 17/10")
+        pg.click('#evf .fchip[data-e="all"]')
+        # chuyển ngày hàng loạt
+        tgt = E17 if P[singles[0]][9] != E17 else E4
+        pg.click("#v-mode")
+        for k in singles[:2]:
+            pg.evaluate("k => document.querySelector('.cell[data-k=\"' + k + '\"]').scrollIntoView({ block: 'center' })", k)
+            pg.locator('.cell[data-k="%s"] .tile' % k).click()
+        check(num(pg.inner_text("#abar-n")) == 2, f"{label}: chọn 2 ảnh")
+        want_other = E4 if tgt == E17 else E17
+        for _ in [0]:
+            with pg.expect_response(lambda r: r.url.endswith("/api/admin/event") and r.request.method == "POST") as rr:
+                pg.click("#a-ev-" + tgt)
+            check(rr.value.status == 200 and json.loads(rr.value.request.post_data)["event"] == tgt, f"{label}: POST /api/admin/event 200")
+        pg.wait_for_timeout(200)
+        d2 = pg.evaluate("fetch('/api/admin/photos').then(r => r.json())")
+        P2 = {p[0]: p[9] for p in d2["photos"]}
+        check(all(P2[k] == tgt for k in singles[:2]) and P2[singles[2]] == P[singles[2]][9], f"{label}: chuyển ngày đúng 2 ảnh")
+        pub = {r[0]: r[8] for r in load_rows(a.url)[0]}
+        check(all(pub[k] == tgt for k in singles[:2]), f"{label}: manifest công khai thấy ngày mới ngay")
+        check(tag(singles[0]) == ("17/10" if tgt == E17 else "4/10"), f"{label}: huy hiệu cập nhật")
+        shot(pg, "ev-3-manage-reassign.png")
+        pg.click("#toast-undo"); pg.wait_for_timeout(400)
+        d3 = pg.evaluate("fetch('/api/admin/photos').then(r => r.json())")
+        check({p[0]: p[9] for p in d3["photos"]}[singles[0]] == P[singles[0]][9], f"{label}: hoàn tác trả ngày cũ")
+        # ngày không hợp lệ bị máy chủ từ chối
+        st = pg.evaluate("fetch('/api/admin/event', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: ['%s'], event: '2026-10-05'})}).then(r => r.status)" % singles[0])
+        check(st == 400, f"{label}: event lạ phải 400, được {st}")
+        check(not errs, f"{label}: lỗi JS trên trang: {errs}")
+        print(f"{label}: tab ngày + URL + phạm vi tìm + manifest cũ + /manage (tải lên, huy hiệu, lọc, chuyển ngày, hoàn tác) OK")
+        ctx.close()
+
+    with sync_playwright() as pw:
+        bt = getattr(pw, a.browser).launch()
+        rm_ = "reduce" if a.reduced_motion else "no-preference"
+        run(bt, "desktop", dict(viewport={"width": 1280, "height": 800}, reduced_motion=rm_))
+        run(bt, "phone", dict(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, reduced_motion=rm_))
+        bt.close()
+    urllib.request.urlopen(urllib.request.Request(a.url + "/__mock/unhide", method="POST", data=b""))
+    print("E2E (hai ngày) OK")
+
+
+if a.events:
+    events_suite()
+    sys.exit(0)
 
 
 if a.visibility:
