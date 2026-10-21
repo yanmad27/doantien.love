@@ -46,6 +46,30 @@ mimetypes.add_type("font/woff2", ".woff2")
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 25 * 1024 * 1024
+SEARCH_GZIP_MIN = 1024  # nhỏ hơn thì nén không đáng
+SEARCH_GZIP_LEVEL = 5
+
+
+def accepts_gzip(header):
+    """Accept-Encoding (RFC 9110 §12.5.3): gzip/x-gzip có q>0 → nén; `*` chỉ tính khi gzip không được nêu; thiếu header → identity."""
+    star = None
+    for part in (header or "").split(","):
+        name, _, params = part.partition(";")
+        name, q = name.strip().lower(), 1.0
+        for p in params.split(";"):
+            k, _, v = p.partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    q = float(v.strip())
+                except ValueError:
+                    q = 0.0
+        if name in ("gzip", "x-gzip"):
+            return q > 0
+        if name == "*":
+            star = q > 0
+    return bool(star)
+
+
 SCORE_FLOOR = 0.15  # dưới mức này không bao giờ là cùng người, khỏi gửi về
 MAX_RESULTS = int(os.environ.get("ALBUM_MAX_RESULTS", 5000))  # phủ cả album (giao diện ảo hoá, hiện được hết); đặt nhỏ lại nếu cần giới hạn
 QUERY_MIN_FACE = 40  # cạnh ngắn (px) tối thiểu của mặt trong selfie, khớp --min-face của indexer
@@ -743,6 +767,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             hdr["Content-Encoding"] = "gzip"
         return Response(g["gz"] if gz else g["raw"], media_type="application/json", headers=hdr)
 
+    def encode_search(out, gz):
+        raw = json.dumps(out, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+        hdr = {"Cache-Control": "no-store", "Vary": "Accept-Encoding"}
+        if gz and len(raw) >= SEARCH_GZIP_MIN:
+            raw = gzip.compress(raw, SEARCH_GZIP_LEVEL, mtime=0)
+            hdr["Content-Encoding"] = "gzip"
+        return raw, hdr
+
     @app.post("/api/search")
     async def api_search(request: Request):
         scope = request.query_params.get("scope", "all")
@@ -775,7 +807,9 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             raise HTTPException(500, "Máy chủ gặp lỗi khi xử lý. Vui lòng thử lại sau.")
         if out is None or out == "face_too_small":
             return JSONResponse({"error": out or "no_face"}, status_code=422)
-        return JSONResponse(out, headers={"Cache-Control": "no-store"})
+        gz = accepts_gzip(request.headers.get("accept-encoding"))
+        raw, hdr = await run_in_threadpool(encode_search, out, gz)
+        return Response(raw, media_type="application/json", headers=hdr)
 
     def compute_stats():
         _, rows, photos = index()

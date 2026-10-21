@@ -648,18 +648,18 @@ def events_suite():
         pg.click('#scope-hero button[data-scope="%s"]' % E17)
         pg.set_input_files("#in-file", a.selfie)
         pg.wait_for_selector("#results:not([hidden])", timeout=60000)
-        check(reqs and reqs[-1].endswith("/api/search?scope=" + E17), f"{label}: tìm với scope=17/10: {reqs}")
-        check(got[-1]["results"] and all(x["ev"] == E17 for x in got[-1]["results"]), f"{label}: kết quả chỉ 17/10")
+        check(len(reqs) == 1 and reqs[-1].endswith("/api/search"), f"{label}: lần tìm đầu luôn không kèm scope (chọn sẵn 17/10 chỉ lọc phía khách): {reqs}")
+        check(got[-1]["results"] and {x["ev"] for x in got[-1]["results"]} == {E4, E17}, f"{label}: phản hồi gốc có cả hai ngày")
+        ids = lambda: pg.evaluate("gMain.flat.concat(gMaybe.flat).map(x => x.id)")
+        evs = {r[0]: r[8] for r in rows}
+        check(ids() and all(evs.get(i, E17) == E17 for i in ids()), f"{label}: chỉ hiện ảnh 17/10")
         shot(pg, "ev-2-guest-scope17.png")
         pg.click('#scope-finder button[data-scope="all"]')
         pg.wait_for_function("document.querySelector('#scope-finder button[data-scope=\"all\"]').getAttribute('aria-pressed') === 'true'")
-        for _ in range(100):
-            if len(reqs) >= 2: break
-            pg.wait_for_timeout(100)
-        check(len(reqs) >= 2 and reqs[-1].endswith("/api/search"), f"{label}: đổi sang Cả hai → tìm lại không scope: {reqs}")
         pg.wait_for_selector("#results:not([hidden])")
         pg.wait_for_timeout(500)
-        check({x["ev"] for x in got[-1]["results"]} == {E4, E17}, f"{label}: Cả hai → có ảnh của cả hai ngày")
+        check(len(reqs) == 1, f"{label}: đổi sang Cả hai không gửi lại /api/search: {reqs}")
+        check({evs.get(i, E17) for i in ids()} == {E4, E17}, f"{label}: Cả hai → có ảnh của cả hai ngày")
         stop()
         # ---- manifest cũ (thiếu trường ngày) → không có bộ chọn, mọi ảnh hiện ----
         pg2 = ctx.new_page(); errs2 = []

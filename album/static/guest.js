@@ -14,8 +14,10 @@ const nf = new Intl.NumberFormat("vi-VN");
 // không khung nào bị ẩn hay xoá. Đặt false để hiện từng khung như ảnh riêng (?bursts=0 chỉ để so sánh/gỡ lỗi).
 const COLLAPSE_BURSTS = new URLSearchParams(location.search).get("bursts") !== "0";
 
-let file = null, selfieUrl = null, runId = 0, ctl = null;
+let file = null, selfieUrl = null, runId = 0, ctl = null, reqSeq = 0;
 let data = null;
+// Bộ nhớ kết quả của MỘT lần chọn selfie (chỉ trong RAM): all = phản hồi không phạm vi; sc = phản hồi theo ngày khi all không dùng lại được. Đông cứng tại lúc tìm.
+let cache = null;
 let mode = "all";  // all: cả album · mine: kết quả tìm bằng selfie
 let photos = [], galleryReady = false;
 // Hai sự kiện (ngày) trong một album. Bộ chọn chỉ hiện khi ≥ 2 sự kiện có ảnh công khai; hàng manifest cũ (thiếu trường cuối) = sự kiện mặc định.
@@ -343,7 +345,41 @@ function setScope(id) {
   if (id === scope) return;
   scope = id;
   paintEvents();
-  if (mode === "mine" && file) search();  // đổi phạm vi khi đang xem kết quả → tìm lại với cùng ảnh selfie
+  if (mode === "mine" && file && cache && cache.all) settle();  // đổi phạm vi: lọc lại kết quả đã có (không tải lại selfie); chưa có phản hồi đầu thì nó sẽ tự dùng phạm vi mới
+}
+// phản hồi "tất cả" dùng lại được khi đủ (không bị cắt) và MỌI kết quả có ev hợp lệ — không suy ev của ảnh ẩn từ manifest công khai
+const reusable = r => r && r.truncated === false && Array.isArray(r.results) && r.results.every(x => x && events.some(e => e.id === x.ev));
+function project(r, sc) {
+  const results = r.results.filter(x => x.ev === sc);
+  return Object.assign({}, r, { results, total_matches: results.length, truncated: false });
+}
+function viewFor(sc) {
+  if (sc === "all" || !evShown) return cache.all;
+  if (reusable(cache.all)) return project(cache.all, sc);
+  return cache.sc.get(sc) || null;
+}
+function present(v) {
+  v.e2e = cache.e2e;
+  clearResults();  // chỉ xoá phần hiển thị; bộ nhớ kết quả giữ nguyên
+  data = v;
+  showResults();
+}
+function settle() {
+  const v = viewFor(scope);
+  if (v) { reqSeq++; if (ctl) ctl.abort(); present(v); return; }
+  clearResults(); setLoading();
+  fetchScope(scope);
+}
+async function fetchScope(sc) {
+  const my = runId, seq = ++reqSeq;
+  if (ctl) ctl.abort();
+  ctl = new AbortController();
+  const c = cache;
+  const r = await request("/api/search?scope=" + encodeURIComponent(sc), ctl.signal, () => my !== runId || seq !== reqSeq);
+  if (!r) return;
+  c.sc.set(sc, r);
+  if (scope === sc) present(r);
+  else settle();  // đổi phạm vi trong lúc chờ → xử lý lại theo phạm vi mới
 }
 function showEmpty(t, s, retry) {
   loadDecor();
@@ -388,7 +424,7 @@ addEventListener("drop", e => {
   e.preventDefault(); dragN = 0; document.body.classList.remove("dragging");
   const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) choose(f);
 });
-$("b-retry").onclick = () => file && search();
+$("b-retry").onclick = () => { if (file) { if (cache && cache.all) settle(); else search(); } };
 
 function enterMine() {
   if (mode === "mine") return;
@@ -401,7 +437,7 @@ function enterMine() {
 }
 let savedY = 0;
 function showAll() {
-  runId++; if (ctl) ctl.abort();
+  runId++; if (ctl) ctl.abort(); cache = null;
   clearResults();
   if (selfieUrl) URL.revokeObjectURL(selfieUrl);
   selfieUrl = null; file = null;
@@ -413,7 +449,7 @@ function showAll() {
 }
 
 function choose(f) {
-  if (!f.type.startsWith("image/") && f.type !== "") { runId++; if (ctl) ctl.abort(); clearResults(); enterMine(); showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
+  if (!f.type.startsWith("image/") && f.type !== "") { runId++; if (ctl) ctl.abort(); cache = null; clearResults(); enterMine(); showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
   clearResults();
   enterMine();
   if (selfieUrl) URL.revokeObjectURL(selfieUrl);
@@ -446,9 +482,11 @@ async function prepare(f) {
 }
 
 async function search() {
-  const my = ++runId;
+  const my = ++runId, seq = ++reqSeq;
   if (ctl) ctl.abort();
   ctl = new AbortController();
+  cache = { all: null, sc: new Map(), e2e: 0 };
+  const c = cache;
   clearResults();
   setLoading();
   const t0 = performance.now();
@@ -456,11 +494,24 @@ async function search() {
     const body = await prepare(file);
     if (my !== runId) return;
     // selfie CHỈ gửi tới đường dẫn tương đối cùng nguồn gốc với trang — không bao giờ tới CDN
-    const r = await fetch("/api/search" + (evShown && scope !== "all" ? "?scope=" + encodeURIComponent(scope) : ""), { method: "POST", body, headers: { "Content-Type": "application/octet-stream" }, signal: ctl.signal });
-    if (my !== runId) return;
+    const r = await request("/api/search", ctl.signal, () => my !== runId || seq !== reqSeq, body);
+    if (!r) return;
+    c.all = r; c.e2e = performance.now() - t0;
+    settle();
+  } catch (err) {
+    if (err.name === "AbortError" || my !== runId) return;
+    showError("Chưa kết nối được", "Có vẻ mạng đang gián đoạn. Bạn kiểm tra kết nối rồi thử lại nhé.", [], true);
+  }
+}
+// POST selfie (lần đầu: body vừa chuẩn bị; sau đó: `file` gửi lại khi cần phản hồi theo ngày). Trả JSON hoặc null (đã hiện lỗi / đã bị thay thế).
+async function request(url, signal, stale, body) {
+  try {
+    if (!body) { body = await prepare(file); if (stale()) return null; }
+    const r = await fetch(url, { method: "POST", body, headers: { "Content-Type": "application/octet-stream" }, signal });
+    if (stale()) return null;
     if (r.status === 422) {
       const e = await r.json().catch(() => ({}));
-      if (my !== runId) return;
+      if (stale()) return null;
       if (e.error === "face_too_small") {
         showError("Khuôn mặt hơi nhỏ", "Khuôn mặt trong ảnh quá nhỏ để nhận ra bạn. Hãy chụp gần hơn hoặc dùng một tấm ảnh khác.",
           ["Đưa máy lại gần, để mặt chiếm phần lớn khung hình", "Chọn ảnh chỉ có một mình bạn"]);
@@ -468,23 +519,23 @@ async function search() {
         showError("Chưa thấy khuôn mặt nào", "Chúng tôi không tìm thấy khuôn mặt trong ảnh này. Bạn thử một tấm selfie rõ hơn nhé.",
           ["Chụp nơi đủ sáng, nhìn thẳng vào máy", "Bỏ khẩu trang, kính râm hoặc tóc che mặt", "Đảm bảo ảnh không bị mờ"]);
       }
-      return;
+      return null;
     }
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
-      if (my !== runId) return;
+      if (stale()) return null;
       if (r.status === 503) showError("Đang đông khách quá", "Nhiều người đang tìm ảnh cùng lúc. Bạn thử lại sau ít giây nhé.", [], true);
       else if (r.status === 413) showError("Ảnh quá lớn", e.detail || "Hãy chọn một ảnh nhỏ hơn.", []);
       else if (r.status === 400) showError("Không đọc được ảnh", e.detail || "Hãy thử một file JPG hoặc PNG khác.", []);
       else showError("Có chút trục trặc", "Chưa tìm được ảnh lúc này. Bạn thử lại sau ít phút nhé.", [], true);
-      return;
+      return null;
     }
-    data = await r.json();
-    data.e2e = performance.now() - t0;
-    showResults();
+    const j = await r.json();
+    return stale() ? null : j;
   } catch (err) {
-    if (err.name === "AbortError" || my !== runId) return;
+    if (err.name === "AbortError" || stale()) return null;
     showError("Chưa kết nối được", "Có vẻ mạng đang gián đoạn. Bạn kiểm tra kết nối rồi thử lại nhé.", [], true);
+    return null;
   }
 }
 
