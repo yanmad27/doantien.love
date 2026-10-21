@@ -172,10 +172,36 @@ class GzipTests(Base):
         self.plain = self.go()[2]
 
     def test_accept_encoding_parsing(self):
-        for h, want in ((None, False), ("", False), ("gzip", True), ("GZIP", True), ("br, gzip;q=0.5", True), ("gzip;q=0", False), ("gzip; q=0.0", False),
-                        ("identity", False), ("br", False), ("*", True), ("*;q=0", False), ("gzip;q=0, *", False), ("x-gzip", True), ("gzip;q=abc", False),
-                        ("deflate, gzip;q=1.0", True)):
-            self.assertEqual(server.accepts_gzip(h), want, h)
+        T, F = True, False
+        for h, want in ((None, (F, T)), ("", (F, T)), ("gzip", (T, T)), ("GZIP", (T, T)), (" Gzip ; Q=0.5 ", (T, T)), ("br, gzip;q=0.5", (T, T)), ("gzip;q=0", (F, T)),
+                        ("gzip; q=0.0", (F, T)), ("identity", (F, T)), ("br", (F, T)), ("*", (T, T)), ("*;q=0", (F, F)), ("gzip;q=0, *", (F, T)),
+                        ("x-gzip", (T, T)), ("gzip;q=abc", (F, T)), ("deflate, gzip;q=1.0", (T, T)), ("gzip, identity;q=0", (T, F)),
+                        ("identity;q=0", (F, F)), ("gzip;q=0, identity;q=0", (F, F)), ("*;q=0, gzip", (T, F)), ("*;q=0, identity", (F, T)),
+                        ("  GZIP , IDENTITY ; q=0 ", (T, F)), ("gzip,identity;q=0.0", (T, F))):
+            self.assertEqual(server.accepted_codings(h), want, h)
+
+    def test_encoding_choice_small_and_neither_acceptable(self):
+        small, big = 10, server.SEARCH_GZIP_MIN
+        pick = server.search_encoding
+        self.assertEqual(pick("gzip", small), "identity")  # nhỏ + identity ổn → không nén
+        self.assertEqual(pick("gzip", big), "gzip")
+        self.assertEqual(pick("gzip, identity;q=0", small), "gzip")  # identity bị loại → nén dù nhỏ (kể cả kết quả rỗng)
+        self.assertEqual(pick("*;q=0, gzip", small), "gzip")
+        self.assertEqual(pick("*;q=0", big), "identity")  # không cái nào chấp nhận được → identity, không 406
+        self.assertEqual(pick("identity;q=0", big), "identity")
+        self.assertEqual(pick("gzip;q=0, identity;q=0", small), "identity")
+        self.assertEqual(pick(" GZIP ,IDENTITY;Q=0", small), "gzip")
+
+    def test_wire_small_body_identity_excluded(self):
+        reassign(self.app, list(PID), E4)
+        for ae, gz in (("gzip, identity;q=0", True), ("*;q=0, gzip", True), ("*;q=0", False), ("identity;q=0", False), ("gzip;q=0, identity;q=0", False)):
+            st, h, body, _ = call(self.app, "POST", f"/api/search?scope={E17}", headers={"Accept-Encoding": ae}, body=self.q)  # 17/10 rỗng → thân nhỏ
+            self.assertEqual(st, 200, ae)
+            self.assertEqual(h.get("content-encoding") == "gzip", gz, ae)
+            self.assertEqual(h["vary"], "Accept-Encoding")
+            raw = gzip.decompress(body) if gz else body
+            self.assertLess(len(raw), server.SEARCH_GZIP_MIN)
+            self.assertEqual(json.loads(raw)["results"], [], ae)
 
     def test_wire(self):
         for ae, gz in ((None, False), ("gzip", True), ("gzip, deflate, br", True), ("gzip;q=0", False), ("identity", False)):

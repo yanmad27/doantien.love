@@ -89,7 +89,7 @@ def answer(seed, sc, cap=None):
 
 class Stub:
     def __init__(self, pg, cap=None, hold=False):
-        self.cap, self.hold, self.held, self.reqs = cap, hold, [], []
+        self.cap, self.hold, self.held, self.reqs, self.fail_scoped = cap, hold, [], [], 0
         pg.route("**/api/search*", self.handle)
 
     def handle(self, route):
@@ -105,11 +105,25 @@ class Stub:
 
     def send(self, item):
         route, seed, sc = item
+        if sc != "all" and self.fail_scoped > 0:
+            self.fail_scoped -= 1
+            return route.fulfill(status=503, content_type="application/json", body='{"detail":"busy"}')
         body = answer(seed, sc, self.cap if sc == "all" else None)
         route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
 
     def release(self, i):
         self.send(self.held[i])
+
+
+GATE = """() => { window.__gates = []; window.__prep = 0; const f = window.fetch, p = prepare; prepare = async x => { window.__prep++; return p(x); };
+  window.fetch = async (u, o) => { const r = await f(u, o); if (!String(u).includes('/api/search')) return r; let rel; const g = new Promise(res => rel = res); window.__gates.push(rel);
+    return { status: r.status, ok: r.ok, json: async () => { await g; return r.json(); } }; }; }"""
+def gates(pg): return pg.evaluate("window.__gates.length")
+def open_gate(pg, i): pg.evaluate(f"window.__gates[{i}]()")
+def wait_gates(pg, n):
+    for _ in range(100):
+        if gates(pg) >= n: return
+        pg.wait_for_timeout(50)
 
 
 def snap(pg):
@@ -304,6 +318,64 @@ try:
         check("Chưa có ảnh nào khớp trong ngày 17/10" in pg.inner_text("#s-text") and pg.is_hidden("#results"), f"ngày rỗng: lời nhắn như cũ: {pg.inner_text('#s-text')}")
         chip(pg, "all"); wait_done(pg)
         check(not pg.is_hidden("#results") and "Đã tìm xong" in pg.inner_text("#s-title"), "ngày rỗng rồi về 'tất cả': kết quả hiện lại")
+        ctx.close()
+
+        # 7) thân phản hồi về chậm (đã có header, r.json() chờ): đổi selfie / bấm ngày trong lúc đó
+        ctx, pg, st, errs = fresh(br)
+        pg.evaluate(GATE)
+        pg.set_input_files("#in-file", selfies[0]); wait_gates(pg, 1)
+        pg.set_input_files("#in-file", selfies[1]); wait_gates(pg, 2)
+        open_gate(pg, 0); pg.wait_for_timeout(400)  # thân selfie cũ về sau khi đã đổi selfie
+        check(pg.evaluate("data") is None and not pg.is_hidden("#s-loading"), "thân chậm của selfie cũ về sau khi đổi selfie: bỏ")
+        for sc in (E17, E4, E17):
+            chip(pg, sc)
+        open_gate(pg, 1); wait_done(pg)
+        check(len(st.reqs) == 2 and snap(pg)["n"] == len([x for x in base_results(S1) if x["ev"] == E17]) and pg.evaluate("data.results.every(x => x.ev === '%s')" % E17),
+              "thân chậm của selfie mới + bấm ngày khi chờ: hiện ngày cuối, không yêu cầu thêm")
+        ctx.close()
+        ctx, pg, st, errs = fresh(br, cap=20)  # thân theo ngày về chậm, trong lúc đó bấm 'tất cả' / ngày khác
+        pg.evaluate(GATE)
+        pg.set_input_files("#in-file", selfies[0]); wait_gates(pg, 1); open_gate(pg, 0); wait_done(pg)
+        chip(pg, E17); wait_gates(pg, 2)
+        chip(pg, "all")
+        check(snap(pg)["n"] == 20 and pg.is_hidden("#s-loading"), "thân theo ngày chưa về: bấm 'tất cả' hiện ngay")
+        open_gate(pg, 1); pg.wait_for_timeout(400)
+        check(snap(pg)["n"] == 20 and pg.get_attribute('#scope-finder button[data-scope="all"]', "aria-pressed") == "true", "thân 17/10 về sau khi đã đổi sang 'tất cả': không đè")
+        chip(pg, E4); wait_gates(pg, 3); chip(pg, E17); wait_gates(pg, 4); open_gate(pg, 3); wait_done(pg)
+        check(snap(pg)["n"] == len([x for x in base_results(S0) if x["ev"] == E17]) and pg.evaluate("__prep") == 1, f"nhiều yêu cầu theo ngày chồng nhau: hiện 17/10; selfie chỉ chuẩn bị 1 lần ({pg.evaluate('__prep')})")
+        open_gate(pg, 2); pg.wait_for_timeout(300)
+        check(snap(pg)["n"] == len([x for x in base_results(S0) if x["ev"] == E17]), "thân 4/10 về muộn không đè 17/10")
+        ctx.close()
+
+        # 8) thử lại sau khi yêu cầu theo ngày hỏng
+        ctx, pg, st, errs = fresh(br, cap=20)
+        pg.evaluate(GATE)
+        pg.set_input_files("#in-file", selfies[0]); wait_gates(pg, 1); open_gate(pg, 0); wait_done(pg)
+        st.fail_scoped = 1
+        chip(pg, E17); wait_gates(pg, 2); open_gate(pg, 1)
+        pg.wait_for_selector("#b-retry:not([hidden])", timeout=10000)
+        check("Đang đông khách" in pg.inner_text("#s-title"), "yêu cầu theo ngày 503 → báo bận có nút thử lại")
+        pg.click("#b-retry"); wait_gates(pg, 3); open_gate(pg, 2); wait_done(pg)
+        check([r[0] for r in st.reqs] == ["all", E17, E17] and all(r[1] == S0 for r in st.reqs) and snap(pg)["n"] == len([x for x in base_results(S0) if x["ev"] == E17]),
+              f"thử lại → chỉ hỏi lại theo ngày (cùng thân selfie), hiện đúng: {st.reqs}")
+        check(pg.evaluate("__prep") == 1, "thử lại không chuẩn bị lại selfie")
+        ctx.close()
+
+        # 9) bộ nhớ hết hạn sau 10 phút (đồng hồ tiêm)
+        ctx, pg, st, errs = fresh(br)
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        pg.evaluate("window.__o = clock; clock = () => __o() + 9 * 60 * 1000")
+        chip(pg, E17); wait_done(pg)
+        check(len(st.reqs) == 1 and snap(pg)["n"] == len([x for x in base_results(S0) if x["ev"] == E17]), "9 phút: vẫn dùng bộ nhớ, 0 request")
+        pg.evaluate("clock = () => __o() + 10 * 60 * 1000 + 5")
+        chip(pg, E4); wait_done(pg)
+        check([r[0] for r in st.reqs] == ["all", "all"] and snap(pg)["n"] == len([x for x in base_results(S0) if x["ev"] == E4]), f"quá 10 phút: đổi ngày → tìm lại không scope rồi lọc: {st.reqs}")
+        chip(pg, E17); chip(pg, "all"); wait_done(pg)
+        check(len(st.reqs) == 2 and snap(pg)["n"] == 48, "sau khi làm mới: lại dùng bộ nhớ")
+        pg.evaluate("clock = () => __o() + 25 * 60 * 1000")
+        chip(pg, E4); wait_done(pg)
+        check(len(st.reqs) == 3, "hết hạn lần nữa → tìm lại")
+        check(not errs, f"không lỗi JS {errs}")
         ctx.close()
         br.close()
 finally:

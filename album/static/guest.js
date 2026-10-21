@@ -18,6 +18,8 @@ let file = null, selfieUrl = null, runId = 0, ctl = null, reqSeq = 0;
 let data = null;
 // Bộ nhớ kết quả của MỘT lần chọn selfie (chỉ trong RAM): all = phản hồi không phạm vi; sc = phản hồi theo ngày khi all không dùng lại được. Đông cứng tại lúc tìm.
 let cache = null;
+const CACHE_TTL_MS = 10 * 60 * 1000;  // quá hạn này thì đổi ngày hỏi lại máy chủ (token ảnh ẩn / hiện ẩn có thể đã đổi)
+let clock = () => Date.now();         // tách ra để test tiêm đồng hồ
 let mode = "all";  // all: cả album · mine: kết quả tìm bằng selfie
 let photos = [], galleryReady = false;
 // Hai sự kiện (ngày) trong một album. Bộ chọn chỉ hiện khi ≥ 2 sự kiện có ảnh công khai; hàng manifest cũ (thiếu trường cuối) = sự kiện mặc định.
@@ -353,6 +355,7 @@ function project(r, sc) {
   const results = r.results.filter(x => x.ev === sc);
   return Object.assign({}, r, { results, total_matches: results.length, truncated: false });
 }
+const fresh = () => clock() - cache.at < CACHE_TTL_MS;
 function viewFor(sc) {
   if (sc === "all" || !evShown) return cache.all;
   if (reusable(cache.all)) return project(cache.all, sc);
@@ -365,18 +368,21 @@ function present(v) {
   showResults();
 }
 function settle() {
+  if (cache.all && !fresh()) { clearResults(); setLoading(); fetchSearch("all"); return; }  // hết hạn: tìm lại (không scope) để làm mới bộ nhớ
   const v = viewFor(scope);
   if (v) { reqSeq++; if (ctl) ctl.abort(); present(v); return; }
   clearResults(); setLoading();
-  fetchScope(scope);
+  fetchSearch(scope);
 }
-async function fetchScope(sc) {
-  const my = runId, seq = ++reqSeq;
+// gửi lại CHÍNH ảnh selfie đã chuẩn bị (chỉ trong RAM, bỏ cùng bộ nhớ) — sc = "all" là làm mới toàn bộ bộ nhớ
+async function fetchSearch(sc) {
+  const my = runId, seq = ++reqSeq, t0 = performance.now();
   if (ctl) ctl.abort();
   ctl = new AbortController();
   const c = cache;
-  const r = await request("/api/search?scope=" + encodeURIComponent(sc), ctl.signal, () => my !== runId || seq !== reqSeq);
+  const r = await request(sc === "all" ? "/api/search" : "/api/search?scope=" + encodeURIComponent(sc), ctl.signal, () => my !== runId || seq !== reqSeq, c.body);
   if (!r) return;
+  if (sc === "all") { c.all = r; c.sc = new Map(); c.at = clock(); c.e2e = performance.now() - t0; settle(); return; }
   c.sc.set(sc, r);
   if (scope === sc) present(r);
   else settle();  // đổi phạm vi trong lúc chờ → xử lý lại theo phạm vi mới
@@ -485,7 +491,7 @@ async function search() {
   const my = ++runId, seq = ++reqSeq;
   if (ctl) ctl.abort();
   ctl = new AbortController();
-  cache = { all: null, sc: new Map(), e2e: 0 };
+  cache = { all: null, sc: new Map(), e2e: 0, at: 0, body: null };
   const c = cache;
   clearResults();
   setLoading();
@@ -493,20 +499,20 @@ async function search() {
   try {
     const body = await prepare(file);
     if (my !== runId) return;
+    c.body = body;
     // selfie CHỈ gửi tới đường dẫn tương đối cùng nguồn gốc với trang — không bao giờ tới CDN
     const r = await request("/api/search", ctl.signal, () => my !== runId || seq !== reqSeq, body);
     if (!r) return;
-    c.all = r; c.e2e = performance.now() - t0;
+    c.all = r; c.e2e = performance.now() - t0; c.at = clock();
     settle();
   } catch (err) {
     if (err.name === "AbortError" || my !== runId) return;
     showError("Chưa kết nối được", "Có vẻ mạng đang gián đoạn. Bạn kiểm tra kết nối rồi thử lại nhé.", [], true);
   }
 }
-// POST selfie (lần đầu: body vừa chuẩn bị; sau đó: `file` gửi lại khi cần phản hồi theo ngày). Trả JSON hoặc null (đã hiện lỗi / đã bị thay thế).
+// POST ảnh selfie đã chuẩn bị. Trả JSON hoặc null (đã hiện lỗi / đã bị thay thế).
 async function request(url, signal, stale, body) {
   try {
-    if (!body) { body = await prepare(file); if (stale()) return null; }
     const r = await fetch(url, { method: "POST", body, headers: { "Content-Type": "application/octet-stream" }, signal });
     if (stale()) return null;
     if (r.status === 422) {
