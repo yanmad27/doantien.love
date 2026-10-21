@@ -303,23 +303,28 @@ function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d)$/.exec(location.hash);
 function paintEvents() {
   const tabs = $("ev-tabs");
   tabs.hidden = !evShown;
-  tabs.replaceChildren(...events.map(e => {
-    const b = document.createElement("button");
-    b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = e.id; b.textContent = `Ngày ${e.label}`;
-    b.setAttribute("aria-selected", String(e.id === curEv));
-    b.onclick = () => setEvent(e.id, true);
-    return b;
-  }));
+  if (tabs.children.length !== events.length) {   // dựng một lần; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
+    tabs.replaceChildren(...events.map(e => {
+      const b = document.createElement("button");
+      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = e.id; b.textContent = `Ngày ${e.label}`;
+      b.onclick = () => setEvent(e.id, true);
+      return b;
+    }));
+  }
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.ev === curEv));
   if (evShown) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
   for (const box of document.querySelectorAll(".scope")) {
     box.hidden = !evShown;
-    box.replaceChildren(Object.assign(document.createElement("span"), { textContent: "Tìm trong:" }),
-      ...[...events.map(e => [e.id, `Ngày ${e.label}`]), ["all", "Cả hai ngày"]].map(([id, text]) => {
-        const b = document.createElement("button");
-        b.type = "button"; b.dataset.scope = id; b.textContent = text; b.setAttribute("aria-pressed", String(id === scope));
-        b.onclick = () => setScope(id);
-        return b;
-      }));
+    if (box.querySelectorAll("button").length !== events.length + 1) {
+      box.replaceChildren(Object.assign(document.createElement("span"), { textContent: "Tìm trong:" }),
+        ...[...events.map(e => [e.id, `Ngày ${e.label}`]), ["all", "Cả hai ngày"]].map(([id, text]) => {
+          const b = document.createElement("button");
+          b.type = "button"; b.dataset.scope = id; b.textContent = text;
+          b.onclick = () => setScope(id);
+          return b;
+        }));
+    }
+    for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.scope === scope));
   }
   if (!allPhotos.length) return;
   $("count").textContent = `${nf.format(photos.length)} ảnh`;

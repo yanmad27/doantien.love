@@ -50,7 +50,8 @@ function addFiles(list) {
     if (f.size > maxMB * 1048576) {  // báo ngay ở trình duyệt, khỏi gửi rồi mới bị đóng kết nối
       st.textContent = `✗ quá lớn (tối đa ${maxMB} MB)`; st.className = "f-st err"; li.classList.add("done"); failN++; continue;
     }
-    queue.push({ f, li, st, fill, loaded: 0, ev: upEvent() });  // ngày chốt lúc thêm vào hàng chờ total += f.size;
+    queue.push({ f, li, st, fill, loaded: 0, ev: upEvent() });  // ngày chốt lúc thêm vào hàng chờ
+    total += f.size;
   }
   $("overall").hidden = false; pump();
 }
@@ -401,17 +402,20 @@ const vis = (() => {
     for (const [p] of prev) p.ev = ev;
     if (!isUndo) sel.clear();
     anchor = null; armed = false;
-    for (const id of [...sel]) if (!pass(byId.get(id))) sel.delete(id);
     render();
     const undo = () => applyEvent2(prev.map(([p, e]) => [p, e]));
     toast(isUndo ? `Đã hoàn tác (${plural(prev.length)})` : `Đã chuyển ${plural(prev.length)} sang ngày ${evLabel(ev)}`, isUndo ? null : undo);
     chain = chain.then(async () => {
-      try { for (let i = 0; i < prev.length; i += 5000) await api("/api/admin/event", { ids: prev.slice(i, i + 5000).map(([p]) => p.id), event: ev }); }
+      let saved = 0;   // số ảnh máy chủ đã nhận (các mảnh đã commit không được hoàn lại)
+      try { for (; saved < prev.length; saved += 5000) await api("/api/admin/event", { ids: prev.slice(saved, saved + 5000).map(([p]) => p.id), event: ev }); }
       catch (e) {
         if (e.message === "401") return;
-        for (const [p, old] of prev) p.ev = old;
+        const failed = prev.slice(saved);   // chỉ mảnh lỗi và các mảnh sau nó quay về ngày cũ
+        for (const [p, old] of failed) p.ev = old;
         render();
-        toast(`Chưa lưu được — ${plural(prev.length)} giữ nguyên ngày cũ. Bạn thử lại nhé.`);
+        toast(saved ? `Chỉ lưu được một phần: ${plural(saved)} đã chuyển, ${plural(failed.length)} giữ nguyên ngày cũ. Bạn thử lại nhé.`
+          : `Chưa lưu được — ${plural(prev.length)} giữ nguyên ngày cũ. Bạn thử lại nhé.`);
+        load();   // đồng bộ lại với máy chủ cho chắc
       }
     });
     return chain;

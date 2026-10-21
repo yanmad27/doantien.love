@@ -683,6 +683,9 @@ def events_suite():
         dup = os.path.join(a.out, "dup-selfie.jpg"); open(dup, "wb").write(open(a.selfie, "rb").read())
         with pg.expect_request(lambda r: "/api/upload" in r.url) as ri:
             pg.set_input_files("#pick", a.selfie)
+        pg.wait_for_function("document.getElementById('upsum').textContent.length > 0")
+        tot = pg.inner_text("#upsum").split(" / ")[-1].strip(" .…").replace("Hoàn tất", "").strip()
+        check(tot and not tot.startswith("0 ") and "100%" not in pg.inner_text("#upsum"), f"{label}: tổng dung lượng tải lên phải khác 0: {pg.inner_text('#upsum')}")
         check("event=" + E4 in ri.value.url, f"{label}: tải lên mặc định gửi event=4/10: {ri.value.url}")
         pg.wait_for_function("/xong/.test(document.getElementById('upchips').textContent)", timeout=15000)
         pg.check('input[name="up-ev"][value="%s"]' % E17, force=True)
