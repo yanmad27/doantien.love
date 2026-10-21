@@ -46,6 +46,37 @@ mimetypes.add_type("font/woff2", ".woff2")
 log = logging.getLogger("album")
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_BODY = 25 * 1024 * 1024
+SEARCH_GZIP_MIN = 1024  # nhỏ hơn thì nén không đáng
+SEARCH_GZIP_LEVEL = 5
+
+
+def accepted_codings(header):
+    """Accept-Encoding (RFC 9110 §12.5.3) → (gzip_ok, identity_ok). Thiếu/rỗng = chỉ identity (không nén). gzip/x-gzip có q>0 thì nén được; `*` chỉ áp cho
+    coding không được nêu. identity luôn chấp nhận được trừ khi bị loại tường minh (`identity;q=0`) hoặc bởi `*;q=0` khi identity không được nêu."""
+    q = {}
+    for part in (header or "").split(","):
+        name, _, params = part.partition(";")
+        name, val = name.strip().lower(), 1.0
+        for prm in params.split(";"):
+            k, _, v = prm.partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    val = float(v.strip())
+                except ValueError:
+                    val = 0.0
+        if name:
+            q[name] = val
+    gz = q["gzip"] if "gzip" in q else q["x-gzip"] if "x-gzip" in q else q.get("*", 0.0)
+    ident = q["identity"] if "identity" in q else (q["*"] if "*" in q else 1.0)
+    return gz > 0, ident > 0
+
+
+def search_encoding(header, size):
+    """"gzip" hay "identity". Nén khi gzip chấp nhận được và (thân đủ lớn HOẶC identity bị loại). Không cái nào chấp nhận được: vẫn gửi identity (như đa số máy chủ), không 406."""
+    gz, ident = accepted_codings(header)
+    return "gzip" if gz and (size >= SEARCH_GZIP_MIN or not ident) else "identity"
+
+
 SCORE_FLOOR = 0.15  # dưới mức này không bao giờ là cùng người, khỏi gửi về
 MAX_RESULTS = int(os.environ.get("ALBUM_MAX_RESULTS", 5000))  # phủ cả album (giao diện ảo hoá, hiện được hết); đặt nhỏ lại nếu cần giới hạn
 QUERY_MIN_FACE = 40  # cạnh ngắn (px) tối thiểu của mặt trong selfie, khớp --min-face của indexer
@@ -743,6 +774,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             hdr["Content-Encoding"] = "gzip"
         return Response(g["gz"] if gz else g["raw"], media_type="application/json", headers=hdr)
 
+    def encode_search(out, accept):
+        raw = json.dumps(out, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+        hdr = {"Cache-Control": "no-store", "Vary": "Accept-Encoding"}
+        if search_encoding(accept, len(raw)) == "gzip":
+            raw = gzip.compress(raw, SEARCH_GZIP_LEVEL, mtime=0)
+            hdr["Content-Encoding"] = "gzip"
+        return raw, hdr
+
     @app.post("/api/search")
     async def api_search(request: Request):
         scope = request.query_params.get("scope", "all")
@@ -775,7 +814,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             raise HTTPException(500, "Máy chủ gặp lỗi khi xử lý. Vui lòng thử lại sau.")
         if out is None or out == "face_too_small":
             return JSONResponse({"error": out or "no_face"}, status_code=422)
-        return JSONResponse(out, headers={"Cache-Control": "no-store"})
+        raw, hdr = await run_in_threadpool(encode_search, out, request.headers.get("accept-encoding"))
+        return Response(raw, media_type="application/json", headers=hdr)
 
     def compute_stats():
         _, rows, photos = index()
