@@ -125,7 +125,7 @@ function showStatus(s) {
   const err = (s.rejected.length ? "Đã loại (làm sập khi giải mã, nằm trong thư mục rejected/): " + s.rejected.join(", ") + "\n" : "") + s.errors.join("\n");
   $("errors").textContent = err.trim(); $("errors").hidden = !err.trim();
   if (run && !timer) timer = setInterval(poll, 1000);
-  if (!run && timer) { clearInterval(timer); timer = null; refreshStats(); }
+  if (!run && timer) { clearInterval(timer); timer = null; refreshStats(); vis.reload(); }  // Xử lý xong (done/error): lưới ảnh + số đếm lấy lại từ máy chủ
 }
 async function poll() { try { const r = await fetch("/api/process"); if (r.status === 401) return toLogin(); showStatus(await r.json()); } catch (e) {} }
 $("proc").onclick = async () => {
@@ -466,5 +466,7 @@ const vis = (() => {
 
   addEventListener("resize", () => { if (selectMode) document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px"); });
   load();
-  return { load };
+  // sau Xử lý: chờ các yêu cầu ẩn/hiện/chuyển ngày đang bay xong (chain) rồi mới tải lại → không đè lên thay đổi lạc quan; giữ bộ lọc, lựa chọn (load tự bỏ ảnh đã mất)
+  const reload = () => { chain = chain.then(() => load()); };
+  return { load, reload };
 })();

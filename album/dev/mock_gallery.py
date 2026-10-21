@@ -56,6 +56,7 @@ ap.add_argument("--dup", action="store_true", help="cố ý đưa dòng trùng v
 ap.add_argument("--search-n", type=int, default=70, help="số ảnh /api/search trả về (tới cả album; hợp đồng §10: trần >= 3000)")
 ap.add_argument("--admin-delay", type=float, default=0, help="giây trễ thêm cho POST /api/admin/visibility (thử cập nhật lạc quan)")
 ap.add_argument("--events", action="store_true", help="đưa ~1/3 ảnh sang sự kiện 17/10 (mặc định: tất cả 4/10 như production → bộ chọn ngày không hiện)")
+ap.add_argument("--process-adds", type=int, default=0, help="POST /api/process thêm ngần này ảnh (ngày 17/10) sau ~1.5 s 'running' rồi 'done' — thử lưới /manage tự làm mới sau Xử lý (0 = như cũ: done ngay)")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -164,6 +165,7 @@ FAIL = {r[0] for r in ROWS if int(hashlib.sha1(r[0].encode()).hexdigest()[:6], 1
 EV_IDS = ("2026-10-04", "2026-10-17")
 EVENT = {r[0]: ("2026-10-17" if a.events and int(r[0][:4], 16) % 3 == 0 else "2026-10-04") for r in ROWS}   # vắng = 4/10 (như bảng photo_event)
 STATE_LOCK = threading.RLock()
+JOB = {"t0": None, "applied": 0, "n": 0}   # job Xử lý giả (--process-adds)
 HIDDEN = set()                      # id ảnh đang ẩn (hợp đồng F.1; mặc định không ẩn gì)
 SETTINGS = {"search_includes_hidden": True}
 SECRET = os.urandom(32)
@@ -432,6 +434,21 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/api/process":
             s = dict(state="idle", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")
+            with STATE_LOCK:
+                if JOB["t0"] is not None:
+                    el = time.time() - JOB["t0"]
+                    if el < 1.5:
+                        s.update(state="running", total=a.process_adds, done=int(el / 1.5 * a.process_adds), elapsed=el, current="x.jpg")
+                    else:
+                        if not JOB["applied"]:  # ảnh mới chỉ hiện trong /api/admin/photos + manifest SAU khi job xong
+                            for j in range(a.process_adds):
+                                pid = hashlib.sha1(f"added-{JOB['n']}-{j}".encode()).hexdigest()[:16]
+                                m = VARS[j % len(VARS)]
+                                row = [pid, m["w"], m["h"], 1790900000.0 + j, hashlib.sha256(f"{pid}-{DV}".encode()).hexdigest()[:8], m["c"], f"NEW_{JOB['n']}_{j}.JPG", m["k"], None]
+                                ROWS.append(row); BY_ID[pid] = row; EVENT[pid] = "2026-10-17"
+                            rebuild_public()
+                            JOB["applied"] = 1
+                        s.update(state="done", total=a.process_adds, done=a.process_adds, faces=a.process_adds, elapsed=1.5)
             return self.send(200, json.dumps(s).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         if path == "/__mock/dups":
             return self.send(200, json.dumps(dict(DUPS, bursts=SCEN)).encode(), "application/json", {"Cache-Control": "no-store"}, head)
@@ -530,6 +547,10 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, json.dumps(dict(status="duplicate", name="old-" + nm, event="2026-10-17")).encode(), "application/json")
             return self.send(200, json.dumps(dict(status="ok", name=nm, renamed=False, event=ev)).encode(), "application/json")
         if path == "/api/process":
+            if a.process_adds:
+                with STATE_LOCK:
+                    JOB.update(t0=time.time(), applied=0, n=JOB["n"] + 1)
+                return self.send(200, json.dumps(dict(state="running", done=0, total=a.process_adds, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")).encode(), "application/json")
             return self.send(200, json.dumps(dict(state="done", done=0, total=0, faces=0, failed=0, rejected=[], errors=[], elapsed=0, current="")).encode(), "application/json")
         self.nf()
 
