@@ -524,3 +524,44 @@ Các tính năng trên chỉ triển khai khi có yêu cầu riêng.
 - RSVP ghi dữ liệu thành công nếu backend nằm trong scope.
 - Không còn lỗi P0/P1/P2 trong design QA.
 - Bản production được deploy và kiểm tra lại sau deploy.
+
+## 16. Album hai ngày (4/10 và 17/10): bàn giao sang mac-pro
+
+Nhánh `feat/album-events` (đã đưa lên origin — nhánh riêng, chưa merge, chưa deploy). Mã nguồn đã được chấp nhận:
+
+- `9feda98` — tính năng hai ngày (bảng `photo_event`, tab khách, phạm vi tìm selfie, tải lên + chuyển ngày trong /manage).
+- `41f513f` — năm sửa sau review.
+- `e9a4079` — lưới /manage tự làm mới sau Xử lý (lỗi có từ `c17d2a8`).
+
+**Bằng chứng đã có:** 77 unit test OK (2 bỏ qua); e2e mặc định, `--visibility`, `--events` qua chromium, máy tính + điện thoại; hai lượt review độc lập + một lượt rà bảo mật thủ công; diễn tập trên máy chủ thật với 9 ảnh dựng từ 40 WebP 4/10 mẫu của production (**chỉ là diễn tập, không phải bằng chứng**); tốc độ Xử lý 0,68 s/ảnh (**chỉ là cận dưới**: WebP nhỏ, CPU nhiều lõi).
+
+**Chưa kiểm:** chạy với bộ ảnh 17/10 thật; WebKit; chuyển ngày hàng loạt lỗi từng phần khi trên 5000 id; DB production thật.
+
+**Phát hiện còn mở (mức thấp):** nếu sửa (ẩn/chuyển ngày) đúng lúc GET tải lại lưới ngay sau Xử lý đang chạy, trạng thái cục bộ trên trang có thể cũ cho tới lần tải lại kế tiếp. Trạng thái trên máy chủ luôn đúng.
+
+**Bộ ảnh 17/10:** trên mac-pro, `~/Downloads`: 7 file `10 )-20261021T042710Z-1-001…007.zip`, tổng 13.135.255.482 byte; mục trong zip dạng `KHAC DOAN - DONG TIEN ( FILE GOC PSC 17-10 )/NDT*.JPG`; 266+261+268+272+268+265+37 = **1637** ảnh, khớp danh sách tên file của thư mục Drive 17/10 (đường dẫn do chủ nhà giữ; `album/dev/realrun/names-1710.txt`); Sony ILCE-7M5; một file mẫu ghi ngày 2026-10-17.
+
+### Các bước trên mac-pro (script và hướng dẫn ngắn: `album/dev/realrun/README.md`)
+
+Mọi lệnh chạy **từ thư mục gốc repo** (đường dẫn `album/...`). Dùng `P=album/.venv/bin/python`. Zip luôn chọn bằng glob `~/Downloads/10*.zip` (đúng 7 file).
+
+1. `git fetch && git checkout feat/album-events` (kỳ vọng `e9a4079` hoặc mới hơn).
+2. **Cần Python 3.9** (`album/requirements.txt` ghim numpy 2.0.2, onnxruntime 1.19.2): chạy `python3 --version` trước; nếu không phải 3.9 thì dùng bản 3.9 có sẵn (vd. `python3.9`) cho lệnh tạo venv. Rồi: `(cd album && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python download_models.py && .venv/bin/playwright install chromium)` (xem `album/README.md`). Kiểm: `(cd album && .venv/bin/python -m unittest discover -s dev -p 'test_*.py')`.
+   **Dung lượng:** cần ≥ ~40 GB trống ở `~/album-local` (13 GB ảnh gốc giải nén + 13 GB bản trong DATA_DIR sau khi tải lên + WebP/thumbnail + ngưỡng `--min-free-mb 5120` của máy chủ); kiểm bằng `df -h ~`.
+3. Giải nén (dữ liệu không tin cậy, không chạy gì từ ảnh, luôn `-I`): mỗi zip vào một thư mục mới ngoài repo rồi dồn phẳng (tạo `incoming/unz-1…7`; script tự dừng nếu thiếu chỗ, tên trùng hoa/thường, đường dẫn lạ):
+   `$P -I album/dev/realrun/unpack.py --zips ~/Downloads/10*.zip --work ~/album-local/incoming --flat ~/album-local/drive-1710`.
+   Nếu bị dừng giữa chừng: xoá các thư mục `~/album-local/incoming/unz-*` và `~/album-local/drive-1710` mà lần chạy đó đã tạo rồi chạy lại. **Không bao giờ đụng tới các file zip trong `~/Downloads`.**
+4. Kiểm kê: `$P -I album/dev/realrun/census.py --dir ~/album-local/drive-1710 --names album/dev/realrun/names-1710.txt --out ~/album-local/census-1710 --expect-day 2026-10-17`. **Dừng** (báo lại, không chạy tiếp) nếu thoát mã 1: thiếu/thừa/trùng sha256, ảnh không có ngày EXIF hoặc có ngày khác 2026-10-17. Kỳ vọng: 1637 ảnh, 0 thiếu/thừa/trùng, máy ảnh ILCE-7M5.
+5. Mẫu 4/10 (ghi rõ nguồn nào đã dùng): `$P -I album/dev/realrun/sample0410.py --url https://album.doantien.love --n 50 --out ~/album-local/sample-0410` (~50 WebP công khai bằng GET đọc-thôi `/api/gallery` rồi `/i/<id>-<v>-2000.webp`); hoặc dùng ảnh gốc 4/10 của chủ nhà nếu có sẵn trên mac-pro. Mẫu WebP chỉ là diễn tập cho ngày 4/10.
+6. Chạy: `album/dev/realrun/run_all.sh ~/album-local/sample-0410 ~/album-local/drive-1710 real` (từ thư mục gốc repo; một lệnh, chạy trong nền được; mặc định cổng 8830, dữ liệu ở `~/album-local/e2e/data-real`, kết quả ở `out-real/`). Kỳ vọng in `MAIN OK`, kiểm tra khởi động lại OK, `events/hidden/photos identical` khi `--rebuild` trên bản sao. Ảnh chụp trong `out-real/shots/`:
+   - /manage máy tính: `d-01` bộ chọn ngày khi tải lên, `d-02`/`d-03` tải lên, `d-03b` **lưới ngay sau Xử lý không tải lại** (phải có đủ ô/huy hiệu/số đếm), `d-04` huy hiệu, `d-05` lọc 17/10, `d-06`/`d-07` chuyển ngày + hoàn tác, `d-08` ẩn một ảnh;
+   - khách điện thoại: `m-01…m-04` tab 4/10 và 17/10 (và cuộn), `m-05-search-{0410,1710,both}` tìm selfie theo từng phạm vi, `m-06` tab 17/10 sau khi ẩn, `m-07` tìm có/không gồm ảnh ẩn, `restart-guest-17`.
+   - Số liệu trong `state.json` / `log-main.txt`: **đã tải lên / đã lập chỉ mục / lỗi theo từng ngày** (`COUNTS per event`), số mặt, thời gian Xử lý.
+7. Ước lượng thời gian: Xử lý ≈ (thời gian đo được s/ảnh) × 1637; diễn tập cho 0,68 s/ảnh ≈ 19 phút nhưng đó chỉ là cận dưới (JPEG 7008×4672 ≈ 8 MB nặng hơn WebP nhỏ nhiều). Tải lên ≈ 13 GB qua trình duyệt theo lô 150 ảnh; nếu một lô treo, báo lại để chuyển sang gọi thẳng `POST /api/upload?event=…`.
+8. Báo lại: đầu ra của `census.py` (.md), `out-real/log-main.txt` + `state.json` (không đính ảnh thật vào git), danh sách ảnh chụp, thời gian Xử lý/ảnh thực đo, bất kỳ dòng `HỎNG`/`FAIL`, và dòng `RELOAD WORKAROUND` nếu xuất hiện (nghĩa là lưới /manage vẫn không tự làm mới).
+
+Không commit ảnh, mẫu WebP, thư mục dữ liệu, ảnh chụp hay JSON kiểm kê của ảnh thật.
+
+### Đưa lên production — CHỜ chủ nhà quyết định
+
+Chưa làm. Xem `album/DEPLOY.md` §9c: sao lưu `index.db` cùng `-wal`/`-shm`, deploy `feat/album-events`, vào /manage chọn **Ngày 17/10**, tải cả đợt 17/10 rồi bấm Xử lý. Không cần migrate dữ liệu; rollback về image cũ an toàn.

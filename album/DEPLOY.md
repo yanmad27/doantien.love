@@ -170,6 +170,7 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 - Ảnh trùng SHA-256 với ảnh đã có sẽ **ở nguyên ngày hiện tại** (báo "giữ nguyên ngày …" trong danh sách tải lên). Nếu lỡ tải nhầm ngày, chọn ảnh ở mục Ẩn / hiện và bấm "Chuyển sang ngày …" (hàng loạt, hoàn tác được).
 - Rollback về image cũ an toàn: code cũ bỏ qua bảng `photo_event` và hàng manifest cũ không có trường ngày; ảnh 17/10 sẽ lẫn vào thư viện cũ như ảnh thường (không mất ảnh nào). Mở lại image mới thì ngày vẫn còn.
 - `--rebuild` chép `photo_event` (cùng `photo_hidden`, `settings`) từ bản sao `index.db.bak-<ts>`.
+- Đợt 17/10 ≈ 1637 ảnh × ~8 MB ≈ 13 GB: tải lên theo từng lô (vài trăm ảnh mỗi lần chọn) và để tab mở tới khi "Hoàn tất"; sau khi Xử lý xong, lưới /manage tự làm mới (không cần tải lại trang). Diễn tập trước: `album/dev/realrun/`.
 - Sau deploy: `GET /api/gallery` có `events` và mỗi hàng có 9 phần tử; chưa tải ảnh 17/10 thì `events[1].n` = 0.
 
 ## 10. Kiểm tra sau deploy
