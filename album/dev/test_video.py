@@ -11,6 +11,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from unittest import mock
@@ -103,6 +104,38 @@ def abort_call(app, method, url, headers, declared, part):
     except Exception:
         pass
     return out["status"]
+
+
+async def acall(app, method, url, headers=None, body=b"", host="localhost", parts=None, gate=None, entered=None):
+    """Như _asgi.call nhưng là coroutine: nhiều request chạy CÙNG MỘT event loop. parts + gate: gửi phần đầu, rồi chờ gate mới gửi các phần sau."""
+    chunks = list(parts) if parts is not None else [body]
+    total = sum(len(c) for c in chunks)
+    hs = [(b"host", host.encode())] + [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    if total:
+        hs.append((b"content-length", str(total).encode()))
+    path, _, qs = url.partition("?")
+    scope = dict(type="http", asgi={"version": "3.0"}, http_version="1.1", method=method, scheme="http", path=path, raw_path=path.encode(),
+                 query_string=qs.encode(), headers=hs, client=("1.2.3.4", 1), server=("x", 80))
+    first, out = [True], {"status": None, "body": b""}
+
+    async def receive():
+        if chunks:
+            if not first[0] and gate is not None:
+                if entered is not None:
+                    entered.set()
+                await gate.wait()
+            first[0] = False
+            b = chunks.pop(0)
+            return {"type": "http.request", "body": b, "more_body": bool(chunks)}
+        await asyncio.sleep(3600)
+
+    async def send(m):
+        if m["type"] == "http.response.start":
+            out["status"] = m["status"]
+        elif m["type"] == "http.response.body":
+            out["body"] += m.get("body", b"")
+    await asyncio.wait_for(app(scope, receive, send), 30)
+    return out["status"], out["body"]
 
 
 class VBase(unittest.TestCase):
@@ -866,6 +899,15 @@ class RobustnessBase(VBase):
         self.app = make_app(self.d)
         return self.app
 
+    def sidecar(self, uid):
+        return os.path.join(self.d, "video-staging", uid + ".json")
+
+    def edit(self, sid, **kw):
+        s = json.load(open(self.sidecar(sid)))
+        s.update(kw)
+        json.dump(s, open(self.sidecar(sid), "w"))
+        return s
+
     def assert_published_after_restart(self, uid, data, pb):
         self.restart()
         st, s = self.status(uid)
@@ -1005,6 +1047,7 @@ class CrashSafetyTests(RobustnessBase):
         self.assertTrue(os.path.exists(fmp4))
         self.assertEqual(self.vrows(), [])
         self.assertEqual(self.finish(uid)[0], 500)  # không công bố file sai hash, cũng không xoá nó
+        self.assertEqual(json.load(open(os.path.join(self.d, "video-staging", uid + ".json")))["state"], "failed")
 
     def test_p1_2_startup_never_discards_final_files(self):
         _, res = self.publish()
@@ -1032,10 +1075,13 @@ class DiskAccountingTests(RobustnessBase):
     def test_p1_3_photo_upload_subtracts_outstanding_video_reservation(self):
         data = make_mp4()
         uid = self.init(data)[1]["uid"]
-        with self.disk(self.FLOOR + 10):
-            self.assertEqual(self.photo(), 507)  # còn trên ngưỡng 10 byte nhưng phiên video còn nợ ~4 KB
+        body = jpeg_bytes(64, 48, (5, 6, 7))
+        with self.disk(self.FLOOR + len(body) + len(data) - 1):
+            self.assertEqual(self.photo(), 507)  # phiên video còn nợ len(data) byte
         self.chunk(uid, 0, data)  # nhận đủ → hết nợ
-        with self.disk(self.FLOOR + 10):
+        with self.disk(self.FLOOR + len(body) - 1):
+            self.assertEqual(self.photo(), 507)  # ảnh tự đặt chỗ đúng Content-Length của nó
+        with self.disk(self.FLOOR + len(body)):
             self.assertEqual(self.photo(), 200)
 
     def test_p1_3_chunk_admission_checks_chunk_and_other_sessions(self):
@@ -1296,6 +1342,302 @@ class EventTests(VBase):
         for m, u in (("DELETE", f"/api/admin/video/{self.a['id']}"), ("POST", f"/api/admin/video/{self.a['id']}/hide"),
                      ("POST", f"/api/admin/video/{self.a['id']}/delete")):
             self.assertIn(call(self.app, m, u, headers=self.hdr())[0], (404, 405))
+
+
+class EventLoopTests(RobustnessBase):
+    """Một event loop chung cho mọi request trong test: nếu handler async chờ vglobal đồng bộ thì cả loop (kể cả /healthz) đứng theo."""
+
+    def hold_global(self, seconds=6):
+        lk, ready, release = self.app.state.video_global, threading.Event(), threading.Event()
+
+        def run():
+            with lk:
+                ready.set()
+                release.wait(20)
+        t = threading.Thread(target=run)
+        t.start()
+        ready.wait(5)
+        timer = threading.Timer(seconds, release.set)  # chốt an toàn: nếu loop bị chặn thì khoá được thả sau `seconds` và test báo lỗi về thời gian
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.addCleanup(t.join, 30)
+        self.addCleanup(release.set)
+        return release
+
+    def test_p1_requests_complete_while_vglobal_is_held(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        uid2 = self.session(make_mp4(seed=b"other"))
+        h = self.hdr()
+        release = self.hold_global()
+        t0 = time.time()
+
+        async def go():
+            return await asyncio.gather(
+                acall(self.app, "GET", f"/api/admin/video/{uid}", headers=h),
+                acall(self.app, "GET", "/healthz"),
+                acall(self.app, "GET", "/api/gallery"),
+                acall(self.app, "PUT", f"/api/admin/video/{uid}/chunk?off=0", headers=h, body=data[:100]),
+                acall(self.app, "PUT", f"/api/admin/video/{uid2}/poster", headers=h, body=jpeg_bytes()),
+                acall(self.app, "GET", f"/api/admin/video/{'0' * 32}", headers=h))
+        res = asyncio.run(go())
+        self.assertLess(time.time() - t0, 3, "event loop bị chặn bởi vglobal")
+        self.assertEqual([r[0] for r in res], [200, 200, 200, 200, 200, 404])
+        release.set()
+
+    def test_p1_init_waits_in_thread_not_on_loop(self):
+        data = make_mp4()
+        h = dict(self.hdr(), **{"Content-Type": "application/json"})
+        body = json.dumps(dict(name="a.mp4", size=len(data), sha256=sha(data), ev=None, title="t")).encode()
+        release = self.hold_global()
+
+        async def go():
+            t0 = time.time()
+            init = asyncio.ensure_future(acall(self.app, "POST", "/api/admin/video/init", headers=h, body=body))
+            ev = asyncio.ensure_future(acall(self.app, "POST", f"/api/admin/video/{'0' * 16}/event", headers=h, body=b'{"ev":null}'))
+            hz = await acall(self.app, "GET", "/healthz")
+            quick = time.time() - t0
+            release.set()  # init/event mới được vglobal (chúng chờ trong luồng, không trên loop)
+            return quick, hz, await init, await ev
+        quick, hz, init, ev = asyncio.run(go())
+        self.assertLess(quick, 3, "event loop bị chặn")
+        self.assertEqual((hz[0], init[0], ev[0]), (200, 200, 404))
+
+
+class LedgerTests(RobustnessBase):
+    FLOOR = 5120 * 1024 ** 2
+
+    def disk(self, free):
+        return mock.patch.object(server.shutil, "disk_usage", return_value=types.SimpleNamespace(free=free, total=free * 2, used=0))
+
+    def test_p1_two_posters_same_snapshot_one_rejected(self):
+        u1, u2 = self.session(make_mp4(seed=b"1")), self.session(make_mp4(seed=b"2"))
+        pb = jpeg_bytes()
+        entered, go, first = threading.Event(), threading.Event(), []
+
+        def hook():
+            if not first:
+                first.append(1)
+                entered.set()
+                go.wait(20)
+        self.app.state.video_hooks["poster_written"] = hook
+        res = []
+        t = threading.Thread(target=lambda: res.append(self.poster(u1, pb)))
+        with self.disk(self.FLOOR + len(pb) + 5):
+            t.start()
+            self.assertTrue(entered.wait(10))
+            self.assertEqual(self.poster(u2, pb)[0], 507)  # poster 1 đang giữ chỗ trong sổ
+            go.set()
+            t.join(30)
+            self.assertEqual(res[0][0], 200)
+            self.assertEqual(self.poster(u2, pb)[0], 200)  # đã trả chỗ
+
+    def test_p1_ledger_primitives_are_atomic_and_released(self):
+        reserve, release = self.app.state.disk_reserve, self.app.state.disk_release
+        with self.disk(self.FLOOR + 100):
+            self.assertTrue(reserve(60))
+            self.assertFalse(reserve(60))   # cùng snapshot đĩa: lần hai bị từ chối
+            self.assertTrue(reserve(40))
+            self.assertFalse(reserve(1))
+            release(60)
+            self.assertTrue(reserve(60))
+            release(60)
+            release(40)
+            self.assertTrue(reserve(100, hold=False))
+            self.assertTrue(reserve(100, hold=False))  # hold=False không ghi sổ
+
+    def test_p1_photo_in_flight_blocks_new_reservations_but_not_reserved_chunk(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        photo = jpeg_bytes(64, 48, (9, 9, 9))
+        h = self.hdr()
+        jh = dict(h, **{"Content-Type": "application/json"})
+        d2 = make_mp4(seed=b"second")
+        init2 = json.dumps(dict(name="b.mp4", size=len(d2), sha256=sha(d2), ev=None, title="")).encode()
+
+        async def go():
+            gate, entered = asyncio.Event(), asyncio.Event()
+            with self.disk(self.FLOOR + len(data) + len(photo) + len(d2) - 1):  # vừa đủ cho ảnh + phần còn nợ của phiên 1, thiếu cho phiên 2
+                ph = asyncio.ensure_future(acall(self.app, "POST", "/api/upload?name=q.jpg", headers=h, parts=[photo[:-1], photo[-1:]],
+                                                 gate=gate, entered=entered))
+                await entered.wait()  # ảnh đã đặt chỗ Content-Length và đang chờ phần còn lại
+                blocked_init = await acall(self.app, "POST", "/api/admin/video/init", headers=jh, body=init2)
+                chunk = await acall(self.app, "PUT", f"/api/admin/video/{uid}/chunk?off=0", headers=h, body=data)  # đã giữ chỗ từ init
+                gate.set()
+                done = await ph
+                init_after = await acall(self.app, "POST", "/api/admin/video/init", headers=jh, body=init2)
+            return blocked_init[0], chunk[0], done[0], init_after[0]
+        self.assertEqual(asyncio.run(go()), (507, 200, 200, 200))
+
+    def test_p1_photo_and_chunk_same_snapshot_one_rejected(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        photo = jpeg_bytes(64, 48, (7, 7, 7))
+        pu = lambda: call(self.app, "POST", "/api/upload?name=z.jpg", headers=self.hdr(), body=photo)[0]  # noqa: E731
+        with self.disk(self.FLOOR + len(data) + len(photo) - 1):
+            self.assertEqual(pu(), 507)                      # ảnh không được lấn vào chỗ phiên video đã giữ
+            self.assertEqual(self.chunk(uid, 0, data)[0], 200)
+        uid2 = self.init(make_mp4(seed=b"z"))[1]["uid"]
+        with self.disk(self.FLOOR + len(photo) + len(make_mp4(seed=b"z")) - 1):
+            self.assertEqual(pu(), 507)                      # phiên 2 còn nợ nên ảnh thiếu chỗ
+        self.chunk(uid2, 0, make_mp4(seed=b"z"))
+        with self.disk(self.FLOOR + len(photo)):
+            self.assertEqual(pu(), 200)
+
+
+class ReconValidationTests(RobustnessBase):
+    def assert_unresolved(self, uid, parts=("part", "poster")):
+        self.restart()
+        self.assertEqual(self.vrows(), [])
+        self.assertEqual(json.load(open(self.sidecar(uid)))["state"], "failed")
+        for ext in parts:
+            self.assertTrue(os.path.exists(os.path.join(self.d, "video-staging", f"{uid}.{ext}")), ext)  # file staging còn nguyên
+        self.assertEqual(os.listdir(os.path.join(self.d, "videos")), ["posters"])
+        self.assertEqual(os.listdir(os.path.join(self.d, "videos", "posters")), [])
+        st, out = self.finish(uid)
+        self.assertEqual((st, out["error"]), (500, "publish_incomplete"))
+        self.assertTrue(out["reason"])
+
+    def test_p2_3_truncated_staged_mp4_is_not_published(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        part = os.path.join(self.d, "video-staging", uid + ".part")
+        with open(part, "r+b") as fh:
+            fh.truncate(len(data) - 1)
+        self.assert_unresolved(uid)
+
+    def test_p2_3_same_size_corrupt_staged_mp4_is_not_published(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        part = os.path.join(self.d, "video-staging", uid + ".part")
+        b = bytearray(data)
+        b[-3] ^= 0xFF
+        open(part, "wb").write(bytes(b))
+        self.assert_unresolved(uid)
+
+    def test_p2_3_replaced_staged_poster_is_not_published(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        open(os.path.join(self.d, "video-staging", uid + ".poster"), "wb").write(jpeg_bytes(color=(250, 0, 0)))
+        self.assert_unresolved(uid)
+
+    def test_p2_3_matching_sha_but_not_a_valid_mp4_is_not_published(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        junk = b"\x00" * len(data)
+        open(os.path.join(self.d, "video-staging", uid + ".part"), "wb").write(junk)
+        self.edit(uid, sha256=sha(junk))  # sha khớp bản ghi nhưng mp4box không chấp nhận
+        self.assert_unresolved(uid)
+
+    def test_p2_3_invalid_poster_with_matching_sha_is_not_published(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        junk = b"not a jpeg"
+        open(os.path.join(self.d, "video-staging", uid + ".poster"), "wb").write(junk)
+        self.edit(uid, psha=sha(junk))
+        self.assert_unresolved(uid)
+
+    def test_p2_3_final_mp4_is_validated_too_and_never_deleted(self):
+        uid, data, pb = self.crash_finish("moved")
+        res = json.load(open(self.sidecar(uid)))["result"]
+        fm = os.path.join(self.d, "videos", f"{res['id']}-{res['v']}.mp4")
+        open(fm, "r+b").truncate(len(data) - 2)
+        self.restart()
+        self.assertEqual(self.vrows(), [])
+        self.assertEqual(os.path.getsize(fm), len(data) - 2)
+        self.assertTrue(os.path.exists(os.path.join(self.d, "videos", "posters", f"{res['id']}-{res['pv']}.jpg")))
+        self.assertEqual(json.load(open(self.sidecar(uid)))["state"], "failed")
+
+    def test_p2_3_valid_staged_files_still_publish(self):
+        self.assert_published_after_restart(*self.crash_finish("publishing_saved"))
+
+
+class SessionCapTests(RobustnessBase):
+    def test_p2_4_unresolved_sessions_count_toward_cap(self):
+        s1 = self.crash_finish("publishing_saved", data=make_mp4(seed=b"1"))
+        s2 = self.crash_finish("publishing_saved", data=make_mp4(seed=b"2"))
+        self.assertEqual(self.init(make_mp4(seed=b"3"))[0], 429)  # đang publishing cũng chiếm chỗ
+        for uid, data, pb in (s1, s2):
+            open(os.path.join(self.d, "video-staging", uid + ".part"), "r+b").truncate(len(data) - 1)
+        self.restart()
+        self.assertEqual({json.load(open(self.sidecar(u)))["state"] for u, _, _ in (s1, s2)}, {"failed"})
+        st, out = self.init(make_mp4(seed=b"3"))
+        self.assertEqual((st, out["error"]), (429, "too_many_sessions"))
+        with mock.patch.object(server.time, "time", return_value=server.time.time() + 25 * 3600):  # failed hết hạn như phiên thường
+            self.assertEqual(self.init(make_mp4(seed=b"3"))[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "video-staging", s1[0] + ".part")))
+        self.assertEqual(os.listdir(os.path.join(self.d, "videos")), ["posters"])
+
+    def test_p2_4_reinit_same_sha_replaces_failed_session_staging_only(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        open(os.path.join(self.d, "video-staging", uid + ".part"), "r+b").truncate(len(data) - 1)
+        self.restart()
+        st, out = self.init(data)
+        self.assertEqual(st, 200)
+        self.assertNotEqual(out["uid"], uid)
+        self.assertEqual(out["offset"], 0)
+        self.assertEqual(self.status(uid)[0], 404)
+        self.assertEqual(self.chunk(out["uid"], 0, data)[0], 200)
+        self.assertEqual(self.poster(out["uid"], pb)[0], 200)
+        self.assertEqual(self.finish(out["uid"])[0], 200)
+
+    def test_p2_4_status_of_failed_session_is_ready_state(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        open(os.path.join(self.d, "video-staging", uid + ".part"), "r+b").truncate(len(data) - 1)
+        self.restart()
+        self.assertEqual(self.status(uid)[1]["state"], "ready")
+
+
+class CraftedSidecarTests(RobustnessBase):
+    def outside(self):
+        return sorted(os.listdir(os.path.dirname(self.d)))
+
+    def test_security_traversal_in_sha_is_unresolved_and_writes_nothing_outside(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        before = self.outside()
+        self.edit(uid, sha256="../../../escape", psha="../../escape2",
+                  result=dict(id="../../escape", v="../x", pv="../y", w=1, h=1, duration=1.0, title="t", ev=None))
+        self.restart()
+        self.assertEqual(json.load(open(self.sidecar(uid)))["state"], "failed")
+        self.assertEqual(self.vrows(), [])
+        self.assertEqual(self.outside(), before)
+        self.assertEqual(self.finish(uid)[0], 500)
+
+    def test_security_traversal_in_result_fields_is_ignored_ids_recomputed(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        before = self.outside()
+        self.edit(uid, name="../../evil.mp4",
+                  result=dict(id="../../evil", v="../x", pv="../y", w=9999, h=9999, duration=99999.0, title="x", ev=None))
+        self.restart()
+        st, res = self.finish(uid)
+        self.assertEqual(st, 200, res)
+        vid = hashlib.sha1(sha(data).encode()).hexdigest()[:16]
+        self.assertEqual((res["id"], res["v"], res["pv"], res["w"], res["h"], res["duration"]), (vid, sha(data)[:10], sha(pb)[:10], 320, 240, 2.5))
+        self.assertTrue(os.path.exists(os.path.join(self.d, "videos", f"{vid}-{sha(data)[:10]}.mp4")))
+        db = sqlite3.connect(store.db_path(self.d))
+        self.assertEqual(db.execute("SELECT name FROM videos").fetchall(), [("evil.mp4",)])
+        db.close()
+        self.assertEqual(self.outside(), before)
+
+    def test_security_non_string_or_bad_hex_values_never_crash_startup(self):
+        for field, value in (("sha256", 5), ("sha256", None), ("psha", ["x"]), ("size", "9"), ("offset", None), ("state", "weird"), ("uid", "../../x")):
+            with self.subTest(field=field, value=value):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                self.d = d
+                self.app = make_app(d)
+                uid, data, pb = self.crash_finish("publishing_saved")
+                self.edit(uid, **{field: value})
+                app2 = make_app(d)  # không được nổ
+                self.assertEqual(json.loads(gallery(app2)[2])["videos"], [])
+
+    def test_security_bad_metadata_in_sidecar_is_unresolved(self):
+        for kw in (dict(title="a\nb"), dict(title="x" * 500), dict(ev="2026-01-01"), dict(name="x.exe"), dict(size=0)):
+            with self.subTest(kw=kw):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                self.d = d
+                self.app = make_app(d)
+                uid, data, pb = self.crash_finish("publishing_saved")
+                self.edit(uid, **kw)
+                self.restart()
+                self.assertEqual(self.vrows(), [])
+                self.assertEqual(os.listdir(os.path.join(d, "videos")), ["posters"])
 
 
 if __name__ == "__main__":
