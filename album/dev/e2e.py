@@ -30,7 +30,7 @@ ap.add_argument("--big-url", default="", help="máy chủ giả chạy với --s
 ap.add_argument("--open-url", default="", help="máy chủ KHÔNG đặt token: thử /manage mở thẳng")
 ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit"])
 ap.add_argument("--visibility", action="store_true", help="chỉ chạy bộ thử Ẩn / hiện ảnh trong /manage (cần --manage-token nếu máy chủ có khoá; mock: --search-n lớn để ảnh ẩn chắc chắn nằm trong kết quả); trả ảnh về trạng thái hiện hết khi xong")
-ap.add_argument("--events", action="store_true", help="chỉ chạy bộ thử hai ngày (4/10, 17/10): tab khách, phạm vi tìm selfie, /manage tải lên theo ngày + chuyển ngày; mock: --events --process-adds 4 --admin-token test-token --search-n 70")
+ap.add_argument("--events", action="store_true", help="chỉ chạy bộ thử hai ngày (4/10, 17/10): tab khách, tìm selfie cả hai ngày (không phạm vi), /manage tải lên theo ngày + chuyển ngày; mock: --events --process-adds 4 --admin-token test-token --search-n 70")
 ap.add_argument("--reduced-motion", action="store_true")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
@@ -608,7 +608,7 @@ def vis_suite():
 
 
 def events_suite():
-    """Hai ngày trong một album (mock --events): tab ngày cho khách, URL giữ ngày, phạm vi tìm selfie, tương thích manifest cũ;
+    """Hai ngày trong một album (mock --events): tab ngày cho khách, URL giữ ngày, tìm selfie cả hai ngày, tương thích manifest cũ;
     /manage: chọn ngày khi tải lên, ảnh trùng giữ ngày cũ, huy hiệu ngày, bộ lọc ngày, chuyển ngày hàng loạt + hoàn tác."""
     E4, E17 = "2026-10-04", "2026-10-17"
     num = lambda s: int("".join(ch for ch in s if ch.isdigit()) or 0)
@@ -639,27 +639,22 @@ def events_suite():
         shot(pg, "ev-1-guest-tab17.png")
         pg.reload(); pg.wait_for_selector("#ev-tabs:not([hidden]) button"); pg.wait_for_selector("#vg-all .tile")
         check(sel() == E17 and num(pg.inner_text("#count")) == len(by[E17]), f"{label}: tải lại vẫn ở 17/10")
-        # ---- phạm vi tìm selfie ----
-        check(pg.get_attribute('#scope-hero button[data-scope="all"]', "aria-pressed") == "true", f"{label}: phạm vi mặc định Cả hai")
+        # ---- tìm selfie: không có bộ chọn phạm vi, một request không kèm scope, kết quả cả hai ngày cùng danh sách ----
+        check(pg.locator(".scope, #scope-hero, #scope-finder, [data-scope]").count() == 0, f"{label}: không có nút chọn phạm vi")
         pg.evaluate("scrollTo(0, 0)")
         got, stop = capture_search(pg)
         reqs = []
         pg.on("request", lambda r: reqs.append(r.url) if r.method == "POST" and "/api/search" in r.url else None)
-        pg.click('#scope-hero button[data-scope="%s"]' % E17)
         pg.set_input_files("#in-file", a.selfie)
         pg.wait_for_selector("#results:not([hidden])", timeout=60000)
-        check(len(reqs) == 1 and reqs[-1].endswith("/api/search"), f"{label}: lần tìm đầu luôn không kèm scope (chọn sẵn 17/10 chỉ lọc phía khách): {reqs}")
-        check(got[-1]["results"] and {x["ev"] for x in got[-1]["results"]} == {E4, E17}, f"{label}: phản hồi gốc có cả hai ngày")
+        check(len(reqs) == 1 and reqs[-1].endswith("/api/search"), f"{label}: một lần tìm = một /api/search không kèm scope: {reqs}")
+        check(got[-1]["results"] and {x["ev"] for x in got[-1]["results"]} == {E4, E17}, f"{label}: phản hồi có cả hai ngày")
         ids = lambda: pg.evaluate("gMain.flat.concat(gMaybe.flat).map(x => x.id)")
         evs = {r[0]: r[8] for r in rows}
-        check(ids() and all(evs.get(i, E17) == E17 for i in ids()), f"{label}: chỉ hiện ảnh 17/10")
-        shot(pg, "ev-2-guest-scope17.png")
-        pg.click('#scope-finder button[data-scope="all"]')
-        pg.wait_for_function("document.querySelector('#scope-finder button[data-scope=\"all\"]').getAttribute('aria-pressed') === 'true'")
-        pg.wait_for_selector("#results:not([hidden])")
+        check({evs.get(i, E17) for i in ids()} == {E4, E17}, f"{label}: lưới kết quả có ảnh của cả hai ngày")
+        shot(pg, "ev-2-guest-search.png")
         pg.wait_for_timeout(500)
-        check(len(reqs) == 1, f"{label}: đổi sang Cả hai không gửi lại /api/search: {reqs}")
-        check({evs.get(i, E17) for i in ids()} == {E4, E17}, f"{label}: Cả hai → có ảnh của cả hai ngày")
+        check(len(reqs) == 1, f"{label}: không gửi thêm /api/search: {reqs}")
         stop()
         # ---- manifest cũ (thiếu trường ngày) → không có bộ chọn, mọi ảnh hiện ----
         pg2 = ctx.new_page(); errs2 = []
@@ -670,7 +665,7 @@ def events_suite():
             route.fulfill(status=200, content_type="application/json", body=json.dumps(m))
         pg2.route("**/api/gallery", old_shape)
         pg2.goto(a.url + "/#ev=" + E17); pg2.wait_for_selector("#vg-all .tile", timeout=30000)
-        check(pg2.locator("#ev-tabs").is_hidden() and pg2.locator("#scope-hero").is_hidden(), f"{label}: manifest cũ: không hiện tab/phạm vi")
+        check(pg2.locator("#ev-tabs").is_hidden(), f"{label}: manifest cũ: không hiện tab ngày")
         check(num(pg2.inner_text("#count")) == len(rows) and not errs2, f"{label}: manifest cũ: hiện đủ {len(rows)} ảnh {errs2}")
         pg2.close()
         # ---- /manage ----
@@ -755,7 +750,7 @@ def events_suite():
         check(pg.locator("#vgrid .cell").count() == cells0 + 4, f"{label}: lưới thêm 4 ô: {cells0} → {pg.locator('#vgrid .cell').count()}")
         check(pg.locator('#vgrid .cell .tag--ev', has_text="17/10").count() >= 4, f"{label}: huy hiệu ngày của ảnh mới")
         check(not errs, f"{label}: lỗi JS trên trang: {errs}")
-        print(f"{label}: tab ngày + URL + phạm vi tìm + manifest cũ + /manage (tải lên, huy hiệu, lọc, chuyển ngày, hoàn tác) OK")
+        print(f"{label}: tab ngày + URL + tìm selfie không phạm vi + manifest cũ + /manage (tải lên, huy hiệu, lọc, chuyển ngày, hoàn tác) OK")
         ctx.close()
 
     with sync_playwright() as pw:

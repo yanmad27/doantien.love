@@ -174,9 +174,8 @@ body.lb-open { overflow: hidden; }
 /* giấy xếp chồng nhẹ trên điện thoại (lệch ≤ 3 px) */
 @media (max-width: 640px) { .tile.stacked { box-shadow: 2px 2px 0 -1px var(--paper), 2px 2px 0 0 var(--line-soft); } }
 
-/* hai ngày: tab xem ảnh + phạm vi tìm selfie (chỉ hiện khi cả hai ngày có ảnh) */
-.ev-tabs, .scope { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .5rem; margin: 1rem auto; }
-.scope { font-family: var(--serif); color: var(--ink-soft); font-size: 1.05rem; }
-.ev-tabs button, .scope button { min-height: 44px; padding: .4rem 1.1rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
-.ev-tabs button[aria-selected="true"], .scope button[aria-pressed="true"] { background: var(--peach-ink); border-color: var(--peach-ink); color: #fff; }
-.ev-tabs[hidden], .scope[hidden] { display: none; }
+/* hai ngày: tab xem ảnh (chỉ hiện khi cả hai ngày có ảnh) */
+.ev-tabs { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .5rem; margin: 1rem auto; }
+.ev-tabs button { min-height: 44px; padding: .4rem 1.1rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.ev-tabs button[aria-selected="true"] { background: var(--peach-ink); border-color: var(--peach-ink); color: #fff; }
+.ev-tabs[hidden] { display: none; }

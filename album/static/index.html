@@ -30,7 +30,6 @@
       <label class="btn btn--solid" id="cta-find" for="in-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9.5" r="3.4"/><path d="M5.2 20c.7-3.5 3.3-5.4 6.8-5.4s6.1 1.9 6.8 5.4"/></svg>Tìm ảnh của bạn</label>
       <p class="cta-s" id="cta-s">Chỉ cần một tấm selfie. Ảnh selfie <b>không bao giờ được lưu lại</b>.</p>
     </div>
-    <div class="scope" id="scope-hero" role="group" aria-label="Phạm vi tìm ảnh" hidden></div>
     <input class="sr" type="file" id="in-file" accept="image/*" aria-label="Chọn ảnh selfie để tìm ảnh của bạn">
   </header>
 
@@ -40,7 +39,7 @@
       <figure class="selfie" id="selfie-fig">
         <div class="selfie-in"><img id="selfie" alt="Ảnh selfie bạn vừa chọn"><i class="box" id="selfie-box" hidden></i><i class="scan" aria-hidden="true"></i></div>
       </figure>
-      <div class="status" id="status" tabindex="-1" aria-live="polite">
+      <div class="status" id="status" tabindex="-1" role="status" aria-live="polite">
         <div id="s-loading" class="s-loading" hidden>
           <p class="s-title script">Đang tìm bạn trong album…</p>
           <p class="s-text">Chỉ mất vài giây thôi.</p>
@@ -52,7 +51,6 @@
           <ul class="tips" id="s-tips" hidden></ul>
           <p class="notice" id="s-multi" hidden></p>
         </div>
-        <div class="scope" id="scope-finder" role="group" aria-label="Phạm vi tìm ảnh" hidden></div>
         <div class="s-actions" id="s-actions" hidden>
           <button type="button" class="btn btn--solid" id="b-retry" hidden>Thử lại</button>
           <label class="btn" for="in-file" id="b-other">Chọn ảnh khác</label>

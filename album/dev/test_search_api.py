@@ -1,5 +1,5 @@
-"""Tìm theo ngày phía khách: lọc phản hồi "tất cả" theo `ev` phải ra đúng kết quả máy chủ tính theo ?scope= (cùng một ảnh chụp dữ liệu), và
-/api/search nén gzip theo Accept-Encoding.   .venv/bin/python -I -m unittest discover -s dev -p 'test_*.py'"""
+"""API /api/search phía máy chủ: ?scope= (máy chủ vẫn hỗ trợ) phải bằng việc lọc phản hồi "tất cả" theo `ev` (cùng một ảnh chụp dữ liệu), và
+/api/search nén gzip theo Accept-Encoding. Khách không còn gửi ?scope= (mỗi lần tìm là một request không phạm vi).   .venv/bin/python -I -m unittest discover -s dev -p 'test_*.py'"""
 import gzip
 import json
 import os
@@ -34,13 +34,13 @@ class MixEngine(TagEngine):
                     f.emb[k] = w
 
 
-def project(r, sc):
-    """Bản Python của project() trong guest.js."""
+def filter_scope(r, sc):
+    """Lọc phản hồi "tất cả" theo ngày — kết quả máy chủ ?scope= phải khớp."""
     res = [x for x in r["results"] if x["ev"] == sc]
     return dict(r, results=res, total_matches=len(res), truncated=False)
 
 
-def reusable(r, events=(E4, E17)):
+def complete(r, events=(E4, E17)):
     return r.get("truncated") is False and isinstance(r.get("results"), list) and all(x.get("ev") in events for x in r["results"])
 
 
@@ -94,10 +94,10 @@ class EquivalenceTests(Base):
     def check_all_scopes(self, tune=False):
         extra = "tune=1" if tune else ""
         full = self.js(extra=extra)
-        self.assertTrue(reusable(full))
+        self.assertTrue(complete(full))
         for sc in (E4, E17):
             want = self.js(sc, extra)
-            got = project(full, sc)
+            got = filter_scope(full, sc)
             self.assertEqual(norm(got) | {"query": 0}, norm(want) | {"query": 0}, sc)  # toàn bộ phản hồi, trừ query (giống nhau, so riêng)
             self.assertEqual(got["query"], want["query"])
             self.assertEqual(view(got), view(want), sc)
@@ -131,11 +131,11 @@ class EquivalenceTests(Base):
 
     def test_empty_scope(self):
         full = self.check_all_scopes()
-        self.assertEqual(project(full, E17)["results"], [])
+        self.assertEqual(filter_scope(full, E17)["results"], [])
         self.assertEqual(self.js(E17)["results"], [])
         reassign(self.app, list(PID), E17)
         full = self.check_all_scopes()
-        self.assertEqual(project(full, E4)["total_matches"], 0)
+        self.assertEqual(filter_scope(full, E4)["total_matches"], 0)
 
     def test_tune_query_ignored_by_server(self):
         reassign(self.app, ["a1", "b1"], E17)
@@ -143,27 +143,20 @@ class EquivalenceTests(Base):
         self.assertEqual(norm(a), norm(b))
         self.check_all_scopes(tune=True)
 
-    def test_truncated_all_is_not_reusable_and_scoped_fetch_is_authoritative(self):
+    def test_truncated_all_differs_from_scoped_which_is_authoritative(self):
         reassign(self.app, ["a1", "b1", "s1", "c2", "s2"], E17)
         with mock.patch.object(server, "MAX_RESULTS", 3):
             full = self.js()
-            self.assertTrue(full["truncated"] and not reusable(full))
+            self.assertTrue(full["truncated"] and not complete(full))
             self.assertGreater(full["total_matches"], len(full["results"]))
             for sc in (E4, E17):
                 r = self.js(sc)
                 self.assertEqual(len(r["results"]), min(3, r["total_matches"]))
                 self.assertTrue(all(x["ev"] == sc for x in r["results"]))
                 self.assertEqual(r["truncated"], r["total_matches"] > 3)
-                if r["truncated"]:  # lọc phản hồi bị cắt sẽ cho số đếm/thứ tự sai → khách phải hỏi máy chủ
-                    self.assertNotEqual(view(project(full, sc)), view(r))
+                if r["truncated"]:  # lọc phản hồi bị cắt sẽ cho số đếm/thứ tự sai → máy chủ mới là nguồn đúng
+                    self.assertNotEqual(view(filter_scope(full, sc)), view(r))
             self.assertEqual(norm(self.js())["results"], norm(full)["results"])  # quay lại "tất cả": cùng phản hồi cũ
-
-    def test_malformed_all_is_not_reusable(self):
-        full = self.js()
-        for bad in (dict(full, truncated=None), {k: v for k, v in full.items() if k != "truncated"},
-                    dict(full, results=[dict(full["results"][0], ev=None)] + full["results"][1:]),
-                    dict(full, results=[{k: v for k, v in full["results"][0].items() if k != "ev"}] + full["results"][1:])):
-            self.assertFalse(reusable(bad))
 
 
 class GzipTests(Base):
