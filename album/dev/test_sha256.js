@@ -13,5 +13,9 @@ chk("1 MiB pattern", run(mib, []), ref(mib));
 for (const n of [55, 56, 57, 63, 64, 65, 119, 120, 128, 129]) { const b = crypto.randomBytes(n); chk(`pad boundary ${n}`, run(b, []), ref(b)); }
 const big = crypto.randomBytes(3 * 1048576 + 17);
 for (const cuts of [[1], [63, 64, 65], [64, 128, 4096], [1048576, 2097152], [7, 8, 1048575, 1048577, 3 * 1048576]]) chk("slices " + cuts.join(","), run(big, cuts), ref(big));
+// độ dài > 2^32 bit (512 MiB): 600 MiB toàn số 0, đưa theo lát 4 MiB, so với crypto của node (~vài giây)
+{ const z = Buffer.alloc(4 * 1048576), s = new Sha256(), r = crypto.createHash("sha256"), t0 = Date.now();
+  for (let i = 0; i < 150; i++) { s.update(z); r.update(z); }
+  chk(`600 MiB zeros (length > 2^32 bits, ${Math.round((Date.now() - t0) / 100) / 10}s)`, s.hex(), r.digest("hex")); }
 const fake = { size: big.length, slice: (a, b) => new Blob([big.subarray(a, b)]) };
 Sha256.file(fake, null, 1000003).then(h => { chk("File.slice 1000003", h, ref(big)); if (bad) process.exit(1); console.log("sha256 KAT ok"); });
