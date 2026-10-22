@@ -1640,5 +1640,187 @@ class CraftedSidecarTests(RobustnessBase):
                 self.assertEqual(os.listdir(os.path.join(d, "videos")), ["posters"])
 
 
+class FinalRepairTests(RobustnessBase):
+    FLOOR = 5120 * 1024 ** 2
+
+    def disk(self, free):
+        return mock.patch.object(server.shutil, "disk_usage", return_value=types.SimpleNamespace(free=free, total=free * 2, used=0))
+
+    def photo(self, shade=1):
+        return call(self.app, "POST", "/api/upload?name=p.jpg", headers=self.hdr(), body=jpeg_bytes(64, 48, (shade, 5, 6)))[0]
+
+    def hold(self, lock, seconds=6):
+        ready, release = threading.Event(), threading.Event()
+
+        def run():
+            with lock:
+                ready.set()
+                release.wait(20)
+        t = threading.Thread(target=run)
+        t.start()
+        ready.wait(5)
+        timer = threading.Timer(seconds, release.set)  # chốt an toàn: loop bị chặn thì khoá được thả sau `seconds` và test báo lỗi thời gian
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.addCleanup(t.join, 30)
+        self.addCleanup(release.set)
+        return release
+
+    def test_1_photo_upload_never_waits_on_ledger_lock_on_the_event_loop(self):
+        h = self.hdr()
+        release = self.hold(self.app.state.disk_lock)
+        body = jpeg_bytes(64, 48, (3, 3, 3))
+
+        async def go():
+            t0 = time.time()
+            ph = asyncio.ensure_future(acall(self.app, "POST", "/api/upload?name=w.jpg", headers=h, body=body))
+            hz = await acall(self.app, "GET", "/healthz")
+            quick = time.time() - t0
+            gal = await acall(self.app, "GET", "/api/gallery")
+            release.set()
+            return quick, hz[0], gal[0], (await ph)[0]
+        quick, hz, gal, ph = asyncio.run(go())
+        self.assertLess(quick, 3, "event loop bị chặn bởi rlock")
+        self.assertEqual((hz, gal, ph), (200, 200, 200))
+        self.assertEqual(self.app.state.disk_inflight(), 0)
+
+    def test_1_init_persistence_happens_outside_ledger_lock(self):
+        lock = self.app.state.disk_lock
+        seen = []
+        real = os.fsync
+        orig_save = None
+
+        def spy(fd):
+            seen.append(lock.locked())
+            return real(fd)
+        data = make_mp4()
+        with mock.patch.object(server.os, "fsync", spy):
+            self.assertEqual(self.init(data)[0], 200)
+        self.assertTrue(seen)
+        self.assertFalse(any(seen), "fsync khi đang giữ rlock")
+
+    def test_1_init_persist_failure_rolls_back_reservation(self):
+        data = make_mp4()
+        with mock.patch.object(server.os, "fsync", side_effect=OSError("disk gone")):
+            with self.assertRaises(Exception):
+                self.init(data)
+        self.assertEqual(self.app.state.video_sessions, {})
+        self.assertEqual(os.listdir(os.path.join(self.d, "video-staging")), [])
+        free = types.SimpleNamespace(free=self.FLOOR + len(data), total=1, used=0)
+        with mock.patch.object(server.shutil, "disk_usage", return_value=free):
+            self.assertEqual(self.init(data)[0], 200)  # chỗ đã đặt được trả lại
+
+    def test_2_chunk_bytes_stay_reserved_until_offset_advance_under_ledger_lock(self):
+        size = server.VIDEO_CHUNK_MAX
+        data = bytes(size)
+        uid = self.init(data)[1]["uid"] if False else None
+        free = {"v": self.FLOOR + size}
+        phase = {"admitting": False, "fired": False}
+        at_hook, go, advanced = threading.Event(), threading.Event(), threading.Event()
+
+        def du(path):
+            if phase["admitting"] and not phase["fired"]:
+                phase["fired"] = True  # chunk được cho đi tiếp đúng lúc ảnh đang đọc free (giữ rlock)
+                go.set()
+                advanced.wait(0.7)  # sửa đúng: offset chỉ tiến được SAU khi ảnh nhả rlock → không bao giờ set trong lúc chờ
+            return types.SimpleNamespace(free=free["v"], total=free["v"] * 2, used=0)
+
+        def hook_written():
+            at_hook.set()
+            go.wait(20)
+        with mock.patch.object(server.shutil, "disk_usage", du):
+            uid = self.init(data)[1]["uid"]
+            self.app.state.video_hooks["chunk_written"] = hook_written
+            self.app.state.video_hooks["chunk_advanced"] = advanced.set
+            res = []
+            t = threading.Thread(target=lambda: res.append(self.chunk(uid, 0, data)))
+            t.start()
+            self.assertTrue(at_hook.wait(20))
+            phase["admitting"] = True
+            self.assertEqual(self.photo(), 507)  # free còn floor + 16 MiB (đọc cũ) mà chunk 16 MiB chưa được coi là đã ghi
+            phase["admitting"] = False
+            t.join(30)
+        self.assertEqual(res[0][0], 200)
+        self.assertEqual(self.app.state.video_sessions[uid]["offset"], size)
+
+    def test_2_chunk_offset_rollback_also_goes_through_ledger(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        real = server.json.dump
+        calls = {"n": 0}
+
+        def failing_dump(obj, fh, *a, **k):
+            if obj.get("offset") == len(data) and calls["n"] == 0:
+                calls["n"] += 1
+                raise OSError("sidecar write failed")
+            return real(obj, fh, *a, **k)
+        with mock.patch.object(server.json, "dump", failing_dump):
+            st, out = self.chunk(uid, 0, data)
+        self.assertEqual((st, out["offset"]), (500, 0))
+        self.assertEqual(os.path.getsize(os.path.join(self.d, "video-staging", uid + ".part")), 0)
+        self.assertEqual(self.app.state.video_sessions[uid]["offset"], 0)
+        self.assertEqual(self.chunk(uid, 0, data)[0], 200)
+
+    def test_3_photo_cleanup_releases_everything_even_if_temp_remove_fails(self):
+        real = os.remove
+
+        def bad_remove(path, *a, **k):
+            if str(path).endswith(".part") and os.sep + "tmp" + os.sep in str(path):
+                raise OSError("cannot remove")
+            return real(path, *a, **k)
+        with mock.patch.object(server.os, "remove", bad_remove):
+            for i in range(server.MAX_UPLOAD_SLOTS + 2):  # nhiều hơn số slot: nếu slot rò thì các lần sau phải 503
+                with self.assertRaises(Exception):  # ảnh hỏng → 400 nhưng file tạm còn đó và xoá nó lỗi OSError
+                    call(self.app, "POST", "/api/upload?name=bad.jpg", headers=self.hdr(), body=b"not an image %d" % i)
+        self.assertEqual(self.app.state.disk_inflight(), 0)
+        for f in os.listdir(os.path.join(self.d, "tmp")):
+            real(os.path.join(self.d, "tmp", f))
+        self.assertEqual(self.photo(200), 200)  # slot, hạn mức và chỗ đĩa đều đã được trả
+        with self.disk(self.FLOOR + len(jpeg_bytes(64, 48, (9, 5, 6)))):
+            self.assertEqual(self.photo(9), 200)
+
+    def test_4_publish_incomplete_response_has_only_a_short_code(self):
+        for corrupt in ("part_truncate", "poster_swap", "missing"):
+            with self.subTest(corrupt=corrupt):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                self.d = d
+                self.app = make_app(d)
+                uid, data, pb = self.crash_finish("publishing_saved")
+                stage = os.path.join(d, "video-staging")
+                if corrupt == "part_truncate":
+                    open(os.path.join(stage, uid + ".part"), "r+b").truncate(len(data) - 1)
+                elif corrupt == "poster_swap":
+                    open(os.path.join(stage, uid + ".poster"), "wb").write(jpeg_bytes(color=(250, 0, 0)))
+                else:
+                    os.remove(os.path.join(stage, uid + ".poster"))
+                self.restart()
+                st, _, raw, _ = call(self.app, "POST", f"/api/admin/video/{uid}/finish", headers=self.hdr())
+                out = json.loads(raw)
+                self.assertEqual((st, out["error"]), (500, "publish_incomplete"))
+                self.assertRegex(out["reason"], r"^[a-z0-9_]{1,40}$")
+                self.assertNotIn(d, raw.decode())
+                self.assertNotIn("/", raw.decode())
+                self.assertNotIn(d, open(os.path.join(stage, uid + ".json")).read())
+
+    def test_4_old_long_reason_in_sidecar_is_not_echoed(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        open(os.path.join(self.d, "video-staging", uid + ".part"), "r+b").truncate(len(data) - 1)
+        self.restart()
+        self.edit(uid, reason=f"{self.d}/video-staging/x.part: kích thước/sha256 không khớp")
+        self.restart()
+        st, _, raw, _ = call(self.app, "POST", f"/api/admin/video/{uid}/finish", headers=self.hdr())
+        self.assertEqual(st, 500)
+        self.assertNotIn(self.d, raw.decode())
+
+    def test_4_oserror_text_stays_out_of_response(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        with mock.patch.object(server, "sha_file", side_effect=OSError(f"[Errno 5] boom {self.d}/secret")):
+            st, _, raw, _ = call(self.app, "POST", f"/api/admin/video/{uid}/finish", headers=self.hdr())
+        self.assertEqual(st, 500)
+        self.assertNotIn(self.d, raw.decode())
+        self.assertNotIn("boom", raw.decode())
+
+
 if __name__ == "__main__":
     unittest.main()

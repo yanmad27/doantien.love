@@ -1081,7 +1081,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         n_res = int(declared) if declared and declared.isdigit() else max_upload  # đặt chỗ đĩa theo Content-Length (không biết thì theo mức tối đa)
         part = os.path.join(tmp_dir, uuid.uuid4().hex + ".part")
         try:
-            if not disk_reserve(n_res):  # sổ chỗ đĩa chung với video: chừa chỗ phiên video, poster và ảnh khác đang ghi
+            if not await run_in_threadpool(disk_reserve, n_res):  # (trong luồng: không chờ rlock trên event loop) sổ chỗ đĩa chung với video: chừa chỗ phiên video, poster và ảnh khác đang ghi
                 await reject(request, 507, f"Ổ đĩa sắp đầy (còn dưới {min_free // 2**20} MB trống), không nhận thêm ảnh. Hãy xoá bớt hoặc mở rộng dung lượng.")
             disk_held = True
             with quota_lock:  # đặt chỗ trước dung lượng tối đa của file này; trả lại trong finally
@@ -1098,22 +1098,28 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                         raise HTTPException(413, f"Ảnh quá lớn (tối đa {max_upload // 2**20} MB)")
                     if n - checked >= DISK_CHECK_EVERY:  # đĩa có thể đầy dần trong lúc nhiều upload chạy song song
                         checked = n
-                        if disk_low(n_res):
+                        if await run_in_threadpool(disk_low, n_res):
                             raise HTTPException(507, "Ổ đĩa sắp đầy, dừng nhận ảnh.")
                     h.update(c)
                     fh.write(c)
             if n == 0:
                 raise HTTPException(400, "File rỗng")
             return await run_in_threadpool(finalize_upload, part, fname, h.hexdigest(), n, event)
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
-            if reserved:
-                with quota_lock:
-                    quota["reserved"] -= max_upload
-            if disk_held:
-                disk_release(n_res)
-            upload_slots.release()
+        finally:  # mỗi bước dọn độc lập: lỗi xoá file tạm không được làm rò chỗ đĩa, hạn mức hay slot
+            try:
+                if os.path.exists(part):
+                    os.remove(part)
+            finally:
+                try:
+                    if reserved:
+                        with quota_lock:
+                            quota["reserved"] -= max_upload
+                finally:
+                    try:
+                        if disk_held:
+                            await run_in_threadpool(disk_release, n_res)
+                    finally:
+                        upload_slots.release()
 
     def finalize_upload(part, fname, digest, size, event=store.DEFAULT_EVENT):
         try:
@@ -1241,6 +1247,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             return shutil.disk_usage(data_dir).free - vreserved() - (inflight["n"] - mine) < min_free
 
     app.state.disk_reserve, app.state.disk_release = disk_reserve, disk_release
+    app.state.disk_lock, app.state.disk_inflight = rlock, lambda: inflight["n"]
 
     def vreserved(exclude=None):
         """Số byte các phiên đang tải còn phải nhận (đã được giữ chỗ lúc init): ảnh tải lên và chunk khác phải chừa chỗ này."""
@@ -1309,15 +1316,20 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         finally:
             db.close()
 
-    def recon_fail(s, reason):
-        """Không công bố được an toàn: ghi nhận (phiên vẫn tính vào MAX_VIDEO_SESSIONS và hết hạn như thường), KHÔNG xoá file nào, nhất là file đích."""
-        log.error("video %s: %s", s.get("uid"), reason)
-        s["state"], s["reason"] = "failed", reason
+    def recon_fail(s, code, detail=""):
+        """Không công bố được an toàn: ghi nhận (phiên vẫn tính vào MAX_VIDEO_SESSIONS và hết hạn như thường), KHÔNG xoá file nào, nhất là file đích.
+        `code` là mã ngắn (lưu trong sidecar, trả cho chủ nhà); đường dẫn/lỗi hệ điều hành chỉ nằm trong `detail` → log."""
+        log.error("video %s: %s %s", s.get("uid"), code, detail)
+        s["state"], s["reason"] = "failed", code
         try:
             vsave(s)
         except OSError:
             pass
         return False
+
+    def reason_code(s):
+        r = s.get("reason")
+        return r if isinstance(r, str) and re.fullmatch(r"[a-z0-9_]{1,40}", r) else "unresolved"  # chỉ mã ngắn ra ngoài; chi tiết (đường dẫn, lỗi OS) nằm trong log
 
     def meta_problem(s):
         t, ev, name, size = s.get("title"), s.get("ev"), s.get("name"), s.get("size")
@@ -1339,7 +1351,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             return True
         uid, sha, psha = s["uid"], s.get("sha256"), s.get("psha")
         if not (isinstance(sha, str) and SHA256_RE.fullmatch(sha)):
-            return recon_fail(s, "sha256 trong sidecar không hợp lệ")
+            return recon_fail(s, "sidecar_sha256_invalid")
         db = store.connect_ro(data_dir)
         try:
             row = db.execute("SELECT id, v, pv, w, h, duration, title, ev FROM videos WHERE sha256=?", (sha,)).fetchone()
@@ -1358,7 +1370,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         if uploading and not (s["poster"] and s["offset"] == s["size"]):
             return False
         if not (isinstance(psha, str) and SHA256_RE.fullmatch(psha)):
-            return False if uploading else recon_fail(s, "psha trong sidecar không hợp lệ")
+            return False if uploading else recon_fail(s, "sidecar_psha_invalid")
         vid = hashlib.sha1(sha.encode()).hexdigest()[:16]
         v, pv = sha[:10], psha[:10]
         sm, sp = vpath(uid, ".part"), vpath(uid, ".poster")
@@ -1367,26 +1379,26 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             return False  # chưa công bố gì: phiên đang tải bình thường
         bad = meta_problem(s)
         if bad:
-            return recon_fail(s, bad)
+            return recon_fail(s, "sidecar_metadata_invalid", bad)
         msrc = fm if os.path.exists(fm) else sm if os.path.exists(sm) else None
         psrc = fj if os.path.exists(fj) else sp if os.path.exists(sp) else None
         if msrc is None or psrc is None:
-            return recon_fail(s, "mất cả file staging lẫn file đích")
+            return recon_fail(s, "files_missing", f"{fm} / {fj}")
         try:
             if os.path.getsize(msrc) != s["size"] or sha_file(msrc) != sha:
-                return recon_fail(s, f"{msrc}: kích thước/sha256 không khớp bản ghi")
+                return recon_fail(s, "mp4_mismatch", msrc)
             info = mp4box.probe(msrc)
             with open(psrc, "rb") as fh:
                 pbytes = fh.read()
             if hashlib.sha256(pbytes).hexdigest() != psha:
-                return recon_fail(s, f"{psrc}: sha256 không khớp bản ghi")
+                return recon_fail(s, "poster_mismatch", psrc)
             perr = check_poster(pbytes)
             if perr:
-                return recon_fail(s, f"{psrc}: {perr}")
+                return recon_fail(s, "poster_invalid", f"{psrc}: {perr}")
         except mp4box.Mp4Error as e:
-            return recon_fail(s, f"MP4 không hợp lệ: {e}")
+            return recon_fail(s, "mp4_invalid", str(e))
         except OSError as e:
-            return recon_fail(s, f"không đọc được file: {e}")
+            return recon_fail(s, "read_error", str(e))
         res = dict(id=vid, v=v, pv=pv, w=info["w"], h=info["h"], duration=info["duration"], title=s["title"], ev=s["ev"])
         with vglobal:
             for staged, final, src in ((sm, fm, msrc), (sp, fj, psrc)):
@@ -1536,10 +1548,14 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 uid = uuid.uuid4().hex
                 s = dict(uid=uid, name=fname, size=size, sha256=sha, ev=ev, title=title, offset=0, poster=False, psha="", created=now,
                          expires=now + VIDEO_SESSION_TTL, state="uploading", result=None)
-                open(vpath(uid, ".part"), "wb").close()
                 vlocks[uid] = threading.Lock()
+                vsessions[uid] = s  # từ đây phần còn nợ của phiên đã nằm trong sổ; ghi đĩa làm SAU khi nhả rlock
+            try:
+                open(vpath(uid, ".part"), "wb").close()
                 vsave(s)
-                vsessions[uid] = s
+            except BaseException:
+                vdrop(uid)  # ghi bền hỏng → trả chỗ đã đặt (bỏ khỏi vsessions) và dọn file dở, ngoài rlock
+                raise
         return vjson(dict(uid=uid, offset=0, size=size, chunk_max=VIDEO_CHUNK_MAX, expires=int(s["expires"])))
 
     @app.post("/api/admin/video/{vid}/event")
@@ -1628,11 +1644,15 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     except BaseException:
                         fh.truncate(committed)
                         raise
-                s["offset"] = committed + len(body)
+                vhook("chunk_written")
+                with rlock:  # byte đã ghi chuyển từ "còn nợ" sang "đã chiếm đĩa" trong cùng một bước với sổ: không ai thấy free cũ + nợ mới
+                    s["offset"] = committed + len(body)
+                vhook("chunk_advanced")
                 try:
                     vsave(s)
                 except BaseException:
-                    s["offset"] = committed
+                    with rlock:
+                        s["offset"] = committed
                     with open(vpath(s["uid"], ".part"), "r+b") as fh:
                         fh.truncate(committed)
                     raise
@@ -1712,7 +1732,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                     log.error("chốt video lỗi: %s", e)
                     done = False
                 if not done:
-                    return vjson(dict(error="publish_incomplete", reason=s.get("reason", "")), 500)
+                    return vjson(dict(error="publish_incomplete", reason=reason_code(s)), 500)
             if s["state"] == "published":
                 return vjson(s["result"])
             if s["offset"] != s["size"]:
