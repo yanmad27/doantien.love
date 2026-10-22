@@ -112,6 +112,22 @@
     <p id="pinfo" class="sum"></p>
     <div id="errors" class="errors" hidden></div>
   </section>
+  <section class="card panel" aria-labelledby="h-vid" id="vid-sec">
+    <h2 class="h" id="h-vid"><span class="num">3</span>Video</h2>
+    <p class="note">Chọn video MP4 đã xử lý sẵn (H.264 + AAC, đã “faststart”). Tải theo từng mảnh; nếu bị ngắt, chọn lại đúng file này để tiếp tục.</p>
+    <div class="vform">
+      <label>Video (.mp4)<input type="file" id="vf-file" accept=".mp4,video/mp4"></label>
+      <label>Ảnh poster (.jpg, tối đa 2 MB; bỏ trống để lấy khung hình ở giây thứ 1)<input type="file" id="vf-poster" accept=".jpg,.jpeg,image/jpeg"></label>
+      <label>Tiêu đề<input type="text" id="vf-title" maxlength="120"></label>
+      <label>Ngày<select id="vf-ev"><option value="2026-10-04">Ngày 4/10</option><option value="2026-10-17">Ngày 17/10</option><option value="">Không gán ngày</option></select></label>
+      <div class="proc-row"><button type="button" class="btn btn--solid" id="vf-go" disabled>Tải video lên</button><span id="vf-msg" class="pmsg" role="status"></span></div>
+      <div class="bar" id="vf-bar-wrap" role="progressbar" aria-label="Tiến độ tải video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><i id="vf-bar"></i></div>
+      <p id="vf-info" class="sum"></p>
+    </div>
+    <h3 class="vh">Video đã đăng</h3>
+    <p class="note" id="vl-empty">Chưa có video nào.</p>
+    <ul class="vlist" id="vlist"></ul>
+  </section>
 </main>
 <div class="abar" id="abar" hidden role="region" aria-label="Thao tác với ảnh đã chọn">
   <div class="abar-top">
@@ -143,6 +159,7 @@
   <p class="cf-t" id="cf-t"></p>
   <div class="pv-btns"><button type="button" class="btn btn--quiet" id="cf-no">Huỷ</button><button type="button" class="btn btn--solid" id="cf-yes">Đồng ý</button></div>
 </dialog>
+<script src="/static/sha256.js?v=__V__"></script>
 <script src="/static/manage.js?v=__V__"></script>
 </body>
 </html>

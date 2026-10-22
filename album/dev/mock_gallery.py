@@ -57,6 +57,9 @@ ap.add_argument("--search-n", type=int, default=70, help="số ảnh /api/search
 ap.add_argument("--admin-delay", type=float, default=0, help="giây trễ thêm cho POST /api/admin/visibility (thử cập nhật lạc quan)")
 ap.add_argument("--events", action="store_true", help="đưa ~1/3 ảnh sang sự kiện 17/10 (mặc định: tất cả 4/10 như production → bộ chọn ngày không hiện)")
 ap.add_argument("--process-adds", type=int, default=0, help="POST /api/process thêm ngần này ảnh (ngày 17/10) sau ~1.5 s 'running' rồi 'done' — thử lưới /manage tự làm mới sau Xử lý (0 = như cũ: done ngay)")
+ap.add_argument("--videos", type=int, default=0, help="đưa ngần này video vào manifest (ev luân phiên 4/10, 17/10, không ngày); cần --video-file/--poster-file")
+ap.add_argument("--video-file", default="", help="MP4 thật phục vụ cho mọi /v/*.mp4 của video dựng sẵn (có Range)")
+ap.add_argument("--poster-file", default="", help="JPEG poster của video dựng sẵn")
 ap.add_argument("--seed", type=int, default=7)
 a = ap.parse_args()
 os.makedirs(a.data, exist_ok=True)
@@ -172,6 +175,16 @@ SECRET = os.urandom(32)
 PUB = {}                            # manifest công khai (chỉ ảnh đang hiện) + b đã dồn lại (hợp đồng F.3)
 
 
+VIDEOS = []        # video đã công bố: dict(id, v, pv, w, h, dur, title, ev, sort, sha, data, poster)
+VSESS = {}         # uid -> phiên tải lên trong bộ nhớ (như /api/admin/video/*)
+if a.videos:
+    _vb = open(a.video_file, "rb").read(); _pb = open(a.poster_file, "rb").read()
+    for _i in range(a.videos):
+        _sha = hashlib.sha256(f"seed-video-{_i}".encode()).hexdigest()
+        VIDEOS.append(dict(id=_sha[:16], v=_sha[:10], pv=hashlib.sha256(_pb).hexdigest()[:10], w=320, h=240, dur=2, title=f"Video mẫu {_i + 1}",
+                           ev=(None, "2026-10-04", "2026-10-17")[(_i + 1) % 3] if a.videos > 1 else "2026-10-04", sort=_i, sha=_sha, data=_vb, poster=_pb))
+
+
 def rebuild_public():
     """Chỉ ảnh đang hiện; b = khung hiện đầu tiên của chuỗi gốc, chuỗi <2 khung hiện thì null. Một hàm dùng chung cho gallery và search."""
     with STATE_LOCK:
@@ -185,9 +198,11 @@ def rebuild_public():
             for i in g:
                 pub_b[i] = g[0] if len(g) >= 2 else None
         rows = [r[:7] + [pub_b.get(r[0]), EVENT[r[0]]] for r in vis]
+        vrows = sorted(VIDEOS, key=lambda x: (x["ev"] is None, x["sort"]))
+        vrows = [[x["id"], x["v"], x["pv"], x["w"], x["h"], x["dur"], x["title"], x["ev"], x["sort"]] for x in vrows]
         n_ev = {e: sum(1 for r in rows if r[8] == e) for e in EV_IDS}
         events = [dict(id=e, label={"2026-10-04": "4/10", "2026-10-17": "17/10"}[e], n=n_ev[e]) for e in EV_IDS]
-        body = json.dumps(dict(mv=hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:10], cdn=CDN, dv=DV, events=events, photos=rows), separators=(",", ":")).encode()
+        body = json.dumps(dict(mv=hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:10], cdn=CDN, dv=DV, events=events, photos=rows, videos=vrows), separators=(",", ":")).encode()
         PUB.update(pub_b=pub_b, body=body, gz=gzip.compress(body, 6), etag='"' + hashlib.sha1(body).hexdigest()[:16] + '"')
 
 
@@ -255,7 +270,7 @@ def shaped_write(wfile, data):
 
 
 SESSION = hashlib.sha256(("mock-session:" + a.admin_token).encode()).hexdigest()  # như backend thật: cookie phiên không chứa mã
-LOG = {"cdn": [], "post": []}
+LOG = {"cdn": [], "post": [], "v": []}
 FAILS = []
 log_lock = threading.Lock()
 
@@ -473,7 +488,70 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, fh.read(), "image/jpeg", dict({"Content-Disposition": f'attachment; filename="{r[6]}"', "Cache-Control": "private, max-age=3600"}, **extra), head)
         if path.startswith("/i/"):
             return self.image(path, head)
+        m = re.match(r"^/v/([0-9a-f]{16})-([0-9a-f]{10})\.(mp4|jpg)$", path)
+        if m:
+            return self.video_media(m, head)
+        if path.startswith("/api/admin/video/") and (not a.admin_token or self.authed()):
+            m = re.match(r"^/api/admin/video/([0-9a-f]{32})$", path)
+            s = VSESS.get(m.group(1)) if m else None
+            if s:
+                return self.send(200, json.dumps(dict(uid=s["uid"], offset=len(s["buf"]), size=s["size"], poster=s["poster"] is not None, state="uploading")).encode(), "application/json", {"Cache-Control": "no-store"}, head)
         self.nf()
+
+    def video_media(self, m, head):
+        with STATE_LOCK:
+            x = next((v for v in VIDEOS if v["id"] == m.group(1) and (v["v"] if m.group(3) == "mp4" else v["pv"]) == m.group(2)), None)
+        with log_lock:
+            LOG["v"].append([("HEAD" if head else "GET"), self.path, self.headers.get("Range") or ""])
+        if not x:
+            return self.nf()
+        if m.group(3) == "jpg":
+            return self.send(200, x["poster"], "image/jpeg", {"Cache-Control": "public, max-age=31536000, immutable"}, head)
+        data, rng = x["data"], self.headers.get("Range")
+        hdr = {"Cache-Control": "public, max-age=31536000, immutable", "Accept-Ranges": "bytes"}
+        if rng:
+            r = re.match(r"^bytes=(\d*)-(\d*)$", rng)
+            if not r or not (r.group(1) or r.group(2)):
+                return self.send(416, b"", "video/mp4", dict(hdr, **{"Content-Range": f"bytes */{len(data)}"}))
+            if r.group(1):
+                lo = int(r.group(1)); hi = min(int(r.group(2)), len(data) - 1) if r.group(2) else len(data) - 1
+            else:
+                lo = max(0, len(data) - int(r.group(2))); hi = len(data) - 1
+            if lo >= len(data) or lo > hi:
+                return self.send(416, b"", "video/mp4", dict(hdr, **{"Content-Range": f"bytes */{len(data)}"}))
+            return self.send(206, data[lo:hi + 1], "video/mp4", dict(hdr, **{"Content-Range": f"bytes {lo}-{hi}/{len(data)}"}), head)
+        return self.send(200, data, "video/mp4", hdr, head)
+
+    def do_PUT(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n) if n else b""
+        u = urlparse(self.path)
+        with log_lock:
+            LOG["post"].append([self.kind, "PUT " + u.path, n])
+        if self.kind != "app":
+            return self.nf()
+        if a.admin_token and not self.authed():
+            return self.unauth()
+        m = re.match(r"^/api/admin/video/([0-9a-f]{32})/(chunk|poster)$", u.path)
+        s = VSESS.get(m.group(1)) if m else None
+        if not s:
+            return self.send(404, b'{"detail":"Kh\xc3\xb4ng c\xc3\xb3 phi\xc3\xaan t\xe1\xba\xa3i video n\xc3\xa0y."}', "application/json")
+        J = lambda code, o: self.send(code, json.dumps(o).encode(), "application/json", {"Cache-Control": "no-store"})
+        if m.group(2) == "poster":
+            if not body or len(body) > 2 * 1048576:
+                return J(400, {"detail": "Poster không hợp lệ."})
+            s["poster"] = body
+            return J(200, {"ok": True})
+        try:
+            off = int((parse_qs(u.query).get("off") or [""])[0])
+        except ValueError:
+            return J(400, {"detail": "Thiếu hoặc sai off."})
+        if not body:
+            return J(400, {"detail": "Mảnh rỗng."})
+        if off != len(s["buf"]) or off + len(body) > s["size"]:
+            return J(409, {"error": "offset", "offset": len(s["buf"])})
+        s["buf"] += body
+        return J(200, {"offset": len(s["buf"])})
 
     def image(self, path, head, cdn=False):
         m = re.match(r"^/i/([0-9a-f]{16})-([0-9a-f]{8})-(240|480|2000)\.webp$", path)
@@ -500,7 +578,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, b"{}", "application/json")
         if path == "/__mock/reset":
             with log_lock:
-                LOG["cdn"].clear(); LOG["post"].clear(); FAILS.clear()
+                LOG["cdn"].clear(); LOG["post"].clear(); LOG["v"].clear(); FAILS.clear()
             return self.send(200, b"{}", "application/json")
         if path == "/api/admin-login" and a.admin_token:
             now = time.time()
@@ -521,6 +599,12 @@ class H(BaseHTTPRequestHandler):
             with log_lock:
                 FAILS.append(now)
             return self.send(401, b'{"detail":"M\xc3\xa3 kh\xc3\xb4ng \xc4\x91\xc3\xbang."}', "application/json", {"Cache-Control": "no-store"})
+        if path.startswith("/api/admin/video/"):
+            if a.admin_token and not self.authed():
+                return self.unauth()
+            if self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
+                return self.send(403, b'{"detail":"forbidden"}', "application/json", {"Cache-Control": "no-store"})
+            return self.video_admin(path, body)
         if path in ("/api/admin/visibility", "/api/admin/settings", "/api/admin/event"):
             if a.admin_token and not self.authed():
                 return self.unauth()
@@ -600,6 +684,64 @@ def _admin_post(self, path, body):
 
 
 H.admin_post = _admin_post
+
+
+def _video_admin(self, path, body):
+    def J(code, o):
+        self.send(code, json.dumps(o).encode(), "application/json", {"Cache-Control": "no-store"})
+    try:
+        d = json.loads(body or b"{}")
+        assert isinstance(d, dict) and len(body) <= 4096
+    except Exception:
+        return J(400, {"detail": "yêu cầu không hợp lệ"})
+    with STATE_LOCK:
+        if path == "/api/admin/video/init":
+            sha = str(d.get("sha256", "")).lower(); ev = d.get("ev")
+            if not re.fullmatch(r"[0-9a-f]{64}", sha) or not isinstance(d.get("size"), int) or d["size"] <= 0 or ev not in (None,) + EV_IDS or not str(d.get("name", "")).lower().endswith(".mp4"):
+                return J(400, {"detail": "yêu cầu không hợp lệ"})
+            if any(v["sha"] == sha for v in VIDEOS):
+                return J(409, {"error": "duplicate", "id": sha[:16]})
+            for s in VSESS.values():
+                if s["sha"] == sha and not s.get("done"):
+                    return J(200, dict(uid=s["uid"], offset=len(s["buf"]), size=s["size"], chunk_max=16 * 1048576, expires=int(time.time()) + 86400))
+            uid = os.urandom(16).hex()
+            VSESS[uid] = dict(uid=uid, sha=sha, size=d["size"], ev=ev, title=str(d.get("title", ""))[:120], buf=bytearray(), poster=None)
+            return J(200, dict(uid=uid, offset=0, size=d["size"], chunk_max=16 * 1048576, expires=int(time.time()) + 86400))
+        m = re.match(r"^/api/admin/video/([0-9a-f]{32})/finish$", path)
+        if m:
+            s = VSESS.get(m.group(1))
+            if not s:
+                return J(404, {"detail": "Không có phiên tải video này."})
+            if s.get("result"):
+                return J(200, s["result"])
+            if len(s["buf"]) != s["size"]:
+                return J(409, {"error": "incomplete", "offset": len(s["buf"])})
+            if s["poster"] is None:
+                return J(409, {"error": "no_poster"})
+            if hashlib.sha256(bytes(s["buf"])).hexdigest() != s["sha"]:
+                return J(422, {"error": "invalid", "reason": "sha256 không khớp với file đã tải lên."})
+            if bytes(s["buf"][4:8]) != b"ftyp":
+                return J(422, {"error": "invalid", "reason": "không phải MP4 (thiếu ftyp)"})
+            x = dict(id=s["sha"][:16], v=s["sha"][:10], pv=hashlib.sha256(s["poster"]).hexdigest()[:10], w=320, h=240, dur=2, title=s["title"], ev=s["ev"],
+                     sort=len(VIDEOS), sha=s["sha"], data=bytes(s["buf"]), poster=s["poster"])
+            VIDEOS.append(x)
+            s["done"] = True
+            s["result"] = dict(id=x["id"], v=x["v"], pv=x["pv"], w=320, h=240, duration=2, title=x["title"], ev=x["ev"])
+            rebuild_public()
+            return J(200, s["result"])
+        m = re.match(r"^/api/admin/video/([0-9a-f]{16})/event$", path)
+        if m:
+            x = next((v for v in VIDEOS if v["id"] == m.group(1)), None)
+            if not x:
+                return J(404, {"detail": "Không có video này."})
+            if set(d) != {"ev"} or d["ev"] not in (None,) + EV_IDS:
+                return J(400, {"detail": "Sự kiện không hợp lệ."})
+            x["ev"] = d["ev"]; rebuild_public()
+            return J(200, {"id": x["id"], "ev": x["ev"]})
+    self.nf()
+
+
+H.video_admin = _video_admin
 
 
 class CdnH(H):

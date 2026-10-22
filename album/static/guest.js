@@ -25,6 +25,7 @@ const EV_DEFAULT = "2026-10-04";
 let allPhotos = [], events = [{ id: "2026-10-04", label: "4/10" }, { id: "2026-10-17", label: "17/10" }], evShown = false, curEv = EV_DEFAULT;
 
 // ---------- địa chỉ ảnh + đường lùi: CDN → cùng nguồn gốc /i/ → cũ (/thumbs, /previews) ----------
+let videos = [], vidTab = false;  // vidTab: đang ở tab Video (curEv giữ ngày ảnh gần nhất)
 let CDN = "";
 const tq = x => x.tok ? "?t=" + encodeURIComponent(x.tok) : "";  // x.tok (không phải x.t: ở manifest `t` là giờ chụp)  // ảnh có token theo kết quả tìm (ảnh đang ẩn): /originals /thumbs /previews cần ?t=
 const iUrl = (base, x, n) => `${base}/i/${x.id}-${x.v}-${n}.webp`;
@@ -321,55 +322,79 @@ async function loadGallery() {
   preconnect(CDN);
   if (Array.isArray(m.events) && m.events.length) events = m.events.map(e => ({ id: String(e.id), label: String(e.label || e.id) }));
   allPhotos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null, ev: p[8] || EV_DEFAULT })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
+  videos = Array.isArray(m.videos) ? m.videos.filter(r => Array.isArray(r) && r.length >= 8 && typeof r[0] === "string")
+    .map(r => ({ id: r[0], v: r[1], pv: r[2], w: r[3], h: r[4], dur: r[5], title: String(r[6] || ""), ev: r[7] || null })) : [];
   const have = new Set(allPhotos.map(p => p.ev));
   evShown = events.filter(e => have.has(e.id)).length >= 2;
   const want = evFromHash();
   curEv = evShown && events.some(e => e.id === want) ? want : EV_DEFAULT;
+  vidTab = !!videos.length && (want === "video" || !allPhotos.length);
   photos = evShown ? allPhotos.filter(p => p.ev === curEv) : allPhotos;
+  buildVideos();
   burstFrames = new Map(); photoById = new Map(allPhotos.map(p => [p.id, p]));  // nhóm chụp liên tiếp không vắt qua sự kiện nên dựng từ toàn bộ
   paintEvents();
   for (const p of allPhotos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
   galleryReady = true;
   $("skeleton").hidden = true;
-  if (!allPhotos.length) {
+  if (!allPhotos.length && !videos.length) {
     $("count").textContent = "";
     $("cta-row").hidden = true; $("all").hidden = true; document.querySelector(".meta .sep").hidden = true;
     showEmpty("Album đang được cập nhật", "Ảnh cưới sẽ sớm có mặt ở đây. Bạn quay lại sau ít phút nhé.");
     return;
   }
-  $("count").textContent = `${nf.format(photos.length)} ảnh`;
-  gAll.set(photos);
-  if (mode === "all") gAll.setActive(true);
+  if (!allPhotos.length) $("cta-row").hidden = true;
+  applyView();
   performance.mark("gallery-rendered");
   watchCta();
 }
-function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d)$/.exec(location.hash); return m ? m[1] : null; }  // chọn ngày nằm trên URL: tải lại vẫn giữ
+function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d|video)$/.exec(location.hash); return m ? m[1] : null; }  // chọn ngày nằm trên URL: tải lại vẫn giữ
+function tabDefs() {
+  const t = [];
+  if (evShown) for (const e of events) t.push({ id: e.id, label: `Ngày ${e.label}` });
+  else if (videos.length && allPhotos.length) t.push({ id: "photos", label: "Ảnh" });
+  if (videos.length) t.push({ id: "video", label: "Video" });
+  return t;
+}
 function paintEvents() {
-  const tabs = $("ev-tabs");
-  tabs.hidden = !evShown;
-  if (tabs.children.length !== events.length) {   // dựng một lần; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
-    tabs.replaceChildren(...events.map(e => {
+  const tabs = $("ev-tabs"), defs = tabDefs(), key = defs.map(d => d.id).join("|");
+  tabs.hidden = !defs.length;
+  if (tabs.dataset.key !== key) {   // dựng khi bộ tab đổi; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
+    tabs.dataset.key = key;
+    tabs.replaceChildren(...defs.map(d => {
       const b = document.createElement("button");
-      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = e.id; b.textContent = `Ngày ${e.label}`;
-      b.onclick = () => setEvent(e.id, true);
+      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = d.id; b.textContent = d.label;
+      b.onclick = () => setEvent(d.id, true);
       return b;
     }));
   }
-  for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.ev === curEv));
-  if (evShown) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
-  if (!allPhotos.length) return;
-  $("count").textContent = `${nf.format(photos.length)} ảnh`;
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(vidTab ? b.dataset.ev === "video" : b.dataset.ev === curEv || b.dataset.ev === "photos"));
+  if (evShown && !vidTab) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
+  if (!allPhotos.length && !videos.length) return;
+  $("count").textContent = vidTab ? `${nf.format(videos.length)} video` : `${nf.format(photos.length)} ảnh`;
 }
-function setEvent(id, push) {
-  if (!evShown || id === curEv || !events.some(e => e.id === id)) return;
-  curEv = id;
-  if (push) history.replaceState(history.state, "", "#ev=" + id);  // không đẩy mục lịch sử: Back vẫn rời trang/quay về thư viện như cũ
-  photos = allPhotos.filter(p => p.ev === curEv);
+function applyView() {
+  photos = evShown ? allPhotos.filter(p => p.ev === curEv) : allPhotos;
   paintEvents();
+  $("vid-grid").hidden = !vidTab; $("vg-all").hidden = vidTab;
+  if (vidTab) { gAll.setActive(false); return; }
+  stopVideos();
   gAll.set(photos);
   if (mode === "all") gAll.setActive(true);
 }
-addEventListener("hashchange", () => { const w = evFromHash(); if (w) setEvent(w, false); });
+function setEvent(id, push) {
+  const isVid = id === "video", isPh = id === "photos";
+  if (isVid ? !videos.length : isPh ? !(videos.length && allPhotos.length) : (!evShown || !events.some(e => e.id === id))) return;
+  const day = isVid || isPh ? curEv : id;
+  if (isVid === vidTab && day === curEv) return;
+  curEv = day; vidTab = isVid;
+  if (push) history.replaceState(history.state, "", isPh ? location.pathname + location.search : "#ev=" + (isVid ? "video" : id));  // không đẩy mục lịch sử: Back vẫn rời trang/quay về thư viện như cũ
+  applyView();
+}
+addEventListener("hashchange", () => {
+  const w = evFromHash();
+  if (w) setEvent(w, false);
+  if (w === "video" && vidTab && mode === "mine") showAll();  // vào tab Video thì rời kết quả tìm, như khi chuyển ngày từ thư viện
+});
 function showEmpty(t, s, retry) {
   loadDecor();
   if (retry) $("all").hidden = true;  // thẻ lỗi: bỏ vùng thư viện trống (min-height) phía trên
@@ -418,6 +443,7 @@ $("b-retry").onclick = () => { if (file) search(); };
 function enterMine() {
   if (mode === "mine") return;
   mode = "mine";
+  stopVideos();
   history.pushState({ mine: 1 }, "");  // nút Back của điện thoại quay về thư viện thay vì rời trang
   savedY = scrollY;
   gAll.setActive(false);
@@ -432,7 +458,7 @@ function showAll() {
   selfieUrl = null; file = null;
   mode = "all";
   $("finder").hidden = true; $("results").hidden = true; $("all").hidden = false; $("cta-row").hidden = !photos.length;
-  gAll.setActive(true);
+  if (!vidTab) gAll.setActive(true);
   scrollTo(0, savedY);  // về đúng chỗ đang xem trước khi tìm
   gAll.update(); watchCta();
 }
@@ -971,3 +997,47 @@ $("lb-share").onclick = () => {
     toast("Không chia sẻ được, bạn hãy dùng nút Lưu ảnh nhé.");
   }).finally(() => { sharing = false; });
 };
+
+// ---------- tab Video: thẻ poster, chỉ nạp video khi chạm, mỗi lần một video ----------
+const fmtDur = x => { x = Math.max(0, Math.round(Number(x) || 0)); return Math.floor(x / 60) + ":" + String(x % 60).padStart(2, "0"); };
+const vidUrl = v => `/v/${v.id}-${v.v}.mp4`, posterUrl = v => `/v/${v.id}-${v.pv}.jpg`;
+function buildVideos() {
+  const grid = $("vid-grid");
+  grid.replaceChildren(...videos.map(v => {
+    const card = document.createElement("div"); card.className = "vcard";
+    const box = document.createElement("div"); box.className = "vbox";
+    const r = v.w / v.h; box.style.aspectRatio = isFinite(r) && r > 0 ? String(Math.min(1.78, Math.max(0.56, r))) : "1.78";
+    const img = document.createElement("img"); img.className = "vposter"; img.loading = "lazy"; img.decoding = "async"; img.alt = v.title || "Video"; img.src = posterUrl(v);
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "vplay"; btn.setAttribute("aria-label", "Phát video" + (v.title ? ": " + v.title : ""));
+    const badge = document.createElement("span"); badge.className = "vbadge"; badge.setAttribute("aria-hidden", "true");
+    const dur = document.createElement("span"); dur.className = "vdur"; dur.textContent = fmtDur(v.dur);
+    btn.append(badge);
+    btn.onclick = () => playVideo(card, box, v);
+    box.append(img, btn, dur);
+    const cap = document.createElement("div"); cap.className = "vcap";
+    const t = document.createElement("b"); t.textContent = v.title || "Video";
+    cap.append(t);
+    const e = events.find(x => x.id === v.ev);
+    if (e) { const d = document.createElement("span"); d.className = "vday"; d.textContent = `Ngày ${e.label}`; cap.append(d); }
+    card.append(box, cap);
+    return card;
+  }));
+}
+function releaseVideo(vd) {
+  vd.pause(); vd.removeAttribute("src"); vd.load();
+  vd.closest(".vbox").classList.remove("playing");
+}
+function stopVideos() { for (const vd of document.querySelectorAll("#vid-grid video")) releaseVideo(vd); }
+function playVideo(card, box, v) {
+  for (const o of document.querySelectorAll("#vid-grid video")) if (!card.contains(o)) releaseVideo(o);
+  let vd = box.querySelector("video");
+  if (!vd) {
+    vd = document.createElement("video");
+    vd.controls = true; vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.preload = "none"; vd.poster = posterUrl(v);
+    box.append(vd);
+  }
+  box.classList.add("playing");
+  vd.src = vidUrl(v);  // đặt src và play() cùng một lượt chạm: iOS chỉ cho phát khi có cử chỉ người dùng
+  const p = vd.play();
+  if (p && p.catch) p.catch(() => { vd.controls = true; });  // bị chặn: giữ thanh điều khiển để chạm phát tiếp
+}
