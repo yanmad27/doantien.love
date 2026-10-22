@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS photo_hidden (  -- ảnh chủ nhà ẩn khỏi thư 
 CREATE TABLE IF NOT EXISTS photo_event (  -- sự kiện (ngày) của ảnh; vắng dòng = DEFAULT_EVENT. KHÔNG khoá ngoại, KHÔNG cột trong photos: Xử lý/backfill/--prune không sửa bảng này, --rebuild chép sang DB mới; bản cũ bỏ qua bảng
   photo_id TEXT PRIMARY KEY, event TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);  -- search_includes_hidden: vắng = '1' (BẬT)
+CREATE TABLE IF NOT EXISTS videos (  -- video đã công bố (file nằm ở DATA_DIR/videos, ngoài các thứ --rebuild xoá); ev NULL = không thuộc ngày nào. Bảng mới: bản cũ bỏ qua
+  id TEXT PRIMARY KEY, name TEXT, sha256 TEXT UNIQUE, size INTEGER, v TEXT, pv TEXT, w INTEGER, h INTEGER, duration REAL,
+  codec TEXT, title TEXT, ev TEXT, sort INTEGER, created REAL);
 """
 EVENTS = (("2026-10-04", "4/10"), ("2026-10-17", "17/10"))  # danh sách cố định; phần tử đầu là mặc định
 EVENT_IDS = tuple(e[0] for e in EVENTS)
@@ -117,6 +120,40 @@ def restore_owner_state(db, hidden, settings, events=()):
     db.executemany("INSERT OR IGNORE INTO photo_hidden VALUES (?,?)", hidden)
     db.executemany("INSERT OR IGNORE INTO settings VALUES (?,?)", settings)
     db.executemany("INSERT OR IGNORE INTO photo_event VALUES (?,?)", events)
+    db.commit()
+
+
+def videos_dir(data_dir):
+    return os.path.join(data_dir, "videos")
+
+
+def video_poster_dir(data_dir):
+    return os.path.join(videos_dir(data_dir), "posters")
+
+
+def video_staging_dir(data_dir):
+    """Không phải DATA_DIR/tmp (bị xoá mỗi lần khởi động): phiên tải video dở dang phải sống qua restart."""
+    return os.path.join(data_dir, "video-staging")
+
+
+def keep_videos(db_file):
+    """Các dòng bảng videos của DB cũ để --rebuild chép sang DB mới; [] nếu chưa có DB/bảng."""
+    if not os.path.exists(db_file):
+        return []
+    db = sqlite3.connect(db_file, timeout=30)
+    try:
+        try:
+            return db.execute("SELECT id, name, sha256, size, v, pv, w, h, duration, codec, title, ev, sort, created FROM videos").fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e):
+                raise
+            return []
+    finally:
+        db.close()
+
+
+def restore_videos(db, rows):
+    db.executemany("INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     db.commit()
 
 
