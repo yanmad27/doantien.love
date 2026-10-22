@@ -18,7 +18,7 @@ COPY download_models.py store.py ./
 RUN python download_models.py --model-dir /opt/models
 
 # 3) mã nguồn
-COPY faces.py indexer.py index_photos.py server.py ./
+COPY faces.py indexer.py index_photos.py mp4box.py server.py ./
 COPY static ./static
 
 # user không phải root; DATA_DIR thuộc user này (volume mới tạo sẽ kế thừa quyền khi mount vào /data)
