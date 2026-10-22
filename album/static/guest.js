@@ -124,8 +124,8 @@ function layoutRows(items, W) {
   return { rows, height: rows.length ? top - gap : 0, gap };
 }
 
-// Kết quả tìm: TOP_N ô đầu (điểm cao nhất) nạp sớm, ưu tiên cao, tối đa IMG_SLOTS ảnh cùng lúc theo thứ tự điểm; còn lại nạp lười
-const TOP_N = 12, IMG_SLOTS = 6, SLOT_MAX_MS = 4000;
+// Kết quả tìm: TOP_N ô đầu (điểm cao nhất) luôn vào hàng đợi theo thứ tự điểm, ưu tiên cao, tối đa IMG_SLOTS ảnh cùng lúc (chỗ chỉ nhả khi ảnh xong/lỗi/bị huỷ); còn lại nạp lười
+const TOP_N = 12, IMG_SLOTS = 6;
 class ImgQueue {
   constructor() { this.run = 0; this.q = []; }
   add(job) {  // xếp theo thứ tự ô (k) để ô điểm cao luôn được nạp trước
@@ -138,18 +138,16 @@ class ImgQueue {
     while (this.run < IMG_SLOTS && this.q.length) {
       const j = this.q.shift();
       this.run++; j.started = true;
-      j.timer = setTimeout(() => j.release(), SLOT_MAX_MS);  // ảnh treo không giữ chỗ mãi
       j.start();
     }
   }
   job(k, start) {
     const q = this, j = {
-      k, start, started: false, done: false, timer: 0,
-      release() { if (j.done) return; j.done = true; clearTimeout(j.timer); if (j.started) { q.run--; q.pump(); } else q.q = q.q.filter(o => o !== j); },
+      k, start, started: false, done: false,
+      release() { if (j.done) return; j.done = true; if (j.started) { q.run--; q.pump(); } else q.q = q.q.filter(o => o !== j); },
     };
     return j;
   }
-  clear() { for (const j of [...this.q]) j.release(); this.q = []; }
 }
 
 const galleries = [];
@@ -158,15 +156,19 @@ class VGallery {
     this.root = root; this.kind = kind; this.onOpen = onOpen;
     this.items = []; this.flat = []; this.rows = []; this.rowOf = []; this.mounted = new Map(); this.gap = 4;
     this.W = 0; this.active = false; this.warm = false; this.first = true; this.pending = 0;
-    this.pin = false; this.iq = new ImgQueue();  // pin: lưới kết quả — màn đầu của lưới tính từ đầu lưới, dù lưới đang nằm dưới màn hình
+    this.pin = false; this.gen = 0; this.iq = new ImgQueue();  // pin: lưới kết quả — màn đầu của lưới tính từ đầu lưới, dù lưới đang nằm dưới màn hình
     root.addEventListener("click", e => { const b = e.target.closest(".tile"); if (b) this.onOpen(this, +b.dataset.i, b); });
     new ResizeObserver(() => requestAnimationFrame(() => { if (this.active && this.root.clientWidth !== this.W) this.relayout(); })).observe(root);  // rAF: relayout đổi chiều cao root, không được làm lặp vòng quan sát
     galleries.push(this);
   }
   set(list) { this.put(collapse(list)); }
-  put(c) { this.iq.clear(); clearTimeout(this.warmTimer); this.warmTimer = 0; this.pending = 0; this.items = c.items; this.flat = c.flat; this.warm = false; this.first = true; this.relayout(true); }
+  put(c) { this.unmountAll(); clearTimeout(this.warmTimer); this.warmTimer = 0; this.pending = 0; this.items = c.items; this.flat = c.flat; this.warm = false; this.first = true; this.relayout(true); }
   setActive(on) { this.active = on; if (on) this.relayout(); else this.unmountAll(); }
-  unmountAll() { this.iq.clear(); this.pending = 0; for (const r of this.mounted.values()) r.el.remove(); this.mounted.clear(); }
+  unmountAll() {  // gen đổi trước: mọi callback của lượt dựng cũ hết hiệu lực; huỷ cả ảnh đang tải (nhả chỗ trong hàng đợi, bỏ src)
+    this.gen++; this.pending = 0;
+    for (const r of this.mounted.values()) { this.dropRow(r); r.el.remove(); }
+    this.mounted.clear();
+  }
   relayout(fresh) {
     const W = this.root.clientWidth;
     if (!this.active || !W) return;
@@ -197,7 +199,8 @@ class VGallery {
     const keep = document.activeElement && this.root.contains(document.activeElement) ? this.rowOf[+document.activeElement.closest(".tile").dataset.i] : -1;
     let b = a;
     while (b + 1 < this.rows.length && this.rows[b + 1].top <= hiY) b++;
-    for (const [ri, r] of this.mounted) if ((ri < a || ri > b) && ri !== keep) { r.el.remove(); this.mounted.delete(ri); }
+    if (this.pin && this.first && this.rowOf.length) b = Math.max(b, this.rowOf[Math.min(TOP_N, this.rowOf.length) - 1]);  // TOP_N ô điểm cao nhất luôn được dựng, dù màn hình thấp hay ô ngang
+    for (const [ri, r] of this.mounted) if ((ri < a || ri > b) && ri !== keep) { this.dropRow(r); r.el.remove(); this.mounted.delete(ri); }
     // DOM luôn theo đúng thứ tự hàng (Tab và trình đọc màn hình đi theo thứ tự DOM): hàng mới chèn trước hàng đã dựng có chỉ số lớn hơn gần nhất
     for (let ri = a; ri <= b; ri++) {
       if (this.mounted.has(ri)) continue;
@@ -212,7 +215,7 @@ class VGallery {
     const lo1 = y - L * vh, hi1 = y + vh + L * vh, lo2 = y - DROP_VH * vh, hi2 = y + vh + DROP_VH * vh;
     for (const [ri, r] of this.mounted) {
       const row = this.rows[ri];
-      if ((row.top + row.h >= lo1 && row.top <= hi1) || (this.pin && this.first && row.top < py + vh)) { if (!r.on) this.loadRow(r, row, y, vh); }
+      if ((row.top + row.h >= lo1 && row.top <= hi1) || (this.pin && row.i < TOP_N)) { if (!r.on) this.loadRow(r, row, y, vh); }
       else if (r.on && (row.top + row.h < lo2 || row.top > hi2)) this.dropRow(r);
     }
   }
@@ -240,25 +243,31 @@ class VGallery {
   loadRow(r, row, y, vh) {
     r.on = true;
     const inFirst = this.first && row.top < (this.pin ? Math.max(0, y) : y) + vh;  // hàng nằm trong màn đầu tiên
-    const imgs = r.el.querySelectorAll("img");
-    imgs.forEach((img, c) => {
+    const gen = this.gen;
+    r.el.querySelectorAll("img").forEach((img, c) => {
       const k = row.i + c, x = this.items[k], tile = img.parentNode;
-      const top = this.pin && this.first && k < TOP_N;  // lưới kết quả: ô điểm cao nhất
-      const hot = this.pin ? top : inFirst;
-      img.loading = hot ? "eager" : "lazy";
+      const top = this.pin && k < TOP_N;  // lưới kết quả: ô điểm cao nhất, luôn ưu tiên cao
+      const hot = this.pin ? top && this.first : inFirst;
+      img.loading = top || hot ? "eager" : "lazy";
       if (this.pin) img.fetchPriority = top ? "high" : this.first ? "low" : "auto";
       else if (this.first && row.i === 0) img.fetchPriority = "high";
+      let fin = false;
       const job = top ? this.iq.job(k, () => go()) : null;
-      const done = () => { if (job) job.release(); if (hot) this.settle(); };
-      img.onload = () => { img.classList.add("on"); x.ts = img.currentSrc; done(); };
+      const finish = cancel => {
+        if (fin) return; fin = true;
+        if (job) job.release();
+        if (cancel) { img.onload = img.onerror = null; img.removeAttribute("srcset"); img.removeAttribute("src"); }
+        if (hot && gen === this.gen) { if (cancel) this.pending = Math.max(0, this.pending - 1); else this.settle(); }  // huỷ: chỉ bớt đếm, không kích heat() giữa lúc update()
+      };
+      img._fin = finish;
+      img.onload = () => { if (fin || gen !== this.gen) return; img.classList.add("on"); x.ts = img.currentSrc; finish(false); };
       if (hot) this.pending++;
       tile.classList.remove("bad");
-      const go = () => loadImg(img, chain(x, "thumb"), row.ws[c] + "px", () => { tile.classList.add("bad"); done(); });
-      img._job = job;
+      const go = () => loadImg(img, chain(x, "thumb"), row.ws[c] + "px", () => { if (fin || gen !== this.gen) return; tile.classList.add("bad"); finish(false); });
       if (job) this.iq.add(job); else go();
       img.dataset.f = hot ? "1" : "";
     });
-    if (inFirst && !this.warmTimer) this.warmTimer = setTimeout(() => this.heat(), 3500);
+    if ((this.pin ? row.i < TOP_N && this.first : inFirst) && !this.warmTimer) this.warmTimer = setTimeout(() => this.heat(), 3500);
   }
   settle() { if (this.pending > 0 && --this.pending === 0) this.heat(); }
   heat() {  // màn đầu xong (hoặc quá lâu): bắt đầu nạp trước phần sắp tới
@@ -269,7 +278,7 @@ class VGallery {
   }
   dropRow(r) {
     r.on = false;
-    r.el.querySelectorAll("img").forEach(img => { if (img._job) img._job.release(); img._job = null; img.onload = img.onerror = null; img.classList.remove("on"); img.removeAttribute("srcset"); img.removeAttribute("src"); });
+    r.el.querySelectorAll("img").forEach(img => { if (img._fin) img._fin(true); img._fin = null; img.onload = img.onerror = null; img.classList.remove("on"); img.removeAttribute("srcset"); img.removeAttribute("src"); });
   }
   reveal(i) {  // đưa ảnh i vào tầm nhìn (nếu cần) và trả focus về ô của nó
     const ri = this.rowOf[i], row = this.rows[ri];

@@ -83,8 +83,11 @@ def base_results(seed):
     return res
 
 
-def answer(seed):
+def answer(seed, wide=False):
     res = base_results(seed)
+    if wide:  # ô ngang cực đoan, không thuộc chuỗi: mỗi hàng chỉ 1–2 ô
+        for x in res:
+            x.update(w=1500, h=300, b=None)
     return dict(query=dict(n_faces=1, n_ignored=0, bbox=[5, 5, 95, 95], width=100, height=100, det_score=.9), results=res, total_matches=len(res),
                 truncated=False, timing_ms=dict(decode=1, detect=1, embed=1, compare=1, total=4))
 
@@ -94,8 +97,8 @@ GIF = bytes.fromhex("47494638396101000100800000000000ffffff21f90401000000002c000
 
 class Stub:
     """Thay /api/search: ghi lại mọi request; hold=True giữ phản hồi tới khi release(); fail = số lần trả 503 trước."""
-    def __init__(self, pg, hold=False, fail=0):
-        self.hold, self.held, self.reqs, self.fail = hold, [], [], fail
+    def __init__(self, pg, hold=False, fail=0, wide=False):
+        self.hold, self.held, self.reqs, self.fail, self.wide = hold, [], [], fail, wide
         pg.route("**/api/search*", self.handle)
 
     def handle(self, route):
@@ -112,7 +115,7 @@ class Stub:
         if self.fail > 0:
             self.fail -= 1
             return route.fulfill(status=503, content_type="application/json", body='{"detail":"busy"}')
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer(seed)))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer(seed, self.wide)))
 
     def release(self, i):
         self.send(self.held[i])
@@ -131,10 +134,16 @@ class Imgs:
         else:
             route.fulfill(status=200, content_type="image/gif", body=GIF)
 
-    def release(self, n=1):
+    def release(self, n=1, status=200):
         for _ in range(n):
             if self.held:
-                self.held.pop(0).fulfill(status=200, content_type="image/gif", body=GIF)
+                try:
+                    if status == 200:
+                        self.held.pop(0).fulfill(status=200, content_type="image/gif", body=GIF)
+                    else:
+                        self.held.pop(0).fulfill(status=status, body=b"")
+                except Exception:
+                    pass  # yêu cầu đã bị trình duyệt huỷ
 
 
 def pid(url):
@@ -160,13 +169,15 @@ def wait_for(pg, fn, n=100):
     return False
 
 
-def fresh(br, hold=False, fail=0, hold_img=False, url="/"):
-    ctx = br.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+def fresh(br, hold=False, fail=0, hold_img=False, url="/", height=844, wide=False, init=None):
+    ctx = br.new_context(viewport={"width": 390, "height": height}, is_mobile=True, has_touch=True)
+    if init:
+        ctx.add_init_script(init)
     pg = ctx.new_page()
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
     im = Imgs(pg, hold=False)
-    st = Stub(pg, hold=hold, fail=fail)
+    st = Stub(pg, hold=hold, fail=fail, wide=wide)
     pg.goto(URL + url)
     pg.wait_for_selector("#ev-tabs:not([hidden]) button"); pg.wait_for_selector("#vg-all .tile")
     pg.wait_for_timeout(300)
@@ -270,8 +281,83 @@ try:
         st.release(0); pg.wait_for_timeout(400)
         check(pg.locator("#s-loading").is_visible() and snap(pg)["n"] == -1, "phản hồi của selfie cũ bị bỏ, vẫn 'Đang tìm'")
         st.release(1); wait_done(pg)
-        s = snap(pg)
-        check(s["n"] == 48 and s["mi"][:3] == [x for x in pg.evaluate("gMain.items.map(x => x.id)")][:3], "kết quả là của selfie mới")
+        got = pg.evaluate("data.results.map(x => x.id)")
+        ids0, ids1 = [x["id"] for x in answer(S0)["results"]], [x["id"] for x in answer(S1)["results"]]
+        check(ids0 != ids1 and got == ids1, "kết quả hiển thị đúng là của selfie B (phản hồi A và B khác nhau)")
+        ctx.close()
+
+        # 5b) đổi selfie khi 6 ảnh top đang chờ: lưới mới nạp ngay, callback cũ không đổi gì
+        ctx, pg, st, im, errs = fresh(br, hold_img=True)
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        wait_for(pg, lambda: len(im.held) >= 6); pg.wait_for_timeout(300)
+        oldheld, oldseen = list(im.held), len(im.seen)
+        oldtop = pg.evaluate("gMain.items.slice(0, 12).map(x => x.id)")
+        pg.set_input_files("#in-file", selfies[1]); wait_done(pg)
+        newtop = pg.evaluate("gMain.items.slice(0, 12).map(x => x.id)")
+        topnew = lambda: [pid(u) for u in im.seen[oldseen:] if pid(u) in newtop and pid(u) not in oldtop[:6]]
+        ok = wait_for(pg, lambda: len(topnew()) >= 6)
+        check(ok and topnew()[:6] == [i for i in newtop if i not in oldtop[:6]][:6], f"đổi selfie khi 6 ảnh cũ còn treo: 6 ảnh top của lưới mới được yêu cầu ngay, đúng thứ tự ({topnew()[:6]})")
+        st0 = pg.evaluate("({ pending: gMain.pending, first: gMain.first, gen: gMain.gen })")
+        for r in oldheld:  # nhả muộn các ảnh của lưới cũ
+            try: r.fulfill(status=200, content_type="image/gif", body=GIF)
+            except Exception: pass
+        pg.wait_for_timeout(400)
+        st1 = pg.evaluate("({ pending: gMain.pending, first: gMain.first, gen: gMain.gen })")
+        check(st0 == st1 and st1["first"] is True, f"callback của lưới cũ không đổi pending/first của lưới mới ({st0} → {st1})")
+        check(pg.evaluate("[...document.querySelectorAll('#vg-main img.on')].every(i => (i.currentSrc || '').length === 0 || true)") and pg.evaluate("gMain.iq.run") <= 6, "hàng đợi không vượt 6 sau khi đổi lưới")
+        ctx.close()
+
+        # 5c) ảnh treo quá 4 s vẫn không vượt 6 yêu cầu top cùng lúc
+        ctx, pg, st, im, errs = fresh(br, hold_img=True)
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        order = pg.evaluate("gMain.items.map(x => x.id)")
+        wait_for(pg, lambda: len(im.held) >= 6); pg.wait_for_timeout(5200)
+        tops = [pid(u) for u in im.seen if pid(u) in order[:12]]
+        check(tops == order[:6] and pg.evaluate("gMain.iq.run") == 6, f"ảnh treo >4 s: vẫn chỉ 6 yêu cầu top ({len(tops)}), run={pg.evaluate('gMain.iq.run')}")
+        ctx.close()
+
+        # 5d) ảnh lỗi nhả chỗ cho ảnh kế tiếp
+        ctx, pg, st, im, errs = fresh(br, hold_img=True)
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        order = pg.evaluate("gMain.items.map(x => x.id)")
+        wait_for(pg, lambda: len(im.held) >= 6); pg.wait_for_timeout(200)
+        im.release(1, status=404)
+        seen_top = lambda: [pid(u) for u in im.seen if pid(u) in order[:12]]
+        check(wait_for(pg, lambda: len(seen_top()) == 7) and seen_top()[6] == order[6], "ảnh lỗi 404 nhả chỗ → ảnh điểm kế tiếp được nạp")
+        check(pg.evaluate("gMain.iq.run") == 6 and pg.evaluate("document.querySelectorAll('#vg-main .tile.bad').length") == 1, "ô lỗi đánh dấu bad, hàng đợi vẫn 6")
+        ctx.close()
+
+        # 5e) trình duyệt không có fetchPriority: vẫn nạp đúng thứ tự
+        ctx, pg, st, im, errs = fresh(br, hold_img=True, init="delete HTMLImageElement.prototype.fetchPriority;")
+        check(pg.evaluate("!('fetchPriority' in HTMLImageElement.prototype)"), "giả lập: không có fetchPriority")
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        order = pg.evaluate("gMain.items.map(x => x.id)")
+        wait_for(pg, lambda: len(im.held) >= 6); pg.wait_for_timeout(300)
+        seen_top = lambda: [pid(u) for u in im.seen if pid(u) in order[:12]]
+        check(seen_top() == order[:6], "không fetchPriority: 6 ảnh đầu vẫn đúng thứ tự điểm")
+        im.release(1)
+        check(wait_for(pg, lambda: len(seen_top()) == 7) and seen_top()[6] == order[6], "không fetchPriority: nhả một → ảnh kế tiếp theo thứ tự")
+        check(not errs, f"không lỗi JS {errs}")
+        ctx.close()
+
+        # 5f) màn hình thấp + ô ngang: cả 12 ô điểm cao vào hàng đợi, ưu tiên cao, đúng thứ tự
+        ctx, pg, st, im, errs = fresh(br, hold_img=True, height=568, wide=True)
+        pg.set_input_files("#in-file", selfies[0]); wait_done(pg)
+        order = pg.evaluate("gMain.items.map(x => x.id)")
+        rtops = pg.evaluate("gMain.rows.slice(0, 12).map(r => r.top)")
+        check(rtops and rtops[-1] > 568 * 1.2, f"giả lập: ô thứ 12 nằm xa ngoài màn đầu (top={rtops[-1] if rtops else None}, vh=568)")
+        seen_top = lambda: [pid(u) for u in im.seen if pid(u) in order[:12]]
+        wait_for(pg, lambda: len(im.held) >= 6); pg.wait_for_timeout(300)
+        for _ in range(60):
+            if len(seen_top()) >= 12 and not im.held: break
+            im.release(1); pg.wait_for_timeout(40)
+        check(seen_top() == order[:12], f"màn thấp + ô ngang: cả 12 ô top được nạp đúng thứ tự ({len(seen_top())}/12)")
+        pri = pg.evaluate("[...document.querySelectorAll('#vg-main .tile')].filter(b => +b.dataset.i < 12).map(b => b.querySelector('img').fetchPriority)")
+        check(len(pri) == 12 and set(pri) == {"high"}, f"12 ô top đều fetchpriority=high ({pri})")
+        pg.evaluate("window.scrollBy(0, 1200)"); pg.wait_for_timeout(300)
+        pri2 = pg.evaluate("[...document.querySelectorAll('#vg-main .tile')].filter(b => +b.dataset.i < 12).map(b => b.querySelector('img').fetchPriority)")
+        check(all(p == "high" for p in pri2), "sau khi màn đầu xong (first=false) ô top vẫn high")
+        check(not errs, f"không lỗi JS {errs}")
         ctx.close()
 
         # 6) thoát trong lúc chờ; kết quả về muộn bị bỏ; selfie không còn trong RAM
