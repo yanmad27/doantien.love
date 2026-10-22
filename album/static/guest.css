@@ -174,9 +174,25 @@ body.lb-open { overflow: hidden; }
 /* giấy xếp chồng nhẹ trên điện thoại (lệch ≤ 3 px) */
 @media (max-width: 640px) { .tile.stacked { box-shadow: 2px 2px 0 -1px var(--paper), 2px 2px 0 0 var(--line-soft); } }
 
-/* hai ngày: tab xem ảnh + phạm vi tìm selfie (chỉ hiện khi cả hai ngày có ảnh) */
-.ev-tabs, .scope { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .5rem; margin: 1rem auto; }
-.scope { font-family: var(--serif); color: var(--ink-soft); font-size: 1.05rem; }
-.ev-tabs button, .scope button { min-height: 44px; padding: .4rem 1.1rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
-.ev-tabs button[aria-selected="true"], .scope button[aria-pressed="true"] { background: var(--peach-ink); border-color: var(--peach-ink); color: #fff; }
-.ev-tabs[hidden], .scope[hidden] { display: none; }
+/* hai ngày: tab xem ảnh (chỉ hiện khi cả hai ngày có ảnh) */
+.ev-tabs { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .5rem; margin: 1rem auto; }
+.ev-tabs button { min-height: 44px; padding: .4rem 1.1rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.ev-tabs button[aria-selected="true"] { background: var(--peach-ink); border-color: var(--peach-ink); color: #fff; }
+.ev-tabs[hidden] { display: none; }
+
+/* tab Video */
+.vg[hidden], .vid-grid[hidden] { display: none; }
+.vid-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 1rem; padding: 0 .75rem 1.5rem; max-width: 1100px; margin: 0 auto; }
+.vcard { min-width: 0; }
+.vbox { position: relative; border-radius: 10px; overflow: hidden; background: var(--line-soft); }
+.vposter, .vbox video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.vbox video { background: #000; object-fit: contain; display: none; }
+.vbox.playing video { display: block; }
+.vbox.playing .vplay, .vbox.playing .vdur { display: none; }
+.vplay { position: absolute; inset: 0; width: 100%; border: 0; background: transparent; cursor: pointer; display: grid; place-items: center; }
+.vbadge { width: 56px; height: 56px; border-radius: 50%; background: rgba(255, 250, 243, .92); box-shadow: 0 2px 10px rgba(89, 71, 63, .35); position: relative; }
+.vbadge::after { content: ""; position: absolute; left: 22px; top: 17px; border-left: 17px solid var(--peach-ink); border-top: 11px solid transparent; border-bottom: 11px solid transparent; }
+.vdur { position: absolute; right: 8px; bottom: 8px; padding: .05rem .5rem; border-radius: 999px; background: rgba(0, 0, 0, .6); color: #fff; font: 600 .75rem/1.6 var(--ui); pointer-events: none; }
+.vcap { display: flex; justify-content: space-between; align-items: baseline; gap: .6rem; padding: .45rem .2rem 0; }
+.vcap b { font-weight: 600; overflow-wrap: anywhere; }
+.vday { flex: none; font-size: .8rem; color: var(--ink-soft); }

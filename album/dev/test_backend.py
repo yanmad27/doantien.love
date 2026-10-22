@@ -299,7 +299,7 @@ class GateTests(unittest.TestCase):
     # ---- /api/gallery ----
     def test_gallery_shape(self):
         g = self.gal
-        self.assertEqual(set(g), {"mv", "cdn", "dv", "events", "photos"})
+        self.assertEqual(set(g), {"mv", "cdn", "dv", "events", "photos", "videos"})
         self.assertEqual(g["cdn"], "https://cdn.example.test")
         self.assertEqual(g["dv"], indexer.DERIV_VERSION)
         self.assertEqual(len(g["photos"]), 3)

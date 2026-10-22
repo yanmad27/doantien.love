@@ -162,3 +162,16 @@ body.has-bar .toast { bottom: calc(var(--bar-h, 130px) + 12px); }
 .evpick input:checked + span { background: var(--peach-ink); border-color: var(--peach-ink); color: #fff; }
 .evpick input:focus-visible + span { outline: 3px solid var(--peach-ink); outline-offset: 2px; }
 .abar-btns + .abar-btns { margin-top: .4rem; }
+
+/* video */
+.vform { display: grid; gap: .8rem; max-width: 34rem; }
+.vform label { display: grid; gap: .3rem; font-size: .9rem; }
+.vform input[type=text], .vform select { min-height: 40px; padding: .3rem .6rem; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
+.vh { margin: 1.4rem 0 .4rem; font-size: 1rem; }
+.vlist { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.vlist li { display: flex; gap: .8rem; align-items: center; padding: .5rem; border: 1px solid var(--line); border-radius: 10px; }
+.vlist img { width: 96px; height: 54px; object-fit: cover; border-radius: 6px; background: #eee; flex: none; }
+.vlist .vi { flex: 1; min-width: 0; display: grid; gap: .1rem; }
+.vlist .vi b { overflow-wrap: anywhere; }
+.vlist select { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
+.vf-err { color: #b3261e; }

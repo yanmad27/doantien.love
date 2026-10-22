@@ -8,12 +8,14 @@ Trang công khai: `GET /api/gallery` (manifest gọn, không có mặt/embedding
 (CDN cache vô hạn). Host ngoài ALBUM_APP_HOSTS (vd. tên miền CDN) chỉ lấy được file ảnh/tĩnh — xem HostGate.
 """
 import argparse
+import email.utils
 import gzip
 import hashlib
 import hmac
 import html as htmllib
 import json
 import logging
+import io
 import mimetypes
 import os
 import re
@@ -28,11 +30,13 @@ import uuid
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 from starlette.staticfiles import StaticFiles
 
+import mp4box
 import store
 from faces import QUERY_MAX_PIXELS, FaceEngine, ImageTooLarge, ImageUnreadable, load_image
 from indexer import (DEFAULT_DET_SIZE, DEFAULT_MIN_FACE, DERIV_VERSION, WEBP_SIZES, CRASH_REASON, compute_bursts, derive_pending,
@@ -104,6 +108,17 @@ IMAGE_TOKEN_TTL = 24 * 3600  # giây: token ?t= cho ảnh đã ẩn trong kết 
 ADMIN_BODY_MAX = 256 * 1024
 ADMIN_MAX_IDS = 5000
 IMMUTABLE = "public, max-age=31536000, immutable"
+VIDEO_MAX_BYTES = 2 * 1024 ** 3   # mỗi video
+VIDEO_CHUNK_MAX = 16 * 1024 ** 2  # mỗi request PUT chunk
+POSTER_MAX_BYTES = 2 * 1024 ** 2
+POSTER_MAX_SIDE = 4096
+MAX_VIDEO_SESSIONS = 2            # phiên tải video chưa xong cùng lúc
+VIDEO_SESSION_TTL = 24 * 3600
+VIDEO_INIT_BODY_MAX = 4096
+VIDEO_TITLE_MAX = 120
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+UID_RE = re.compile(r"^[0-9a-f]{32}$")
+VIDEO_FILE = re.compile(r"^([0-9a-f]{16})-([0-9a-f]{10})\.(mp4|jpg)$")
 LEGACY_CACHE = "public, max-age=300"  # /thumbs, /previews không đặt tên theo nội dung → cache ngắn (ảnh vừa ẩn còn ở CDN tối đa ~5 phút)
 INDEX_WINDOW = int(os.environ.get("ALBUM_INDEX_WINDOW", 1))  # số ảnh giải mã cùng lúc khi xử lý: 45 MP giải mã xong ~135 MB/ảnh, giữ RAM đỉnh thấp
 
@@ -217,12 +232,42 @@ class HostGate:
         await self.app(scope, receive, send)
 
 
-def safe_name(raw):
+def check_poster(body):
+    try:
+        with Image.open(io.BytesIO(body)) as im:
+            fmt, (w, h) = im.format, im.size
+            if fmt != "JPEG":
+                return "Poster phải là JPEG."
+            if not (0 < w <= POSTER_MAX_SIDE and 0 < h <= POSTER_MAX_SIDE):  # kiểm TRƯỚC khi giải mã: khai báo kích thước khổng lồ không bao giờ được giải
+                return f"Poster tối đa {POSTER_MAX_SIDE}px mỗi cạnh."
+            im.load()
+    except Exception:
+        return "Không đọc được poster."
+    return None
+
+
+def sha_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for c in iter(lambda: fh.read(1 << 20), b""):
+            h.update(c)
+    return h.hexdigest()
+
+
+def fsync_path(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def safe_name(raw, exts=None):
     """Tên file an toàn: chỉ lấy phần cuối, bỏ ký tự lạ, đuôi chữ thường. Trả None nếu đuôi không cho phép."""
     base = unicodedata.normalize("NFC", raw.replace("\\", "/").split("/")[-1]).strip()
     stem, ext = os.path.splitext(base)
     ext = ext.lower()
-    if ext not in UPLOAD_EXTS:
+    if ext not in (exts or UPLOAD_EXTS):
         return None
     stem = re.sub(r"[^\w.\- ()]", "_", stem).strip(" .")[:100] or "photo"
     while len(stem.encode("utf-8")) > 150:  # tên file tối đa 255 byte; chừa chỗ cho hậu tố -<sha8> và đuôi
@@ -412,7 +457,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     app.state.job = job  # cho test: job.thread.join()
     cache = {"mtime": None, "sig": None, "t": None}  # t = (E, rows, photos) công bố bằng MỘT phép gán
     # gal["g"] là MỘT bản chụp bất biến (manifest + meta + ẩn + cài đặt), thay nguyên cả bản bằng một phép gán; người đọc lấy g = gallery_state() rồi chỉ dùng g
-    gal = {"g": dict(mtime=None, ts=0.0, meta={}, hidden=frozenset(), include_hidden=True, hats={}, epoch=0, pub_b={}, pos={}, admin=b"", raw=b"", gz=b"", mv=""),
+    gal = {"g": dict(mtime=None, ts=0.0, meta={}, hidden=frozenset(), include_hidden=True, hats={}, epoch=0, pub_b={}, pos={}, admin=b"", raw=b"", gz=b"", mv="", vids={}),
            "fresh_at": 0.0}
     glock = threading.Lock()
     lock = threading.Lock()
@@ -518,6 +563,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     def build_gallery(m):
         """MỘT SELECT (LEFT JOIN photo_hidden) + cài đặt trong cùng một giao dịch đọc → ảnh chụp nhất quán."""
         meta, rows, arows, order, hidden, include, hats, epoch = {}, [], [], [], set(), True, {}, 0
+        vrows = []
         if m is not None:
             db = store.connect_ro(data_dir)
             try:
@@ -543,6 +589,8 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                 include = r is None or r[0] != "0"
                 r = db.execute("SELECT value FROM settings WHERE key=?", (store.EPOCH_KEY,)).fetchone()
                 epoch = int(r[0]) if r and r[0].isdigit() else 0
+                vrows = [[i, v, pv, w, h, d, t, ev, so] for i, v, pv, w, h, d, t, ev, so in db.execute(
+                    "SELECT id, v, pv, w, h, duration, title, ev, sort FROM videos ORDER BY ev IS NULL, ev, sort, created")]
                 db.rollback()
             finally:
                 db.close()
@@ -550,12 +598,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         for r in rows:
             r[7] = pub.get(r[0])
         photos_json = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
-        mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}".encode()).hexdigest()[:12]
+        videos_json = json.dumps(vrows, ensure_ascii=False, separators=(",", ":"))
+        mv = hashlib.sha1(f"{DERIV_VERSION}|{cdn}|{photos_json}{'|' + videos_json if vrows else ''}".encode()).hexdigest()[:12]  # không có video → mv y hệt bản trước
         n_ev = {e: 0 for e in store.EVENT_IDS}  # số ảnh HIỆN mỗi sự kiện (ảnh ẩn không tính)
         for r in rows:
             n_ev[r[8]] += 1
         events_json = json.dumps([dict(id=e, label=lb, n=n_ev[e]) for e, lb in store.EVENTS], ensure_ascii=False, separators=(",", ":"))
-        raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"events":{events_json},"photos":{photos_json}}}').encode()
+        raw = (f'{{"mv":"{mv}","cdn":{json.dumps(cdn)},"dv":{DERIV_VERSION},"events":{events_json},"photos":{photos_json},"videos":{videos_json}}}').encode()
         n_hidden = len(hidden)
         by_event = {e: dict(all=0, shown=0, hidden=0) for e in store.EVENT_IDS}
         for a in arows:
@@ -567,7 +616,7 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         # thứ tự manifest của MỌI khung (kể cả ẩn): search dùng để xếp khung đầu của nhóm burst ẩn
         pos = {a[0]: i for i, a in enumerate(arows)}
         return dict(mtime=m, ts=time.time(), meta=meta, hidden=hidden, include_hidden=include, hats=hats, epoch=epoch, pub_b=pub, pos=pos, admin=admin,
-                    raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv)
+                    raw=raw, gz=gzip.compress(raw, 9, mtime=0), mv=mv, vids={r[0]: (r[1], r[2]) for r in vrows})
 
     def gallery_state(fresh=False, force=False):
         """Manifest công khai (chỉ ảnh hiện) + `meta` của MỌI ảnh trong RAM, dựng lại khi DB đổi (đọc dấu hiệu TRƯỚC khi truy vấn: ghi chen
@@ -876,19 +925,19 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
             if not m or not host or m.group(1) != host:
                 raise HTTPException(403, "Yêu cầu khác origin.")
 
-    async def admin_json(request: Request):
+    async def admin_json(request: Request, limit=ADMIN_BODY_MAX):
         admin_enabled()
         require_admin(request)
         same_origin_or_403(request)
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
             raise HTTPException(400, "Cần Content-Type: application/json.")
         declared = request.headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > ADMIN_BODY_MAX:
+        if declared and declared.isdigit() and int(declared) > limit:
             raise HTTPException(413, "Nội dung quá lớn.")
         body = b""
         async for c in request.stream():
             body += c
-            if len(body) > ADMIN_BODY_MAX:
+            if len(body) > limit:
                 raise HTTPException(413, "Nội dung quá lớn.")
         try:
             data = json.loads(body)
@@ -1028,10 +1077,13 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
         if not upload_slots.acquire(blocking=False):
             await reject(request, 503, "Máy chủ đang nhận nhiều ảnh cùng lúc, hãy thử lại sau ít giây.")
         reserved = False
+        disk_held = False
+        n_res = int(declared) if declared and declared.isdigit() else max_upload  # đặt chỗ đĩa theo Content-Length (không biết thì theo mức tối đa)
         part = os.path.join(tmp_dir, uuid.uuid4().hex + ".part")
         try:
-            if shutil.disk_usage(data_dir).free < min_free:
+            if not await run_in_threadpool(disk_reserve, n_res):  # (trong luồng: không chờ rlock trên event loop) sổ chỗ đĩa chung với video: chừa chỗ phiên video, poster và ảnh khác đang ghi
                 await reject(request, 507, f"Ổ đĩa sắp đầy (còn dưới {min_free // 2**20} MB trống), không nhận thêm ảnh. Hãy xoá bớt hoặc mở rộng dung lượng.")
+            disk_held = True
             with quota_lock:  # đặt chỗ trước dung lượng tối đa của file này; trả lại trong finally
                 if max_total is None or stored_bytes() + quota["reserved"] + max_upload <= max_total:
                     quota["reserved"] += max_upload
@@ -1046,20 +1098,28 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
                         raise HTTPException(413, f"Ảnh quá lớn (tối đa {max_upload // 2**20} MB)")
                     if n - checked >= DISK_CHECK_EVERY:  # đĩa có thể đầy dần trong lúc nhiều upload chạy song song
                         checked = n
-                        if shutil.disk_usage(data_dir).free < min_free:
+                        if await run_in_threadpool(disk_low, n_res):
                             raise HTTPException(507, "Ổ đĩa sắp đầy, dừng nhận ảnh.")
                     h.update(c)
                     fh.write(c)
             if n == 0:
                 raise HTTPException(400, "File rỗng")
             return await run_in_threadpool(finalize_upload, part, fname, h.hexdigest(), n, event)
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
-            if reserved:
-                with quota_lock:
-                    quota["reserved"] -= max_upload
-            upload_slots.release()
+        finally:  # mỗi bước dọn độc lập: lỗi xoá file tạm không được làm rò chỗ đĩa, hạn mức hay slot
+            try:
+                if os.path.exists(part):
+                    os.remove(part)
+            finally:
+                try:
+                    if reserved:
+                        with quota_lock:
+                            quota["reserved"] -= max_upload
+                finally:
+                    try:
+                        if disk_held:
+                            await run_in_threadpool(disk_release, n_res)
+                    finally:
+                        upload_slots.release()
 
     def finalize_upload(part, fname, digest, size, event=store.DEFAULT_EVENT):
         try:
@@ -1120,6 +1180,730 @@ def create_app(data_dir, model_dir, providers, query_det_size=640, threads=0,
     async def api_process_status(request: Request):  # async + snapshot: chạy thẳng trên event loop, không qua threadpool, không khoá, không đĩa
         require_admin(request)
         return JSONResponse(job.status(), headers={"Cache-Control": "no-store"})
+
+    # ---------- video: tải lên theo mảnh có thể nối lại (chỉ chủ nhà), phục vụ có Range ----------
+    # Phiên: {uid}.json (+ .part, .poster, .poster.new) trong video-staging. state: uploading → publishing (đã ghi bền TRƯỚC khi di chuyển file) → published;
+    # "dead" chỉ tồn tại trong RAM (phiên đã bị dọn: người đang giữ tham chiếu cũ không được làm sống lại).
+    vstage = store.video_staging_dir(data_dir)
+    vdir, vposters = store.videos_dir(data_dir), store.video_poster_dir(data_dir)
+    for d in (vstage, vdir, vposters):
+        os.makedirs(d, exist_ok=True)
+    vsessions = {}
+    vlocks = {}
+    vglobal = threading.Lock()  # tuần tự hoá: tạo phiên + kiểm trùng (init), dọn phiên, và đoạn công bố của finish/recon (kiểm trùng → di chuyển → INSERT)
+    vclean = {"t": 0.0}
+    vhooks = {}
+    app.state.video_locks, app.state.video_sessions, app.state.video_hooks, app.state.video_cleanup = vlocks, vsessions, vhooks, None  # cho test
+
+    def vhook(name):
+        h = vhooks.get(name)
+        if h:
+            h()
+
+    def vpath(uid, ext):
+        return os.path.join(vstage, uid + ext)
+
+    def vsave(s):
+        tmp = vpath(s["uid"], ".json.tmp")
+        with open(tmp, "w") as fh:
+            json.dump(s, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, vpath(s["uid"], ".json"))
+        fsync_path(vstage)
+
+    def vdrop(uid):
+        s = vsessions.pop(uid, None)
+        if s is not None:
+            s["state"] = "dead"
+        vlocks.pop(uid, None)
+        for ext in (".json", ".json.tmp", ".part", ".poster", ".poster.new"):
+            try:
+                os.remove(vpath(uid, ext))
+            except OSError:
+                pass
+
+    rlock = threading.Lock()   # sổ chỗ đĩa DUY NHẤT: ảnh đang nhận, poster đang ghi, phiên video (chỗ còn nợ) — kiểm tra + đặt chỗ là một bước nguyên tử
+    inflight = {"n": 0}        # byte đã đặt chỗ cho ảnh/poster đang ghi (không gồm chỗ còn nợ của phiên video: vreserved)
+    app.state.video_global = vglobal
+    app.state.disk_reserve, app.state.disk_release = None, None  # gán bên dưới (cho test)
+
+    def disk_reserve(n, exclude=None, hold=True):
+        """free − (mọi chỗ đã đặt) − n ≥ min_free thì (hold) ghi nhận n byte đang bay. Gọi disk_release(n) khi ghi xong/huỷ."""
+        with rlock:
+            if shutil.disk_usage(data_dir).free - vreserved(exclude) - inflight["n"] - n < min_free:
+                return False
+            if hold:
+                inflight["n"] += n
+            return True
+
+    def disk_release(n):
+        with rlock:
+            inflight["n"] -= n
+
+    def disk_low(mine):
+        """Kiểm giữa chừng khi đang ghi: chỗ của chính mình (đã tính vào free khi ghi) không bị trừ hai lần."""
+        with rlock:
+            return shutil.disk_usage(data_dir).free - vreserved() - (inflight["n"] - mine) < min_free
+
+    app.state.disk_reserve, app.state.disk_release = disk_reserve, disk_release
+    app.state.disk_lock, app.state.disk_inflight = rlock, lambda: inflight["n"]
+
+    def vreserved(exclude=None):
+        """Số byte các phiên đang tải còn phải nhận (đã được giữ chỗ lúc init): ảnh tải lên và chunk khác phải chừa chỗ này."""
+        now = time.time()
+        return sum(max(0, s["size"] - s["offset"]) for s in list(vsessions.values())
+                   if s is not exclude and s["state"] == "uploading" and s["expires"] > now)
+
+    def vcleanup(force=False):
+        """Xoá phiên hết hạn (trừ 'publishing'; bỏ qua phiên đang bận: khoá phiên lấy không chờ) + file mồ côi trong video-staging.
+        Cơ hội: nếu vglobal đang bận thì bỏ qua (không chờ) — trừ force (khởi động/test). Quét thư mục tối đa mỗi 60 s. Không bao giờ đụng DATA_DIR/videos."""
+        if not vglobal.acquire(blocking=force):
+            return
+        try:
+            now = time.time()
+            for uid, s in list(vsessions.items()):
+                if s["state"] == "publishing" or s["expires"] > now:
+                    continue
+                lk = vlocks.setdefault(uid, threading.Lock())
+                if not lk.acquire(blocking=False):
+                    continue
+                try:
+                    if vsessions.get(uid) is s and s["state"] != "publishing" and s["expires"] <= now:
+                        vdrop(uid)
+                finally:
+                    lk.release()
+            if not force and now - vclean["t"] < 60:
+                return
+            vclean["t"] = now
+            try:
+                names = os.listdir(vstage)
+            except OSError:
+                return
+            for f in names:
+                uid = f.split(".", 1)[0]
+                if uid not in vsessions and UID_RE.fullmatch(uid):
+                    try:
+                        os.remove(os.path.join(vstage, f))
+                    except OSError:
+                        pass
+        finally:
+            vglobal.release()
+
+    app.state.video_cleanup = vcleanup
+
+    def vrow_result(row, title_ev=True):
+        return dict(id=row[0], v=row[1], pv=row[2], w=row[3], h=row[4], duration=row[5], title=row[6], ev=row[7])
+
+    def db_publish(s, res, codec):
+        """INSERT dòng videos nếu sha256 chưa có. → ("inserted"|"exists", id). Chỉ gọi khi giữ vglobal."""
+        db = store.connect(data_dir, init=False)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id FROM videos WHERE sha256=?", (s["sha256"],)).fetchone()
+            if row:
+                db.rollback()
+                return "exists", row[0]
+            so = db.execute("SELECT COALESCE(MAX(sort),0)+1 FROM videos WHERE ev IS ?", (s["ev"],)).fetchone()[0]
+            db.execute("INSERT INTO videos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (res["id"], safe_name(s["name"], (".mp4",)) or "video.mp4", s["sha256"], s["size"], res["v"], res["pv"], res["w"], res["h"], res["duration"], codec,
+                        s["title"], s["ev"], so, time.time()))
+            db.commit()
+            return "inserted", res["id"]
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def recon_fail(s, code, detail=""):
+        """Không công bố được an toàn: ghi nhận (phiên vẫn tính vào MAX_VIDEO_SESSIONS và hết hạn như thường), KHÔNG xoá file nào, nhất là file đích.
+        `code` là mã ngắn (lưu trong sidecar, trả cho chủ nhà); đường dẫn/lỗi hệ điều hành chỉ nằm trong `detail` → log."""
+        log.error("video %s: %s %s", s.get("uid"), code, detail)
+        s["state"], s["reason"] = "failed", code
+        try:
+            vsave(s)
+        except OSError:
+            pass
+        return False
+
+    def reason_code(s):
+        r = s.get("reason")
+        return r if isinstance(r, str) and re.fullmatch(r"[a-z0-9_]{1,40}", r) else "unresolved"  # chỉ mã ngắn ra ngoài; chi tiết (đường dẫn, lỗi OS) nằm trong log
+
+    def meta_problem(s):
+        t, ev, name, size = s.get("title"), s.get("ev"), s.get("name"), s.get("size")
+        if not isinstance(t, str) or len(t) > VIDEO_TITLE_MAX or any(ord(c) < 32 for c in t):
+            return "title không hợp lệ"
+        if ev is not None and (not isinstance(ev, str) or ev not in store.EVENT_IDS):
+            return "ev không hợp lệ"
+        if not isinstance(name, str) or safe_name(name, (".mp4",)) is None:
+            return "name không hợp lệ"
+        if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= VIDEO_MAX_BYTES:
+            return "size không hợp lệ"
+        return None
+
+    def recon(s):
+        """Chốt một phiên chưa published sau khi chết giữa chừng (hoặc finish được gọi lại). Không tin sidecar: sha256/psha phải đúng dạng hex,
+        id/v/pv tính lại từ chúng, mọi đường dẫn nằm trong vdir/vposters/vstage; MỌI file cung cấp cho bản công bố (đang ở staging hay đã ở đích)
+        phải khớp kích thước + sha256 (+ mp4box / check_poster) TRƯỚC khi ghi dòng DB. Sai → failed, giữ nguyên file. True = đã published."""
+        if s["state"] == "published":
+            return True
+        uid, sha, psha = s["uid"], s.get("sha256"), s.get("psha")
+        if not (isinstance(sha, str) and SHA256_RE.fullmatch(sha)):
+            return recon_fail(s, "sidecar_sha256_invalid")
+        db = store.connect_ro(data_dir)
+        try:
+            row = db.execute("SELECT id, v, pv, w, h, duration, title, ev FROM videos WHERE sha256=?", (sha,)).fetchone()
+        finally:
+            db.close()
+        if row:
+            s["state"], s["result"] = "published", vrow_result(row)
+            for ext in (".part", ".poster", ".poster.new"):
+                try:
+                    os.remove(vpath(uid, ext))
+                except OSError:
+                    pass
+            vsave(s)
+            return True
+        uploading = s["state"] == "uploading"
+        if uploading and not (s["poster"] and s["offset"] == s["size"]):
+            return False
+        if not (isinstance(psha, str) and SHA256_RE.fullmatch(psha)):
+            return False if uploading else recon_fail(s, "sidecar_psha_invalid")
+        vid = hashlib.sha1(sha.encode()).hexdigest()[:16]
+        v, pv = sha[:10], psha[:10]
+        sm, sp = vpath(uid, ".part"), vpath(uid, ".poster")
+        fm, fj = os.path.join(vdir, f"{vid}-{v}.mp4"), os.path.join(vposters, f"{vid}-{pv}.jpg")
+        if uploading and not (os.path.exists(fm) and os.path.exists(fj)):
+            return False  # chưa công bố gì: phiên đang tải bình thường
+        bad = meta_problem(s)
+        if bad:
+            return recon_fail(s, "sidecar_metadata_invalid", bad)
+        msrc = fm if os.path.exists(fm) else sm if os.path.exists(sm) else None
+        psrc = fj if os.path.exists(fj) else sp if os.path.exists(sp) else None
+        if msrc is None or psrc is None:
+            return recon_fail(s, "files_missing", f"{fm} / {fj}")
+        try:
+            if os.path.getsize(msrc) != s["size"] or sha_file(msrc) != sha:
+                return recon_fail(s, "mp4_mismatch", msrc)
+            info = mp4box.probe(msrc)
+            with open(psrc, "rb") as fh:
+                pbytes = fh.read()
+            if hashlib.sha256(pbytes).hexdigest() != psha:
+                return recon_fail(s, "poster_mismatch", psrc)
+            perr = check_poster(pbytes)
+            if perr:
+                return recon_fail(s, "poster_invalid", f"{psrc}: {perr}")
+        except mp4box.Mp4Error as e:
+            return recon_fail(s, "mp4_invalid", str(e))
+        except OSError as e:
+            return recon_fail(s, "read_error", str(e))
+        res = dict(id=vid, v=v, pv=pv, w=info["w"], h=info["h"], duration=info["duration"], title=s["title"], ev=s["ev"])
+        with vglobal:
+            for staged, final, src in ((sm, fm, msrc), (sp, fj, psrc)):
+                if src == staged:
+                    os.replace(staged, final)
+                elif os.path.exists(staged):
+                    os.remove(staged)  # bản staging thừa (file đích đã được kiểm đúng)
+            for d in (vdir, vposters, vstage):
+                fsync_path(d)
+            db_publish(s, res, info["codec"])
+            s["state"], s["result"], s["codec"] = "published", res, info["codec"]
+            vsave(s)
+        return True
+
+    def vload():
+        """Nạp phiên từ đĩa: cắt phần ghi dở của chunk, đối chiếu poster với psha, rồi chốt các phiên dở dang (recon)."""
+        for f in sorted(os.listdir(vstage)):
+            if not f.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(vstage, f)) as fh:
+                    s = json.load(fh)
+                uid = s["uid"]
+                if not (UID_RE.fullmatch(uid) and f == uid + ".json" and (s["expires"] > time.time() or s["state"] == "publishing")
+                        and s["state"] in ("uploading", "publishing", "failed", "published")
+                        and isinstance(s["offset"], int) and isinstance(s["size"], int)):
+                    continue
+                if s["state"] == "uploading":
+                    pn, pp = vpath(uid, ".poster.new"), vpath(uid, ".poster")
+                    if os.path.exists(pn):  # chết giữa lúc thay poster: sidecar đã trỏ tới bản mới thì hoàn tất đổi tên, không thì bỏ bản tạm
+                        if s["psha"] and sha_file(pn) == s["psha"]:
+                            os.replace(pn, pp)
+                        else:
+                            os.remove(pn)
+                    if os.path.exists(pp):
+                        actual = sha_file(pp)
+                        if not s["poster"] or actual != s["psha"]:
+                            s["poster"], s["psha"] = True, actual
+                            vsave(s)
+                    elif s["poster"] and not os.path.exists(os.path.join(
+                            vposters, f"{hashlib.sha1(s['sha256'].encode()).hexdigest()[:16]}-{s['psha'][:10]}.jpg")):  # poster đã sang file đích thì giữ psha cho recon
+                        s["poster"], s["psha"] = False, ""
+                        vsave(s)
+                    if os.path.exists(vpath(uid, ".part")):
+                        sz = os.path.getsize(vpath(uid, ".part"))
+                        if sz < s["offset"]:
+                            continue
+                        if sz > s["offset"]:  # chunk dở dang lúc chết: bỏ phần chưa được ghi nhận
+                            with open(vpath(uid, ".part"), "r+b") as fh2:
+                                fh2.truncate(s["offset"])
+                vsessions[uid] = s
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+        for s in list(vsessions.values()):
+            if s["state"] != "published":
+                try:
+                    recon(s)
+                except Exception:
+                    log.exception("không chốt được phiên video %s", s.get("uid"))
+        for uid, s in list(vsessions.items()):  # phiên đang tải mà mất .part và không chốt được: bỏ phần staging (KHÔNG đụng videos/)
+            if s["state"] == "uploading" and s["offset"] > 0 and not os.path.exists(vpath(uid, ".part")):
+                vdrop(uid)
+        vcleanup(force=True)
+
+    vload()
+
+    async def vguard(request, mutate=True):
+        admin_enabled()
+        require_admin(request)
+        if mutate:
+            same_origin_or_403(request)
+        await run_in_threadpool(vcleanup)  # dọn cơ hội, trong luồng và không chờ vglobal: không bao giờ chặn event loop
+
+    def vsession(uid):
+        s = vsessions.get(uid) if UID_RE.fullmatch(uid) else None
+        if s is None or s["state"] == "dead" or (s["expires"] <= time.time() and s["state"] != "publishing"):
+            raise HTTPException(404, "Không có phiên tải video này.")
+        return s
+
+    def valive(s):
+        """Gọi khi đã giữ khoá phiên: phiên có thể đã bị dọn giữa lúc chờ → 404, không được làm sống lại."""
+        if vsessions.get(s["uid"]) is not s or s["state"] == "dead":
+            raise HTTPException(404, "Không có phiên tải video này.")
+
+    def vstate(s):
+        if s["state"] == "published":
+            return "published"
+        return "ready" if s["state"] in ("publishing", "failed") or (s["offset"] >= s["size"] and s["poster"]) else "uploading"
+
+    def vview(s):
+        out = dict(uid=s["uid"], offset=s["offset"], size=s["size"], poster=bool(s["poster"]), state=vstate(s), expires=int(s["expires"]))
+        if s["state"] == "published":
+            out["id"] = s["result"]["id"]
+        return out
+
+    def vjson(obj, status=200):
+        return JSONResponse(obj, status_code=status, headers=NOSTORE)
+
+    @app.post("/api/admin/video/init")
+    async def api_video_init(request: Request):
+        data = await admin_json(request, VIDEO_INIT_BODY_MAX)
+        name, size, sha, title = data.get("name"), data.get("size"), data.get("sha256"), data.get("title", "")
+        ev = data.get("ev")
+        fname = safe_name(name, (".mp4",)) if isinstance(name, str) else None
+        if fname is None:
+            raise HTTPException(400, "Tên file phải kết thúc bằng .mp4")
+        if not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= VIDEO_MAX_BYTES:
+            raise HTTPException(400, f"Kích thước video không hợp lệ (tối đa {VIDEO_MAX_BYTES // 2**30} GB).")
+        if not isinstance(sha, str) or not SHA256_RE.fullmatch(sha.lower()):
+            raise HTTPException(400, "sha256 phải gồm 64 ký tự hex.")
+        sha = sha.lower()
+        if ev is not None and (not isinstance(ev, str) or ev not in store.EVENT_IDS):
+            raise HTTPException(400, "Sự kiện không hợp lệ.")
+        if not isinstance(title, str) or len(title) > VIDEO_TITLE_MAX or any(ord(c) < 32 for c in title):
+            raise HTTPException(400, f"Tiêu đề tối đa {VIDEO_TITLE_MAX} ký tự.")
+        title = title.strip()
+        return await run_in_threadpool(video_init, fname, size, sha, ev, title)
+
+    def video_init(fname, size, sha, ev, title):
+        vcleanup()
+        with vglobal:  # kiểm trùng đã công bố + tìm phiên cùng sha + tạo phiên: một khối, không xen với finish
+            db = store.connect_ro(data_dir)
+            try:
+                dup = db.execute("SELECT id FROM videos WHERE sha256=?", (sha,)).fetchone()
+            finally:
+                db.close()
+            if dup:
+                return vjson(dict(error="duplicate", id=dup[0]), 409)
+            for s in list(vsessions.values()):
+                if s["sha256"] == sha and s["state"] == "publishing":
+                    return vjson(dict(error="publishing", uid=s["uid"]), 409)
+                if s["sha256"] == sha and s["state"] == "failed":  # bỏ phần staging của lần hỏng (KHÔNG đụng videos/) để tải lại cùng file
+                    vdrop(s["uid"])
+            now = time.time()
+            active = [s for s in vsessions.values() if (s["state"] == "uploading" and s["expires"] > now) or s["state"] == "publishing"
+                      or (s["state"] == "failed" and s["expires"] > now)]  # phiên chưa chốt được cũng chiếm chỗ: lỗi không tích luỹ quá giới hạn
+            for s in active:
+                if s["sha256"] == sha and s["state"] == "uploading":
+                    if s["size"] != size:
+                        return vjson(dict(error="mismatch", uid=s["uid"]), 409)
+                    return vjson(dict(uid=s["uid"], offset=s["offset"], size=s["size"], chunk_max=VIDEO_CHUNK_MAX, expires=int(s["expires"])))
+            if len(active) >= MAX_VIDEO_SESSIONS:
+                return vjson(dict(error="too_many_sessions"), 429)
+            with rlock:  # kiểm chỗ đĩa + tạo phiên (tức là đặt chỗ) trong MỘT bước nguyên tử với ảnh/poster/chunk đang xin chỗ
+                if shutil.disk_usage(data_dir).free - vreserved() - inflight["n"] - size < min_free:
+                    return vjson(dict(error="disk_full", message=f"Ổ đĩa không đủ chỗ (cần chừa {min_free // 2**20} MB trống)."), 507)
+                uid = uuid.uuid4().hex
+                s = dict(uid=uid, name=fname, size=size, sha256=sha, ev=ev, title=title, offset=0, poster=False, psha="", created=now,
+                         expires=now + VIDEO_SESSION_TTL, state="uploading", result=None)
+                vlocks[uid] = threading.Lock()
+                vsessions[uid] = s  # từ đây phần còn nợ của phiên đã nằm trong sổ; ghi đĩa làm SAU khi nhả rlock
+            try:
+                open(vpath(uid, ".part"), "wb").close()
+                vsave(s)
+            except BaseException:
+                vdrop(uid)  # ghi bền hỏng → trả chỗ đã đặt (bỏ khỏi vsessions) và dọn file dở, ngoài rlock
+                raise
+        return vjson(dict(uid=uid, offset=0, size=size, chunk_max=VIDEO_CHUNK_MAX, expires=int(s["expires"])))
+
+    @app.post("/api/admin/video/{vid}/event")
+    async def api_video_event(vid: str, request: Request):
+        """Đổi ngày của video đã công bố (chỉ cột ev; sort giữ nguyên). Idempotent."""
+        data = await admin_json(request, VIDEO_INIT_BODY_MAX)
+        if not PHOTO_ID.fullmatch(vid):
+            raise HTTPException(404, "Không có video này.")
+        ev = data.get("ev")
+        if "ev" not in data or (ev is not None and (not isinstance(ev, str) or ev not in store.EVENT_IDS)):
+            raise HTTPException(400, "Sự kiện không hợp lệ.")
+        return await run_in_threadpool(video_set_event, vid, ev)
+
+    def video_set_event(vid, ev):
+        with vglobal:
+            db = store.connect(data_dir, init=False)
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                n = db.execute("UPDATE videos SET ev=? WHERE id=?", (ev, vid)).rowcount
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        if not n:
+            raise HTTPException(404, "Không có video này.")
+        gallery_state(force=True)
+        return vjson(dict(id=vid, ev=ev))
+
+    @app.get("/api/admin/video/{uid}")
+    async def api_video_status(uid: str, request: Request):
+        await vguard(request, mutate=False)
+        return vjson(vview(vsession(uid)))
+
+    async def read_limited(request, limit):
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > limit:
+            raise HTTPException(413, f"Nội dung quá lớn (tối đa {limit // 2**20} MB).")
+        buf = bytearray()
+        try:
+            async for c in request.stream():
+                buf += c
+                if len(buf) > limit:
+                    raise HTTPException(413, f"Nội dung quá lớn (tối đa {limit // 2**20} MB).")
+        except ClientDisconnect:
+            raise HTTPException(400, "Kết nối bị ngắt giữa chừng.")
+        if declared and declared.isdigit() and int(declared) != len(buf):
+            raise HTTPException(400, "Thân yêu cầu ngắn hơn Content-Length.")
+        return bytes(buf)
+
+    @app.put("/api/admin/video/{uid}/chunk")
+    async def api_video_chunk(uid: str, request: Request):
+        await vguard(request)
+        s = vsession(uid)
+        try:
+            off = int(request.query_params.get("off", ""))
+        except ValueError:
+            raise HTTPException(400, "Thiếu hoặc sai off.")
+        if off < 0:
+            raise HTTPException(400, "Thiếu hoặc sai off.")
+        body = await read_limited(request, VIDEO_CHUNK_MAX)  # nhận đủ thân TRƯỚC khi chạm file: ngắt giữa chừng không để lại byte nào
+        if not body:
+            raise HTTPException(400, "Mảnh rỗng.")
+        return await run_in_threadpool(video_chunk, s, off, body)
+
+    def video_chunk(s, off, body):
+        vhook("chunk_before_lock")
+        lk = vlocks.setdefault(s["uid"], threading.Lock())
+        if not lk.acquire(blocking=False):
+            return vjson(dict(error="busy", offset=s["offset"]), 409)
+        try:
+            valive(s)
+            if s["state"] != "uploading" or off != s["offset"] or off + len(body) > s["size"]:
+                return vjson(dict(error="offset", offset=s["offset"]), 409)
+            if not disk_reserve(len(body), exclude=s, hold=False):  # chunk này + chỗ mọi phiên khác, ảnh và poster đang bay (phần còn nợ của chính phiên này đã nằm trong sổ)
+                return vjson(dict(error="disk_full"), 507)
+            committed = s["offset"]
+            try:
+                with open(vpath(s["uid"], ".part"), "r+b") as fh:
+                    fh.seek(committed)
+                    try:
+                        fh.write(body)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    except BaseException:
+                        fh.truncate(committed)
+                        raise
+                vhook("chunk_written")
+                with rlock:  # byte đã ghi chuyển từ "còn nợ" sang "đã chiếm đĩa" trong cùng một bước với sổ: không ai thấy free cũ + nợ mới
+                    s["offset"] = committed + len(body)
+                vhook("chunk_advanced")
+                try:
+                    vsave(s)
+                except BaseException:
+                    with rlock:
+                        s["offset"] = committed
+                    with open(vpath(s["uid"], ".part"), "r+b") as fh:
+                        fh.truncate(committed)
+                    raise
+            except OSError as e:
+                log.error("ghi chunk video lỗi: %s", e)
+                return vjson(dict(error="write_failed", offset=s["offset"]), 500)
+            return vjson(dict(offset=s["offset"]))
+        finally:
+            lk.release()
+
+    @app.put("/api/admin/video/{uid}/poster")
+    async def api_video_poster(uid: str, request: Request):
+        await vguard(request)
+        s = vsession(uid)
+        body = await read_limited(request, POSTER_MAX_BYTES)
+        return await run_in_threadpool(video_poster, s, body)
+
+    def video_poster(s, body):
+        if not body:
+            raise HTTPException(400, "Poster rỗng.")
+        err = check_poster(body)
+        if err:
+            raise HTTPException(400, err)
+        lk = vlocks.setdefault(s["uid"], threading.Lock())
+        if not lk.acquire(blocking=False):
+            return vjson(dict(error="busy", offset=s["offset"]), 409)
+        held = False
+        try:
+            valive(s)
+            if s["state"] != "uploading":
+                return vjson(dict(error="published"), 409)
+            if not disk_reserve(len(body)):  # đặt chỗ nguyên tử trong sổ chung; trả lại ở finally
+                return vjson(dict(error="disk_full"), 507)
+            held = True
+            # Thay poster nguyên tử cùng hash: ghi bản tạm (bền) → sidecar trỏ tới hash mới (bền) → đổi tên. Chết ở đâu thì vload cũng đối chiếu lại.
+            tmp, final = vpath(s["uid"], ".poster.new"), vpath(s["uid"], ".poster")
+            with open(tmp, "wb") as fh:
+                fh.write(body)
+                fh.flush()
+                os.fsync(fh.fileno())
+            vhook("poster_written")
+            old = (s["poster"], s["psha"])
+            s["poster"], s["psha"] = True, hashlib.sha256(body).hexdigest()
+            try:
+                vsave(s)
+            except BaseException:
+                s["poster"], s["psha"] = old
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            vhook("poster_saved")
+            os.replace(tmp, final)
+            fsync_path(vstage)
+        finally:
+            if held:
+                disk_release(len(body))
+            lk.release()
+        return vjson(dict(poster=True))
+
+    @app.post("/api/admin/video/{uid}/finish")
+    async def api_video_finish(uid: str, request: Request):
+        await vguard(request)
+        s = vsession(uid)
+        return await run_in_threadpool(video_finish, s)
+
+    def video_finish(s):
+        uid = s["uid"]
+        vhook("finish_before_lock")
+        with vlocks.setdefault(uid, threading.Lock()):
+            valive(s)
+            if s["state"] in ("publishing", "failed"):  # lần công bố trước chết giữa chừng / chưa chốt được
+                try:
+                    done = recon(s)
+                except OSError as e:
+                    log.error("chốt video lỗi: %s", e)
+                    done = False
+                if not done:
+                    return vjson(dict(error="publish_incomplete", reason=reason_code(s)), 500)
+            if s["state"] == "published":
+                return vjson(s["result"])
+            if s["offset"] != s["size"]:
+                return vjson(dict(error="incomplete", offset=s["offset"]), 409)
+            if not s["poster"]:
+                return vjson(dict(error="no_poster"), 409)
+            part, poster = vpath(uid, ".part"), vpath(uid, ".poster")
+
+            def reject(reason):
+                vdrop(uid)  # nội dung đã cố định theo sha256: giữ phiên cũng không sửa được → giải phóng chỗ
+                return vjson(dict(error="invalid", reason=reason), 422)
+            if sha_file(part) != s["sha256"]:
+                return reject("sha256 không khớp với file đã tải lên.")
+            try:
+                info = mp4box.probe(part)
+            except mp4box.Mp4Error as e:
+                return reject(str(e))
+            except OSError as e:
+                log.error("đọc video lỗi: %s", e)
+                return vjson(dict(error="read_failed"), 500)
+            with open(poster, "rb") as fh:
+                pbytes = fh.read()
+            perr = check_poster(pbytes)
+            if perr:
+                return reject(perr)
+            psha = hashlib.sha256(pbytes).hexdigest()  # hash của đúng byte sẽ công bố (không tin sidecar)
+            vid = hashlib.sha1(s["sha256"].encode()).hexdigest()[:16]
+            v, pv = s["sha256"][:10], psha[:10]
+            res = dict(id=vid, v=v, pv=pv, w=info["w"], h=info["h"], duration=info["duration"], title=s["title"], ev=s["ev"])
+            fmp4, fjpg = os.path.join(vdir, f"{vid}-{v}.mp4"), os.path.join(vposters, f"{vid}-{pv}.jpg")
+            with vglobal:  # kiểm trùng → ghi trạng thái publishing → di chuyển → INSERT: không xen với finish/init khác
+                db = store.connect_ro(data_dir)
+                try:
+                    dup = db.execute("SELECT id FROM videos WHERE sha256=?", (s["sha256"],)).fetchone()
+                finally:
+                    db.close()
+                if dup:
+                    vdrop(uid)
+                    return vjson(dict(error="duplicate", id=dup[0]), 409)
+                prev = (s["psha"], s["state"])
+                s["psha"], s["result"], s["codec"], s["state"] = psha, res, info["codec"], "publishing"
+                try:
+                    vsave(s)  # bền TRƯỚC khi đụng file: chết từ đây thì vload/recon biết phải hoàn tất
+                except BaseException:
+                    s["psha"], s["state"] = prev
+                    raise
+                vhook("publishing_saved")
+                moved = []  # CHỈ những file finish này vừa tạo ra; rollback không bao giờ đụng file đã có sẵn
+                try:
+                    for staged, final, expect in ((part, fmp4, s["sha256"]), (poster, fjpg, psha)):
+                        if os.path.exists(final):
+                            if sha_file(final) != expect:
+                                raise RuntimeError(f"file đích {final} đã có với nội dung khác")
+                            continue  # tàn dư của lần công bố dở với đúng nội dung: dùng lại
+                        os.replace(staged, final)
+                        moved.append((final, staged))
+                    for d in (vdir, vposters, vstage):
+                        fsync_path(d)
+                    vhook("moved")
+                    kind, _ = db_publish(s, res, info["codec"])
+                    if kind == "exists":
+                        raise FileExistsError
+                    vhook("committed")
+                except FileExistsError:
+                    for a, b in reversed(moved):
+                        os.replace(a, b)
+                    vdrop(uid)
+                    return vjson(dict(error="duplicate"), 409)
+                except Exception:
+                    for a, b in reversed(moved):
+                        try:
+                            os.replace(a, b)
+                        except OSError:
+                            pass
+                    s["state"] = "uploading"
+                    try:
+                        vsave(s)
+                    except Exception:
+                        pass
+                    raise
+                s["state"] = "published"
+                try:
+                    vsave(s)
+                except OSError:
+                    log.error("không ghi được trạng thái published của %s (vload sẽ chốt lại)", uid)
+                for p in (part, poster):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+            gallery_state(force=True)
+            return vjson(res)
+
+    RANGE_SPEC = re.compile(r"^(\d*)-(\d*)$")
+
+    def parse_range(header, size):
+        """None = bỏ qua Range (phục vụ 200 đủ: sai cú pháp, start > end, nhiều khoảng); "bad" = 416; (start, end) đã kẹp theo file."""
+        h = header.strip()
+        if h[:6].lower() != "bytes=":
+            return None
+        specs = [x.strip() for x in h[6:].split(",")]
+        m = RANGE_SPEC.match(specs[0]) if len(specs) == 1 else None
+        if not m or not (m.group(1) or m.group(2)):
+            return None
+        num = lambda x: int(x) if len(x) <= 18 else 10 ** 18  # noqa: E731 (chuỗi số quá dài chỉ có nghĩa "rất lớn")
+        a, b = m.groups()
+        if not a:  # -n: n byte cuối (n ≥ size → cả file)
+            n = num(b)
+            return "bad" if n == 0 else (max(0, size - n), size - 1)
+        a = num(a)
+        if b:
+            b = num(b)
+            if a > b:
+                return None
+            return "bad" if a >= size else (a, min(b, size - 1))
+        return "bad" if a >= size else (a, size - 1)
+
+    def file_chunks(fh, start, end, chunk=256 * 1024):
+        try:
+            fh.seek(start)
+            left = end - start + 1
+            while left > 0:
+                b = fh.read(min(chunk, left))
+                if not b:
+                    break
+                left -= len(b)
+                yield b
+        finally:
+            fh.close()
+
+    def serve_range(request, p, media_type):
+        """200/206/416 tự xử lý (một khoảng; nhiều khoảng hoặc sai cú pháp → 200 đủ), If-Range, HEAD, đọc từng khối nhỏ."""
+        try:
+            fh = open(p, "rb")
+            st = os.fstat(fh.fileno())
+        except OSError:
+            raise HTTPException(404)
+        size = st.st_size
+        etag, lm = f'"{st.st_mtime_ns:x}-{size:x}"', email.utils.formatdate(st.st_mtime, usegmt=True)
+        hdr = {"Cache-Control": IMMUTABLE, "Accept-Ranges": "bytes", "ETag": etag, "Last-Modified": lm}
+        rng, rh = None, request.headers.get("range")
+        if rh:
+            ir = request.headers.get("if-range")
+            if ir is None or ir.strip() in (etag, lm):
+                rng = parse_range(rh, size)
+        if rng == "bad":
+            fh.close()
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"})
+        status, (start, end) = (206, rng) if rng else (200, (0, size - 1))
+        if rng:
+            hdr["Content-Range"] = f"bytes {start}-{end}/{size}"
+        hdr["Content-Length"] = str(end - start + 1)
+        if request.method == "HEAD":
+            fh.close()
+            return Response(status_code=status, headers=hdr, media_type=media_type)
+        return StreamingResponse(file_chunks(fh, start, end), status_code=status, headers=hdr, media_type=media_type)
+
+    @app.api_route("/v/{fname}", methods=["GET", "HEAD"])
+    def video_file(fname: str, request: Request):
+        """/v/{id}-{v}.mp4 và /v/{id}-{pv}.jpg: chỉ 200 khi id tồn tại và phiên bản đúng; mọi URL khác (kể cả có query) 404 no-store."""
+        m = VIDEO_FILE.match(fname)
+        if not m or request.url.query:
+            raise HTTPException(404)
+        vid, ver, ext = m.groups()
+        idx = 0 if ext == "mp4" else 1
+        cur = gallery_state()["vids"].get(vid)
+        if cur is None or cur[idx] != ver:
+            cur = gallery_state(fresh=True)["vids"].get(vid)
+            if cur is None or cur[idx] != ver:
+                raise HTTPException(404)
+        return serve_range(request, os.path.join(vdir if ext == "mp4" else vposters, fname), "video/mp4" if ext == "mp4" else "image/jpeg")
 
     # ---------- ảnh: WebP đặt tên theo nội dung, thumbnail/bản xem cũ, bản gốc (host ngoài chỉ lấy được ba nhóm đầu: HostGate) ----------
     @app.api_route("/i/{fname}", methods=["GET", "HEAD"])

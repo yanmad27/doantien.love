@@ -470,3 +470,202 @@ const vis = (() => {
   const reload = () => { chain = chain.then(() => load()); };
   return { load, reload };
 })();
+
+// ---- video: băm sha256 tăng dần → init → gửi mảnh tuần tự (nối lại từ offset máy chủ) → poster → finish ----
+const VID = (() => {
+  const CHUNK_START = 8 * 1048576, CHUNK_MIN = 1048576, POSTER_MAX = 2 * 1048576;
+  let busy = false, titleTouched = false, cancelled = false, inflight = null, finSent = false;  // inflight: CHỈ request của lượt tải lên (không lẫn với đổi ngày ở danh sách)
+  const fileEl = $("vf-file"), posterEl = $("vf-poster"), titleEl = $("vf-title"), goEl = $("vf-go"), msgEl = $("vf-msg"), infoEl = $("vf-info");
+  const stem = n => n.replace(/\.[^.]*$/, "");
+  const evName = v => v ? "ngày " + evLabel(v) : "không gán ngày";
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const mmss = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+  const say = (t, err) => { msgEl.textContent = t; msgEl.classList.toggle("vf-err", !!err); };
+  const bar = p => { $("vf-bar-wrap").hidden = false; $("vf-bar").style.width = Math.min(100, p) + "%"; $("vf-bar-wrap").setAttribute("aria-valuenow", String(Math.round(p))); };
+  class Fail extends Error {}
+  const chk = () => {
+    if (!cancelled) return;
+    if (finSent) { list(); throw new Fail("Đã huỷ khi đang công bố: video có thể đã được đăng. Danh sách bên dưới vừa được làm mới để xem kết quả thật."); }
+    throw new Fail("Đã huỷ. Phiên tải vẫn được giữ: chọn lại đúng file này để tiếp tục.");
+  };
+  const META = "vidmeta:";  // máy chủ không trả lại tiêu đề/ngày của phiên đang tải; ghi nhớ ở trình duyệt này để báo lại khi nối lại
+  const metaGet = sha => { try { return JSON.parse(localStorage.getItem(META + sha)); } catch (e) { return null; } };
+  const metaSet = (sha, m) => { try { localStorage.setItem(META + sha, JSON.stringify(m)); } catch (e) {} };
+  const metaDel = sha => { try { localStorage.removeItem(META + sha); } catch (e) {} };
+  const freeze = on => { for (const x of [fileEl, posterEl, titleEl, $("vf-ev")]) x.disabled = on; $("vf-cancel").hidden = !on; };
+  $("vf-cancel").onclick = () => { cancelled = true; if (inflight) inflight.abort(); };
+  titleEl.oninput = () => { titleTouched = true; };
+  fileEl.onchange = () => {
+    const f = fileEl.files[0];
+    if (f && !titleTouched) titleEl.value = stem(f.name).slice(0, 120);
+    goEl.disabled = !f || busy; say(""); infoEl.textContent = "";
+  };
+  addEventListener("beforeunload", e => { if (busy) { e.preventDefault(); e.returnValue = ""; } });
+
+  async function call(method, path, body, ctype, timeoutMs, up) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), timeoutMs || 30000);
+    if (up) inflight = ctl;
+    try {
+      const r = await fetch(path, { method, body, signal: ctl.signal, headers: ctype ? { "Content-Type": ctype } : {} });
+      if (r.status === 401) { toLogin(); throw new Fail("Phiên đăng nhập đã hết hạn."); }
+      let j = {}; try { j = await r.json(); } catch (e) {}
+      return { status: r.status, j };
+    } finally { clearTimeout(t); if (inflight === ctl) inflight = null; }
+  }
+  const jcall = (method, path, obj, up) => call(method, path, obj === undefined ? undefined : JSON.stringify(obj), obj === undefined ? null : "application/json", 0, up);
+
+  function frameJpeg(file) {   // khung hình ở ~1 s → JPEG ≤ 2 MiB (null nếu trình duyệt không giải mã được)
+    return new Promise(res => {
+      const v = document.createElement("video"), url = URL.createObjectURL(file);
+      const done = b => { URL.revokeObjectURL(url); v.removeAttribute("src"); v.load(); res(b); };
+      const to = setTimeout(() => done(null), 15000);
+      v.muted = true; v.preload = "auto"; v.playsInline = true;
+      v.onerror = () => { clearTimeout(to); done(null); };
+      v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+      v.onseeked = async () => {
+        clearTimeout(to);
+        try {
+          let w = v.videoWidth, h = v.videoHeight;
+          if (!w || !h) return done(null);
+          const sc = Math.min(1, 1280 / Math.max(w, h)); w = Math.round(w * sc); h = Math.round(h * sc);
+          const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").drawImage(v, 0, 0, w, h);
+          for (const q of [0.85, 0.7, 0.5]) {
+            const b = await new Promise(r => c.toBlob(r, "image/jpeg", q));
+            if (b && b.size <= POSTER_MAX) return done(b);
+          }
+        } catch (e) {}
+        done(null);
+      };
+      v.src = url;
+    });
+  }
+
+  async function sendChunks(uid, file, offset, chunkMax, t0) {
+    let size = Math.min(CHUNK_START, chunkMax), fails = 0, stuck = 0;
+    const from = offset;
+    while (offset < file.size) {
+      chk();
+      const end = Math.min(file.size, offset + size), prev = offset;
+      let r;
+      try { r = await call("PUT", `/api/admin/video/${uid}/chunk?off=${offset}`, file.slice(offset, end), "application/octet-stream", 30000 + size / 20000 * 1000, true); }
+      catch (e) {
+        if (e instanceof Fail) throw e;
+        chk();
+        size = Math.max(CHUNK_MIN, size >> 1);   // timeout / mạng đứt: mảnh nhỏ hơn
+        if (++fails > 8) throw new Fail("Mạng không ổn định, đã thử lại nhiều lần. Chọn lại file để tiếp tục.");
+        say(`Mạng chập chờn, thử lại (${fails})…`, true); await sleep(Math.min(8000, 500 * 2 ** fails)); chk(); continue;
+      }
+      if (r.status === 200 && typeof r.j.offset === "number") { offset = r.j.offset; fails = 0; }
+      else if (r.status === 409 && typeof r.j.offset === "number") offset = r.j.offset;
+      else if (r.status === 507) throw new Fail("Ổ đĩa máy chủ không đủ chỗ cho video này.");
+      else if (r.status === 404) throw new Fail("Phiên tải đã hết hạn. Chọn lại file để bắt đầu lại.");
+      else if (r.status >= 500 || r.status === 429) { if (++fails > 8) throw new Fail("Máy chủ lỗi (" + r.status + ")."); await sleep(Math.min(8000, 500 * 2 ** fails)); }
+      else throw new Fail((r.j && (r.j.detail || r.j.error)) || "Lỗi tải mảnh (" + r.status + ").");
+      if (offset > prev) stuck = 0;
+      else if (offset < file.size && r.status < 500 && ++stuck >= 8) throw new Fail("Máy chủ và trình duyệt không thống nhất được vị trí tải (đã thử 8 lần). Phiên tải vẫn được giữ: chọn lại đúng file này để thử lại.");
+      else if (stuck) { say(`Đồng bộ lại vị trí với máy chủ (${stuck}/8)…`, true); await sleep(Math.min(2000, 200 * 2 ** stuck)); chk(); }
+      const pct = offset / file.size * 100, el = (Date.now() - t0) / 1000, rate = (offset - from) / Math.max(el, 0.5);
+      bar(pct);
+      infoEl.textContent = `Đã gửi ${fmt(offset)} / ${fmt(file.size)} (${n1.format(pct)}%)` + (rate > 0 && offset < file.size ? ` · còn khoảng ${mmss((file.size - offset) / rate)}` : "");
+    }
+  }
+
+  async function start() {
+    const file = fileEl.files[0];
+    if (!file || busy) return;
+    busy = true; cancelled = false; finSent = false; goEl.disabled = true; freeze(true); infoEl.textContent = ""; infoEl.classList.remove("vf-err"); say("");
+    const title = titleEl.value.trim().slice(0, 120) || stem(file.name), ev = $("vf-ev").value || null;  // chốt ngay: từ đây các ô bị khoá
+    let sha = "";
+    try {
+      if (!/\.mp4$/i.test(file.name)) throw new Fail("Chỉ nhận file .mp4.");
+      let poster = posterEl.files[0] || null;
+      if (poster && poster.size > POSTER_MAX) throw new Fail("Ảnh poster quá lớn (tối đa 2 MB).");
+      say("Đang tính mã kiểm tra của video…");
+      sha = await Sha256.file(file, done => { bar(done / file.size * 100); infoEl.textContent = `Tính mã kiểm tra: ${n1.format(done / file.size * 100)}%`; }, undefined, { get aborted() { return cancelled; } });
+      if (!poster) { say("Đang lấy khung hình làm poster…"); poster = await frameJpeg(file); }
+      if (!poster) throw new Fail("Không tự lấy được poster từ video này — hãy chọn thêm một ảnh poster (.jpg).");
+      chk();
+      say("Đang khởi tạo phiên tải…");
+      const ini = await jcall("POST", "/api/admin/video/init", { name: file.name, size: file.size, sha256: sha, ev, title }, true);
+      if (ini.status === 409 && ini.j.error === "duplicate") throw new Fail("Video này đã được đăng rồi.");
+      if (ini.status === 409) throw new Fail(ini.j.error === "publishing" ? "Video này đang được công bố, chờ chút rồi thử lại." : "Đã có phiên tải khác cho cùng mã nhưng khác kích thước.");
+      if (ini.status === 429) throw new Fail("Đang có quá nhiều phiên tải dở dang. Hoàn tất hoặc chờ phiên cũ hết hạn.");
+      if (ini.status === 507) throw new Fail(ini.j.message || "Ổ đĩa máy chủ không đủ chỗ.");
+      if (ini.status !== 200) throw new Fail((ini.j && ini.j.detail) || "Không khởi tạo được (" + ini.status + ").");
+      const { uid } = ini.j;
+      let kept = metaGet(sha);
+      if (kept && (kept.uid !== uid || !(kept.exp > Date.now() / 1000))) { metaDel(sha); kept = null; }  // phiên khác / hết hạn: bỏ gợi ý cũ
+      if (ini.j.offset > 0 || kept) {
+        const kt = kept ? kept.title : null, ke = kept ? kept.ev : undefined;
+        say(`Tiếp tục bản đang tải: ${kept ? `trình duyệt này nhớ lúc đầu bạn chọn “${kt}”, ${evName(ke)}` : "(trình duyệt này không nhớ tiêu đề/ngày đã chọn lúc đầu)"} — từ ${n1.format(ini.j.offset / file.size * 100)}%. Tiêu đề giữ như lần đầu` +
+          (kept && ke !== ev ? `; ngày bạn chọn lúc này (${evName(ev)}) sẽ được áp dụng sau khi công bố.` : "."));
+      } else say("Đang tải lên…");
+      if (!kept) metaSet(sha, { uid, exp: ini.j.expires, title, ev });
+      await sendChunks(uid, file, ini.j.offset, ini.j.chunk_max || CHUNK_START, Date.now());
+      say("Đang gửi poster…");
+      const pr = await call("PUT", `/api/admin/video/${uid}/poster`, poster, "image/jpeg", 60000, true);
+      if (pr.status !== 200) throw new Fail((pr.j && (pr.j.detail || pr.j.error)) || "Không gửi được poster (" + pr.status + ").");
+      say("Đang kiểm tra và công bố…"); bar(100);
+      let fin;
+      for (let i = 0; ; i++) {
+        chk();
+        finSent = true;
+        try { fin = await call("POST", `/api/admin/video/${uid}/finish`, undefined, null, 600000, true); } catch (e) { chk(); if (e instanceof Fail || i >= 3) throw e; await sleep(2000); chk(); continue; }
+        if (fin.status >= 500 && i < 3) { await sleep(2000); chk(); continue; }
+        break;
+      }
+      if (fin.status === 422) throw new Fail("Video không hợp lệ: " + (fin.j.reason || "không đọc được MP4") + ". Cần H.264 + AAC và “faststart”.");
+      if (fin.status === 409 && fin.j.error === "duplicate") throw new Fail("Video này đã được đăng rồi.");
+      if (fin.status !== 200) throw new Fail((fin.j && (fin.j.detail || fin.j.error)) || "Không công bố được (" + fin.status + ").");
+      metaDel(sha);
+      let note = "", dayErr = "";
+      if ((fin.j.ev || null) !== ev) {   // phiên cũ giữ ngày khác với lựa chọn lúc này: áp dụng ngày đã chọn
+        let ok = false;
+        try { ok = (await jcall("POST", `/api/admin/video/${fin.j.id}/event`, { ev })).status === 200; } catch (e) {}
+        if (ok) { note = ` Ngày đã đặt theo lựa chọn hiện tại: ${evName(ev)}.`; fin.j.ev = ev; }
+        else dayErr = `Đã đăng video, nhưng chưa đổi được ngày sang ${evName(ev)} (hiện: ${evName(fin.j.ev)}). Dùng ô chọn ngày trong danh sách bên dưới để sửa.`;
+      }
+      if (fin.j.title !== title) note += ` Tiêu đề giữ như lần tải đầu: “${fin.j.title}” (chưa có chức năng sửa tiêu đề).`;
+      say(`Xong: “${fin.j.title}” (${mmss(fin.j.duration)}, ${evName(fin.j.ev)}). Khách thấy ngay trong tab Video.${note}`);
+      infoEl.textContent = dayErr; infoEl.classList.toggle("vf-err", !!dayErr); fileEl.value = posterEl.value = ""; titleEl.value = ""; titleTouched = false;
+      list();
+    } catch (e) {
+      say(e instanceof Fail ? e.message : "Lỗi không mong đợi: " + (e && e.message || e), true);
+    } finally {
+      busy = false; inflight = null; freeze(false); goEl.disabled = !fileEl.files[0];
+    }
+  }
+  goEl.onclick = start;
+
+  // ---- danh sách video đã đăng (lấy từ /api/gallery: video đã công bố luôn công khai) + đổi ngày ----
+  async function list() {
+    let rows = [];
+    try { const r = await fetch("/api/gallery", { cache: "no-cache" }); rows = (await r.json()).videos || []; } catch (e) { return; }
+    $("vl-empty").hidden = rows.length > 0;
+    $("vlist").replaceChildren(...rows.map(r => {
+      const [id, v, pv, , , d, title, ev] = r, li = el("li"), img = el("img"), info = el("div", "vi"), sel = el("select");
+      img.src = `/v/${id}-${pv}.jpg`; img.alt = ""; img.loading = "lazy";
+      info.append(el("b", null, title || "(không tiêu đề)"), el("span", "sum", `Thời lượng ${mmss(d)}`));
+      sel.setAttribute("aria-label", "Ngày của video " + title);
+      for (const [val, lab] of [["", "Không gán ngày"], ["2026-10-04", "Ngày 4/10"], ["2026-10-17", "Ngày 17/10"]]) {
+        const o = el("option", null, lab); o.value = val; sel.append(o);
+      }
+      sel.value = ev || ""; let cur = sel.value;
+      sel.onchange = async () => {
+        const want = sel.value || null;
+        if (!confirm(`Chuyển video “${title}” sang ${evName(want)}? Khách sẽ thấy thay đổi ngay và không có nút hoàn tác (muốn quay lại thì chọn lại ngày cũ).`)) { sel.value = cur; return; }
+        sel.disabled = true;
+        try {
+          const rr = await jcall("POST", `/api/admin/video/${id}/event`, { ev: want });
+          if (rr.status !== 200) throw new Error();
+          cur = sel.value; say(`Đã chuyển “${title}” sang ${evName(want)}.`);
+        } catch (e) { sel.value = cur; say("Chưa đổi được ngày của video. Bạn thử lại nhé.", true); }
+        sel.disabled = false;
+      };
+      li.append(img, info, sel);
+      return li;
+    }));
+  }
+  list();
+  return { list };
+})();

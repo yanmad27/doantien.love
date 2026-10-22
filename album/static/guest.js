@@ -16,17 +16,16 @@ const COLLAPSE_BURSTS = new URLSearchParams(location.search).get("bursts") !== "
 
 let file = null, selfieUrl = null, runId = 0, ctl = null, reqSeq = 0;
 let data = null;
-// Bộ nhớ kết quả của MỘT lần chọn selfie (chỉ trong RAM): all = phản hồi không phạm vi; sc = phản hồi theo ngày khi all không dùng lại được. Đông cứng tại lúc tìm.
-let cache = null;
-const CACHE_TTL_MS = 10 * 60 * 1000;  // quá hạn này thì đổi ngày hỏi lại máy chủ (token ảnh ẩn / hiện ẩn có thể đã đổi)
-let clock = () => Date.now();         // tách ra để test tiêm đồng hồ
+// Thân selfie đã chuẩn bị của MỘT lần chọn (chỉ trong RAM, không bao giờ lưu): "Thử lại" gửi lại đúng thân này khỏi chuẩn bị lại.
+let prepared = null;
 let mode = "all";  // all: cả album · mine: kết quả tìm bằng selfie
 let photos = [], galleryReady = false;
 // Hai sự kiện (ngày) trong một album. Bộ chọn chỉ hiện khi ≥ 2 sự kiện có ảnh công khai; hàng manifest cũ (thiếu trường cuối) = sự kiện mặc định.
 const EV_DEFAULT = "2026-10-04";
-let allPhotos = [], events = [{ id: "2026-10-04", label: "4/10" }, { id: "2026-10-17", label: "17/10" }], evShown = false, curEv = EV_DEFAULT, scope = "all";
+let allPhotos = [], events = [{ id: "2026-10-04", label: "4/10" }, { id: "2026-10-17", label: "17/10" }], evShown = false, curEv = EV_DEFAULT;
 
 // ---------- địa chỉ ảnh + đường lùi: CDN → cùng nguồn gốc /i/ → cũ (/thumbs, /previews) ----------
+let videos = [], vidTab = false;  // vidTab: đang ở tab Video (curEv giữ ngày ảnh gần nhất)
 let CDN = "";
 const tq = x => x.tok ? "?t=" + encodeURIComponent(x.tok) : "";  // x.tok (không phải x.t: ở manifest `t` là giờ chụp)  // ảnh có token theo kết quả tìm (ảnh đang ẩn): /originals /thumbs /previews cần ?t=
 const iUrl = (base, x, n) => `${base}/i/${x.id}-${x.v}-${n}.webp`;
@@ -126,20 +125,51 @@ function layoutRows(items, W) {
   return { rows, height: rows.length ? top - gap : 0, gap };
 }
 
+// Kết quả tìm: TOP_N ô đầu (điểm cao nhất) luôn vào hàng đợi theo thứ tự điểm, ưu tiên cao, tối đa IMG_SLOTS ảnh cùng lúc (chỗ chỉ nhả khi ảnh xong/lỗi/bị huỷ); còn lại nạp lười
+const TOP_N = 12, IMG_SLOTS = 6;
+class ImgQueue {
+  constructor() { this.run = 0; this.q = []; }
+  add(job) {  // xếp theo thứ tự ô (k) để ô điểm cao luôn được nạp trước
+    let i = this.q.length;
+    while (i > 0 && this.q[i - 1].k > job.k) i--;
+    this.q.splice(i, 0, job);
+    this.pump();
+  }
+  pump() {
+    while (this.run < IMG_SLOTS && this.q.length) {
+      const j = this.q.shift();
+      this.run++; j.started = true;
+      j.start();
+    }
+  }
+  job(k, start) {
+    const q = this, j = {
+      k, start, started: false, done: false,
+      release() { if (j.done) return; j.done = true; if (j.started) { q.run--; q.pump(); } else q.q = q.q.filter(o => o !== j); },
+    };
+    return j;
+  }
+}
+
 const galleries = [];
 class VGallery {
   constructor(root, kind, onOpen) {
     this.root = root; this.kind = kind; this.onOpen = onOpen;
     this.items = []; this.flat = []; this.rows = []; this.rowOf = []; this.mounted = new Map(); this.gap = 4;
     this.W = 0; this.active = false; this.warm = false; this.first = true; this.pending = 0;
+    this.pin = false; this.gen = 0; this.iq = new ImgQueue();  // pin: lưới kết quả — màn đầu của lưới tính từ đầu lưới, dù lưới đang nằm dưới màn hình
     root.addEventListener("click", e => { const b = e.target.closest(".tile"); if (b) this.onOpen(this, +b.dataset.i, b); });
     new ResizeObserver(() => requestAnimationFrame(() => { if (this.active && this.root.clientWidth !== this.W) this.relayout(); })).observe(root);  // rAF: relayout đổi chiều cao root, không được làm lặp vòng quan sát
     galleries.push(this);
   }
   set(list) { this.put(collapse(list)); }
-  put(c) { this.items = c.items; this.flat = c.flat; this.warm = false; this.first = true; this.relayout(true); }
+  put(c) { this.unmountAll(); clearTimeout(this.warmTimer); this.warmTimer = 0; this.pending = 0; this.items = c.items; this.flat = c.flat; this.warm = false; this.first = true; this.relayout(true); }
   setActive(on) { this.active = on; if (on) this.relayout(); else this.unmountAll(); }
-  unmountAll() { for (const r of this.mounted.values()) r.el.remove(); this.mounted.clear(); }
+  unmountAll() {  // gen đổi trước: mọi callback của lượt dựng cũ hết hiệu lực; huỷ cả ảnh đang tải (nhả chỗ trong hàng đợi, bỏ src)
+    this.gen++; this.pending = 0;
+    for (const r of this.mounted.values()) { this.dropRow(r); r.el.remove(); }
+    this.mounted.clear();
+  }
   relayout(fresh) {
     const W = this.root.clientWidth;
     if (!this.active || !W) return;
@@ -170,7 +200,8 @@ class VGallery {
     const keep = document.activeElement && this.root.contains(document.activeElement) ? this.rowOf[+document.activeElement.closest(".tile").dataset.i] : -1;
     let b = a;
     while (b + 1 < this.rows.length && this.rows[b + 1].top <= hiY) b++;
-    for (const [ri, r] of this.mounted) if ((ri < a || ri > b) && ri !== keep) { r.el.remove(); this.mounted.delete(ri); }
+    if (this.pin && this.first && this.rowOf.length) b = Math.max(b, this.rowOf[Math.min(TOP_N, this.rowOf.length) - 1]);  // TOP_N ô điểm cao nhất luôn được dựng, dù màn hình thấp hay ô ngang
+    for (const [ri, r] of this.mounted) if ((ri < a || ri > b) && ri !== keep) { this.dropRow(r); r.el.remove(); this.mounted.delete(ri); }
     // DOM luôn theo đúng thứ tự hàng (Tab và trình đọc màn hình đi theo thứ tự DOM): hàng mới chèn trước hàng đã dựng có chỉ số lớn hơn gần nhất
     for (let ri = a; ri <= b; ri++) {
       if (this.mounted.has(ri)) continue;
@@ -181,11 +212,11 @@ class VGallery {
       this.mounted.set(ri, r);
     }
     // nạp / bỏ ảnh theo khoảng cách tới vùng nhìn thấy
-    const L = this.warm ? LOAD_VH : 0.2;
+    const L = this.warm ? LOAD_VH : 0.2, py = Math.max(0, y);
     const lo1 = y - L * vh, hi1 = y + vh + L * vh, lo2 = y - DROP_VH * vh, hi2 = y + vh + DROP_VH * vh;
     for (const [ri, r] of this.mounted) {
       const row = this.rows[ri];
-      if (row.top + row.h >= lo1 && row.top <= hi1) { if (!r.on) this.loadRow(r, row, y, vh); }
+      if ((row.top + row.h >= lo1 && row.top <= hi1) || (this.pin && row.i < TOP_N)) { if (!r.on) this.loadRow(r, row, y, vh); }
       else if (r.on && (row.top + row.h < lo2 || row.top > hi2)) this.dropRow(r);
     }
   }
@@ -212,19 +243,32 @@ class VGallery {
   }
   loadRow(r, row, y, vh) {
     r.on = true;
-    const inFirst = this.first && row.top < y + vh;  // hàng nằm trong màn đầu tiên
-    const imgs = r.el.querySelectorAll("img");
-    imgs.forEach((img, c) => {
+    const inFirst = this.first && row.top < (this.pin ? Math.max(0, y) : y) + vh;  // hàng nằm trong màn đầu tiên
+    const gen = this.gen;
+    r.el.querySelectorAll("img").forEach((img, c) => {
       const k = row.i + c, x = this.items[k], tile = img.parentNode;
-      img.loading = inFirst ? "eager" : "lazy";
-      if (this.first && row.i === 0) img.fetchPriority = "high";
-      img.onload = () => { img.classList.add("on"); x.ts = img.currentSrc; if (inFirst) this.settle(); };
-      if (inFirst) this.pending++;
+      const top = this.pin && k < TOP_N;  // lưới kết quả: ô điểm cao nhất, luôn ưu tiên cao
+      const hot = this.pin ? top && this.first : inFirst;
+      img.loading = top || hot ? "eager" : "lazy";
+      if (this.pin) img.fetchPriority = top ? "high" : this.first ? "low" : "auto";
+      else if (this.first && row.i === 0) img.fetchPriority = "high";
+      let fin = false;
+      const job = top ? this.iq.job(k, () => go()) : null;
+      const finish = cancel => {
+        if (fin) return; fin = true;
+        if (job) job.release();
+        if (cancel) { img.onload = img.onerror = null; img.removeAttribute("srcset"); img.removeAttribute("src"); }
+        if (hot && gen === this.gen) { if (cancel) this.pending = Math.max(0, this.pending - 1); else this.settle(); }  // huỷ: chỉ bớt đếm, không kích heat() giữa lúc update()
+      };
+      img._fin = finish;
+      img.onload = () => { if (fin || gen !== this.gen) return; img.classList.add("on"); x.ts = img.currentSrc; finish(false); };
+      if (hot) this.pending++;
       tile.classList.remove("bad");
-      loadImg(img, chain(x, "thumb"), row.ws[c] + "px", () => { tile.classList.add("bad"); if (inFirst) this.settle(); });
-      img.dataset.f = inFirst ? "1" : "";
+      const go = () => loadImg(img, chain(x, "thumb"), row.ws[c] + "px", () => { if (fin || gen !== this.gen) return; tile.classList.add("bad"); finish(false); });
+      if (job) this.iq.add(job); else go();
+      img.dataset.f = hot ? "1" : "";
     });
-    if (inFirst && !this.warmTimer) this.warmTimer = setTimeout(() => this.heat(), 3500);
+    if ((this.pin ? row.i < TOP_N && this.first : inFirst) && !this.warmTimer) this.warmTimer = setTimeout(() => this.heat(), 3500);
   }
   settle() { if (this.pending > 0 && --this.pending === 0) this.heat(); }
   heat() {  // màn đầu xong (hoặc quá lâu): bắt đầu nạp trước phần sắp tới
@@ -235,7 +279,7 @@ class VGallery {
   }
   dropRow(r) {
     r.on = false;
-    r.el.querySelectorAll("img").forEach(img => { img.onload = img.onerror = null; img.classList.remove("on"); img.removeAttribute("srcset"); img.removeAttribute("src"); });
+    r.el.querySelectorAll("img").forEach(img => { if (img._fin) img._fin(true); img._fin = null; img.onload = img.onerror = null; img.classList.remove("on"); img.removeAttribute("srcset"); img.removeAttribute("src"); });
   }
   reveal(i) {  // đưa ảnh i vào tầm nhìn (nếu cần) và trả focus về ô của nó
     const ri = this.rowOf[i], row = this.rows[ri];
@@ -278,115 +322,79 @@ async function loadGallery() {
   preconnect(CDN);
   if (Array.isArray(m.events) && m.events.length) events = m.events.map(e => ({ id: String(e.id), label: String(e.label || e.id) }));
   allPhotos = uniqById(m.photos.map(p => ({ id: p[0], w: p[1], h: p[2], t: p[3], v: p[4], c: p[5], name: p[6], b: p[7] || null, ev: p[8] || EV_DEFAULT })));  // mỗi ảnh đúng một lần, kể cả khi manifest lỡ có dòng trùng
+  videos = Array.isArray(m.videos) ? m.videos.filter(r => Array.isArray(r) && r.length >= 8 && typeof r[0] === "string")
+    .map(r => ({ id: r[0], v: r[1], pv: r[2], w: r[3], h: r[4], dur: r[5], title: String(r[6] || ""), ev: r[7] || null })) : [];
   const have = new Set(allPhotos.map(p => p.ev));
   evShown = events.filter(e => have.has(e.id)).length >= 2;
   const want = evFromHash();
   curEv = evShown && events.some(e => e.id === want) ? want : EV_DEFAULT;
-  if (!evShown) scope = "all";
-  else if (scope !== "all" && !events.some(e => e.id === scope)) scope = "all";
+  vidTab = !!videos.length && (want === "video" || !allPhotos.length);
   photos = evShown ? allPhotos.filter(p => p.ev === curEv) : allPhotos;
+  buildVideos();
   burstFrames = new Map(); photoById = new Map(allPhotos.map(p => [p.id, p]));  // nhóm chụp liên tiếp không vắt qua sự kiện nên dựng từ toàn bộ
   paintEvents();
   for (const p of allPhotos) if (p.b) { if (!burstFrames.has(p.b)) burstFrames.set(p.b, []); burstFrames.get(p.b).push(p); }
   galleryReady = true;
   $("skeleton").hidden = true;
-  if (!allPhotos.length) {
+  if (!allPhotos.length && !videos.length) {
     $("count").textContent = "";
     $("cta-row").hidden = true; $("all").hidden = true; document.querySelector(".meta .sep").hidden = true;
     showEmpty("Album đang được cập nhật", "Ảnh cưới sẽ sớm có mặt ở đây. Bạn quay lại sau ít phút nhé.");
     return;
   }
-  $("count").textContent = `${nf.format(photos.length)} ảnh`;
-  gAll.set(photos);
-  if (mode === "all") gAll.setActive(true);
+  if (!allPhotos.length) $("cta-row").hidden = true;
+  applyView();
   performance.mark("gallery-rendered");
   watchCta();
 }
-const evLabel = id => (events.find(e => e.id === id) || { label: id }).label;
-function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d)$/.exec(location.hash); return m ? m[1] : null; }  // chọn ngày nằm trên URL: tải lại vẫn giữ
+function evFromHash() { const m = /^#ev=(\d{4}-\d\d-\d\d|video)$/.exec(location.hash); return m ? m[1] : null; }  // chọn ngày nằm trên URL: tải lại vẫn giữ
+function tabDefs() {
+  const t = [];
+  if (evShown) for (const e of events) t.push({ id: e.id, label: `Ngày ${e.label}` });
+  else if (videos.length && allPhotos.length) t.push({ id: "photos", label: "Ảnh" });
+  if (videos.length) t.push({ id: "video", label: "Video" });
+  return t;
+}
 function paintEvents() {
-  const tabs = $("ev-tabs");
-  tabs.hidden = !evShown;
-  if (tabs.children.length !== events.length) {   // dựng một lần; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
-    tabs.replaceChildren(...events.map(e => {
+  const tabs = $("ev-tabs"), defs = tabDefs(), key = defs.map(d => d.id).join("|");
+  tabs.hidden = !defs.length;
+  if (tabs.dataset.key !== key) {   // dựng khi bộ tab đổi; sau đó chỉ đổi thuộc tính để nút đang bấm không mất tiêu điểm bàn phím
+    tabs.dataset.key = key;
+    tabs.replaceChildren(...defs.map(d => {
       const b = document.createElement("button");
-      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = e.id; b.textContent = `Ngày ${e.label}`;
-      b.onclick = () => setEvent(e.id, true);
+      b.type = "button"; b.setAttribute("role", "tab"); b.dataset.ev = d.id; b.textContent = d.label;
+      b.onclick = () => setEvent(d.id, true);
       return b;
     }));
   }
-  for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.ev === curEv));
-  if (evShown) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
-  for (const box of document.querySelectorAll(".scope")) {
-    box.hidden = !evShown;
-    if (box.querySelectorAll("button").length !== events.length + 1) {
-      box.replaceChildren(Object.assign(document.createElement("span"), { textContent: "Tìm trong:" }),
-        ...[...events.map(e => [e.id, `Ngày ${e.label}`]), ["all", "Cả hai ngày"]].map(([id, text]) => {
-          const b = document.createElement("button");
-          b.type = "button"; b.dataset.scope = id; b.textContent = text;
-          b.onclick = () => setScope(id);
-          return b;
-        }));
-    }
-    for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.scope === scope));
-  }
-  if (!allPhotos.length) return;
-  $("count").textContent = `${nf.format(photos.length)} ảnh`;
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(vidTab ? b.dataset.ev === "video" : b.dataset.ev === curEv || b.dataset.ev === "photos"));
+  if (evShown && !vidTab) { const [y, mo, d] = curEv.split("-"); document.querySelector(".meta .date").textContent = `${d} · ${mo} · ${y}`; }
+  if (!allPhotos.length && !videos.length) return;
+  $("count").textContent = vidTab ? `${nf.format(videos.length)} video` : `${nf.format(photos.length)} ảnh`;
 }
-function setEvent(id, push) {
-  if (!evShown || id === curEv || !events.some(e => e.id === id)) return;
-  curEv = id;
-  if (push) history.replaceState(history.state, "", "#ev=" + id);  // không đẩy mục lịch sử: Back vẫn rời trang/quay về thư viện như cũ
-  photos = allPhotos.filter(p => p.ev === curEv);
+function applyView() {
+  photos = evShown ? allPhotos.filter(p => p.ev === curEv) : allPhotos;
   paintEvents();
+  $("vid-grid").hidden = !vidTab; $("vg-all").hidden = vidTab;
+  if (vidTab) { gAll.setActive(false); return; }
+  stopVideos();
   gAll.set(photos);
   if (mode === "all") gAll.setActive(true);
 }
-addEventListener("hashchange", () => { const w = evFromHash(); if (w) setEvent(w, false); });
-function setScope(id) {
-  if (id === scope) return;
-  scope = id;
-  paintEvents();
-  if (mode === "mine" && file && cache && cache.all) settle();  // đổi phạm vi: lọc lại kết quả đã có (không tải lại selfie); chưa có phản hồi đầu thì nó sẽ tự dùng phạm vi mới
+function setEvent(id, push) {
+  const isVid = id === "video", isPh = id === "photos";
+  if (isVid ? !videos.length : isPh ? !(videos.length && allPhotos.length) : (!evShown || !events.some(e => e.id === id))) return;
+  const day = isVid || isPh ? curEv : id;
+  if (isVid === vidTab && day === curEv) return;
+  curEv = day; vidTab = isVid;
+  if (push) history.replaceState(history.state, "", isPh ? location.pathname + location.search : "#ev=" + (isVid ? "video" : id));  // không đẩy mục lịch sử: Back vẫn rời trang/quay về thư viện như cũ
+  applyView();
 }
-// phản hồi "tất cả" dùng lại được khi đủ (không bị cắt) và MỌI kết quả có ev hợp lệ — không suy ev của ảnh ẩn từ manifest công khai
-const reusable = r => r && r.truncated === false && Array.isArray(r.results) && r.results.every(x => x && events.some(e => e.id === x.ev));
-function project(r, sc) {
-  const results = r.results.filter(x => x.ev === sc);
-  return Object.assign({}, r, { results, total_matches: results.length, truncated: false });
-}
-const fresh = () => clock() - cache.at < CACHE_TTL_MS;
-function viewFor(sc) {
-  if (sc === "all" || !evShown) return cache.all;
-  if (reusable(cache.all)) return project(cache.all, sc);
-  return cache.sc.get(sc) || null;
-}
-function present(v) {
-  v.e2e = cache.e2e;
-  clearResults();  // chỉ xoá phần hiển thị; bộ nhớ kết quả giữ nguyên
-  data = v;
-  showResults();
-}
-function settle() {
-  if (cache.all && !fresh()) { clearResults(); setLoading(); fetchSearch("all"); return; }  // hết hạn: tìm lại (không scope) để làm mới bộ nhớ
-  const v = viewFor(scope);
-  if (v) { reqSeq++; if (ctl) ctl.abort(); present(v); return; }
-  clearResults(); setLoading();
-  fetchSearch(scope);
-}
-// gửi lại CHÍNH ảnh selfie đã chuẩn bị (chỉ trong RAM, bỏ cùng bộ nhớ) — sc = "all" là làm mới toàn bộ bộ nhớ
-async function fetchSearch(sc) {
-  const my = runId, seq = ++reqSeq, t0 = performance.now();
-  if (ctl) ctl.abort();
-  ctl = new AbortController();
-  const c = cache;
-  const r = await request(sc === "all" ? "/api/search" : "/api/search?scope=" + encodeURIComponent(sc), ctl.signal, () => my !== runId || seq !== reqSeq, c.body);
-  if (!r) return;
-  if (sc === "all") { c.all = r; c.sc = new Map(); c.at = clock(); c.e2e = performance.now() - t0; settle(); return; }
-  c.sc.set(sc, r);
-  if (scope === sc) present(r);
-  else settle();  // đổi phạm vi trong lúc chờ → xử lý lại theo phạm vi mới
-}
+addEventListener("hashchange", () => {
+  const w = evFromHash();
+  if (w) setEvent(w, false);
+  if (w === "video" && vidTab && mode === "mine") showAll();  // vào tab Video thì rời kết quả tìm, như khi chuyển ngày từ thư viện
+});
 function showEmpty(t, s, retry) {
   loadDecor();
   if (retry) $("all").hidden = true;  // thẻ lỗi: bỏ vùng thư viện trống (min-height) phía trên
@@ -430,11 +438,12 @@ addEventListener("drop", e => {
   e.preventDefault(); dragN = 0; document.body.classList.remove("dragging");
   const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) choose(f);
 });
-$("b-retry").onclick = () => { if (file) { if (cache && cache.all) settle(); else search(); } };
+$("b-retry").onclick = () => { if (file) search(); };
 
 function enterMine() {
   if (mode === "mine") return;
   mode = "mine";
+  stopVideos();
   history.pushState({ mine: 1 }, "");  // nút Back của điện thoại quay về thư viện thay vì rời trang
   savedY = scrollY;
   gAll.setActive(false);
@@ -443,23 +452,23 @@ function enterMine() {
 }
 let savedY = 0;
 function showAll() {
-  runId++; if (ctl) ctl.abort(); cache = null;
+  runId++; if (ctl) ctl.abort(); prepared = null;
   clearResults();
   if (selfieUrl) URL.revokeObjectURL(selfieUrl);
   selfieUrl = null; file = null;
   mode = "all";
   $("finder").hidden = true; $("results").hidden = true; $("all").hidden = false; $("cta-row").hidden = !photos.length;
-  gAll.setActive(true);
+  if (!vidTab) gAll.setActive(true);
   scrollTo(0, savedY);  // về đúng chỗ đang xem trước khi tìm
   gAll.update(); watchCta();
 }
 
 function choose(f) {
-  if (!f.type.startsWith("image/") && f.type !== "") { runId++; if (ctl) ctl.abort(); cache = null; clearResults(); enterMine(); showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
+  if (!f.type.startsWith("image/") && f.type !== "") { runId++; if (ctl) ctl.abort(); prepared = null; file = null; clearResults(); enterMine(); showError("Đây không phải ảnh", "Hãy chọn một tấm ảnh selfie (JPG hoặc PNG).", [], false, true); return; }
   clearResults();
   enterMine();
   if (selfieUrl) URL.revokeObjectURL(selfieUrl);
-  file = f; selfieUrl = URL.createObjectURL(f);
+  file = f; prepared = null; selfieUrl = URL.createObjectURL(f);
   const img = $("selfie");
   $("selfie-box").hidden = true;
   $("selfie-fig").hidden = false;
@@ -491,20 +500,23 @@ async function search() {
   const my = ++runId, seq = ++reqSeq;
   if (ctl) ctl.abort();
   ctl = new AbortController();
-  cache = { all: null, sc: new Map(), e2e: 0, at: 0, body: null };
-  const c = cache;
   clearResults();
   setLoading();
   const t0 = performance.now();
   try {
-    const body = await prepare(file);
-    if (my !== runId) return;
-    c.body = body;
-    // selfie CHỈ gửi tới đường dẫn tương đối cùng nguồn gốc với trang — không bao giờ tới CDN
+    let body = prepared && prepared.file === file ? prepared.body : null;
+    if (!body) {
+      body = await prepare(file);
+      if (my !== runId) return;
+      prepared = { file, body };
+    }
+    // selfie CHỈ gửi tới đường dẫn tương đối cùng nguồn gốc với trang — không bao giờ tới CDN; một lần tìm = một request, không kèm phạm vi
     const r = await request("/api/search", ctl.signal, () => my !== runId || seq !== reqSeq, body);
     if (!r) return;
-    c.all = r; c.e2e = performance.now() - t0; c.at = clock();
-    settle();
+    r.e2e = performance.now() - t0;
+    clearResults();
+    data = r;
+    showResults();
   } catch (err) {
     if (err.name === "AbortError" || my !== runId) return;
     showError("Chưa kết nối được", "Có vẻ mạng đang gián đoạn. Bạn kiểm tra kết nối rồi thử lại nhé.", [], true);
@@ -586,7 +598,6 @@ function showResults() {
   const empty = allPhotos.length === 0;
   $("s-title").textContent = empty ? "Album đang được cập nhật" : none ? "Chưa tìm thấy ảnh của bạn" : "Đã tìm xong";
   if (empty) $("s-text").textContent = "Ảnh cưới chưa được đưa lên đầy đủ. Bạn quay lại sau ít phút nhé.";
-  else if (none && scope !== "all") $("s-text").textContent = `Chưa có ảnh nào khớp trong ngày ${evLabel(scope)}. Bạn thử chọn «Cả hai ngày» hoặc một tấm selfie khác rõ nét hơn.`;
   else if (none) $("s-text").textContent = "Chưa có ảnh nào khớp với khuôn mặt này. Có thể ảnh của bạn chưa được tải lên, hoặc bạn thử một tấm selfie khác rõ nét hơn.";
   else $("s-text").textContent = "Dưới đây là những khoảnh khắc có bạn.";
   if (q.n_faces > 1) {
@@ -649,6 +660,7 @@ function renderResults() {
   $("g-main-empty").hidden = !noMain;
   $("g-main-empty").textContent = "Chưa có ảnh nào thật chắc chắn, nhưng có vài ảnh có thể là bạn ở bên dưới.";
   $("g-main-t").hidden = noMain; $("g-main-n").hidden = noMain;
+  gMain.pin = true; gMaybe.pin = noMain;  // lưới kết quả: màn đầu nạp ngay theo thứ tự điểm, không chờ cuộn
   const seenIds = new Set();  // ảnh đã ở nhóm chính thì không được xuất hiện lần nữa ở nhóm "có thể"
   gMain.put(COLLAPSE_BURSTS ? stackTiles(main, seenIds) : { items: main, flat: main }); gMain.setActive(!noMain);
   for (const f of gMain.flat) seenIds.add(f.id);
@@ -985,3 +997,47 @@ $("lb-share").onclick = () => {
     toast("Không chia sẻ được, bạn hãy dùng nút Lưu ảnh nhé.");
   }).finally(() => { sharing = false; });
 };
+
+// ---------- tab Video: thẻ poster, chỉ nạp video khi chạm, mỗi lần một video ----------
+const fmtDur = x => { x = Math.max(0, Math.round(Number(x) || 0)); return Math.floor(x / 60) + ":" + String(x % 60).padStart(2, "0"); };
+const vidUrl = v => `/v/${v.id}-${v.v}.mp4`, posterUrl = v => `/v/${v.id}-${v.pv}.jpg`;
+function buildVideos() {
+  const grid = $("vid-grid");
+  grid.replaceChildren(...videos.map(v => {
+    const card = document.createElement("div"); card.className = "vcard";
+    const box = document.createElement("div"); box.className = "vbox";
+    const r = v.w / v.h; box.style.aspectRatio = isFinite(r) && r > 0 ? String(Math.min(1.78, Math.max(0.56, r))) : "1.78";
+    const img = document.createElement("img"); img.className = "vposter"; img.loading = "lazy"; img.decoding = "async"; img.alt = v.title || "Video"; img.src = posterUrl(v);
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "vplay"; btn.setAttribute("aria-label", "Phát video" + (v.title ? ": " + v.title : ""));
+    const badge = document.createElement("span"); badge.className = "vbadge"; badge.setAttribute("aria-hidden", "true");
+    const dur = document.createElement("span"); dur.className = "vdur"; dur.textContent = fmtDur(v.dur);
+    btn.append(badge);
+    btn.onclick = () => playVideo(card, box, v);
+    box.append(img, btn, dur);
+    const cap = document.createElement("div"); cap.className = "vcap";
+    const t = document.createElement("b"); t.textContent = v.title || "Video";
+    cap.append(t);
+    const e = events.find(x => x.id === v.ev);
+    if (e) { const d = document.createElement("span"); d.className = "vday"; d.textContent = `Ngày ${e.label}`; cap.append(d); }
+    card.append(box, cap);
+    return card;
+  }));
+}
+function releaseVideo(vd) {
+  vd.pause(); vd.removeAttribute("src"); vd.load();
+  vd.closest(".vbox").classList.remove("playing");
+}
+function stopVideos() { for (const vd of document.querySelectorAll("#vid-grid video")) releaseVideo(vd); }
+function playVideo(card, box, v) {
+  for (const o of document.querySelectorAll("#vid-grid video")) if (!card.contains(o)) releaseVideo(o);
+  let vd = box.querySelector("video");
+  if (!vd) {
+    vd = document.createElement("video");
+    vd.controls = true; vd.playsInline = true; vd.setAttribute("playsinline", ""); vd.preload = "none"; vd.poster = posterUrl(v);
+    box.append(vd);
+  }
+  box.classList.add("playing");
+  vd.src = vidUrl(v);  // đặt src và play() cùng một lượt chạm: iOS chỉ cho phát khi có cử chỉ người dùng
+  const p = vd.play();
+  if (p && p.catch) p.catch(() => { vd.controls = true; });  // bị chặn: giữ thanh điều khiển để chạm phát tiếp
+}
