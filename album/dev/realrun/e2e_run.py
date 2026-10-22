@@ -100,27 +100,26 @@ def capture_search(pg):
 DESKTOP = dict(viewport={"width": 1280, "height": 800})
 PHONE = dict(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True)
 
-def search_ui(bt, selfie, scope, shotname, truth):
+def search_ui(bt, selfie, shotname, truth):  # one unscoped search (no scope chips): results of both events in one list
     ctx = bt.new_context(**PHONE); pg = ctx.new_page()
     try:
         pg.goto(a.url + "/"); pg.wait_for_selector("#vg-all .tile", timeout=60000)
         pg.evaluate("scrollTo(0, 0)")
         got, stop = capture_search(pg)
-        pg.click('#scope-hero button[data-scope="%s"]' % scope)
         t0 = time.time(); pg.set_input_files("#in-file", selfie)
         for _ in range(1200):  # response may legitimately carry 0 results (UI then shows the empty state, not #results)
             if got: break
             pg.wait_for_timeout(100)
         dt = time.time() - t0
         if not got:  # 422 no-face / error: nothing captured
-            return dict(scope=scope, n=0, events=[], wrong_event=[], ids=[], seconds=round(dt, 2), server_ms=None, total_matches=None, no_json=True)
+            return dict(n=0, events=[], ev_ids={}, wrong_event=[], ids=[], seconds=round(dt, 2), server_ms=None, total_matches=None, no_json=True)
         pg.wait_for_timeout(900)
         r = got[-1]["results"]
         evs = sorted({x["ev"] for x in r})
-        wrong = [x["id"] for x in r if truth.get(x["id"]) != x["ev"] or (scope != "all" and x["ev"] != scope)]
+        wrong = [x["id"] for x in r if truth.get(x["id"]) != x["ev"]]
         shot(pg, shotname)
         stop()
-        return dict(scope=scope, n=len(r), events=evs, wrong_event=wrong, ids=[x["id"] for x in r], seconds=round(dt, 2),
+        return dict(n=len(r), events=evs, ev_ids={e: [x["id"] for x in r if x["ev"] == e] for e in (E4, E17)}, wrong_event=wrong, ids=[x["id"] for x in r], seconds=round(dt, 2),
                     server_ms=got[-1].get("timing_ms"), total_matches=got[-1].get("total_matches"))
     finally:
         ctx.close()
@@ -253,19 +252,19 @@ with sync_playwright() as pw:
     check(not gerr, f"no JS errors on guest page {gerr}")
     gc.close()
 
-    # ---- selfie + scoped searches ----
+    # ---- selfie + one unscoped search (both events in one list) ----
     selfie = a.selfie or os.path.join(a.out, "selfie.jpg")
     if not a.selfie:
         S["selfie"] = make_selfie(dbf, os.path.join(a.data_dir, "originals"), truth, selfie); say("selfie:", S["selfie"])
     S["search"] = {}
-    for scope, nm in ((E4, "0410"), (E17, "1710"), ("all", "both")):
-        r = search_ui(bt, selfie, scope, f"m-05-search-{nm}.png", truth); S["search"][scope] = r
-        say(f"search scope={scope}: {r['n']} results, events={r['events']}, {r['seconds']}s (server {r['server_ms']})")
-        check(not r["wrong_event"], f"scope={scope}: no wrong-event photo in results")
-        check(r["n"] > 0, f"scope={scope}: at least one result")
+    r = search_ui(bt, selfie, "m-05-search-both.png", truth)
+    say(f"search (both events): {r['n']} results, events={r['events']}, {r['seconds']}s (server {r['server_ms']})")
+    check(not r["wrong_event"], "search: no wrong-event photo in results")
+    check(r["n"] > 0, "search: at least one result")
+    # per-event views derived from the single response (the guest UI no longer scopes the request)
+    S["search"]["all"] = r
+    S["search"][E4] = dict(r, ids=r["ev_ids"][E4], n=len(r["ev_ids"][E4])); S["search"][E17] = dict(r, ids=r["ev_ids"][E17], n=len(r["ev_ids"][E17]))
     sa = S["search"]
-    check(set(sa[E4]["ids"]) <= set(sa["all"]["ids"]) or sa["all"]["total_matches"] != len(sa["all"]["ids"]), "scope=4/10 results are a subset of 'both'")
-    check(set(sa[E17]["ids"]) <= set(sa["all"]["ids"]) or sa["all"]["total_matches"] != len(sa["all"]["ids"]), "scope=17/10 results are a subset of 'both'")
     say("selfie person in both events:", "yes" if set(sa["all"]["events"]) == {E4, E17} else "NO (only %s)" % sa["all"]["events"])
 
     # ---- /manage: reassignment + undo ----
@@ -288,7 +287,7 @@ with sync_playwright() as pw:
     shot(pg, "d-07-manage-after-undo.png")
     pg.click("#v-mode")  # leave select mode
 
-    # ---- hidden photo per event: hide the top scoped-17/10 hit ----
+    # ---- hidden photo per event: hide the top 17/10 hit ----
     hid = next(i for i in sa[E17]["ids"] if truth[i] == E17)
     pg.click('#evf .fchip[data-e="%s"]' % E17)
     pg.evaluate("k => document.querySelector('.cell[data-k=\"' + k + '\"]').scrollIntoView({ block: 'center' })", hid)
@@ -310,12 +309,13 @@ with sync_playwright() as pw:
     S["hidden_search"] = {}
     for on in (True, False):
         check(setp(on) == 200, f"settings search_includes_hidden={on}")
-        r = search_ui(bt, selfie, E17, f"m-07-search-1710-hidden-incl-{int(on)}.png", ev_map(pg))
+        r = search_ui(bt, selfie, f"m-07-search-hidden-incl-{int(on)}.png", ev_map(pg))
+        r["ids"] = r["ev_ids"][E17]; r["n"] = len(r["ids"])
         S["hidden_search"][str(on)] = dict(n=r["n"], hidden_in_results=hid in r["ids"], wrong=r["wrong_event"])
-        say(f"scoped 17/10 search, include_hidden={on}: {r['n']} results, hidden photo present={hid in r['ids']}")
+        say(f"17/10 part of unscoped search, include_hidden={on}: {r['n']} results, hidden photo present={hid in r['ids']}")
         check(not r["wrong_event"], f"hidden test include={on}: no wrong-event photo")
         if not on:
-            check(hid not in r["ids"], "include_hidden=false: hidden 17/10 photo absent from scoped search")
+            check(hid not in r["ids"], "include_hidden=false: hidden 17/10 photo absent from search")
     check(setp(True) == 200, "settings restored to default (include hidden)")
     check(not errs, f"no JS errors on /manage {errs}")
     check(not external, f"no request left localhost: {external[:3]}")
