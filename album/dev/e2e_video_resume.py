@@ -6,6 +6,7 @@
 báo tiêu đề/ngày đã giữ, sau công bố áp ngày mới bằng POST /event, tiêu đề giữ bản đầu.
 Mock: 409 với offset khác → client đi tiếp từ offset máy chủ; 409 mãi không tiến → dừng sau 8 lần, mở lại form, tắt cảnh báo rời trang; Huỷ giữa chừng rồi nối lại được."""
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -46,7 +47,7 @@ else:
     from PIL import Image
     Image.effect_noise((600, 400), 50).convert("RGB").save(os.path.join(tmp, "photos", "p.jpg"))
     cmd = [sys.executable, "-I", os.path.join(HERE, "mock_gallery.py"), "--port", str(a.port), "--no-cdn", "--count", "4", "--photos", os.path.join(tmp, "photos"),
-           "--data", os.path.join(tmp, "data"), "--admin-token", TOKEN]
+           "--data", os.path.join(tmp, "data"), "--admin-token", TOKEN, "--videos", "1", "--video-file", mp4, "--poster-file", jpg]
 srv = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(200):
     try:
@@ -147,6 +148,80 @@ with sync_playwright() as pw:
             page.click("#vf-go")
             page.wait_for_function("document.querySelector('#vf-msg').textContent.includes('Tiếp tục bản đang tải') || document.querySelector('#vf-msg').textContent.startsWith('Xong') || document.querySelector('#vf-msg').textContent.includes('không hợp lệ')", timeout=60000)
             check(True, "sau Huỷ: chọn lại + bấm tải → phiên được giữ/nối lại: " + msg(page)[:90])
+
+            # ---- vòng 3: Huỷ lúc công bố, đổi ngày song song, /event lỗi, gợi ý cũ ----
+            smp4, sjpg = video_fixture.make(tmp, "small")
+            def variant(n):
+                q = os.path.join(tmp, f"v{n}.mp4"); open(q, "wb").write(open(smp4, "rb").read() + bytes([n]) * 5); return q
+            guard = "() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; }"
+            gal = {"n": 0}
+            page.on("request", lambda q: gal.__setitem__("n", gal["n"] + 1) if q.url.endswith("/api/gallery") else None)
+
+            def start(q, title="T", ev="2026-10-04"):
+                page.set_input_files("#vf-file", q); page.set_input_files("#vf-poster", sjpg); page.fill("#vf-title", title); page.select_option("#vf-ev", ev); page.click("#vf-go")
+
+            # (1) Huỷ trong lúc chờ thử lại finish → không gửi thêm finish
+            page.reload(); fin = {"n": 0}
+
+            def f1(route):
+                fin["n"] += 1
+                route.fulfill(status=503, content_type="application/json", body="{}")
+            page.route("**/finish", f1)
+            with page.expect_request(lambda q: q.url.endswith("/finish")):
+                start(variant(1))
+            page.click("#vf-cancel")
+            page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã huỷ')", timeout=10000)
+            page.wait_for_timeout(2600)
+            check(fin["n"] == 1, f"Huỷ lúc chờ thử lại finish: không gửi thêm finish ({fin['n']})")
+            check("có thể đã được đăng" in msg(page), "...và thông báo nói video có thể đã được đăng")
+            page.unroute("**/finish")
+            # (2) Huỷ khi finish đã gửi (treo) → thông báo + làm mới danh sách
+            page.reload(); page.wait_for_selector("#vlist li"); fin["n"] = 0
+            page.route("**/finish", lambda route: fin.__setitem__("n", fin["n"] + 1))
+            g0 = gal["n"]
+            with page.expect_request(lambda q: q.url.endswith("/finish")):
+                start(variant(1))
+            page.click("#vf-cancel")
+            page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã huỷ')", timeout=10000)
+            check("có thể đã được đăng" in msg(page) and "làm mới" in msg(page), "Huỷ khi finish đã gửi: thông báo 'có thể đã được đăng' + danh sách làm mới")
+            check(gal["n"] > g0, f"danh sách được tải lại sau khi Huỷ ({gal['n'] - g0} request /api/gallery)")
+            page.unroute("**/finish")
+            # (3) đổi ngày ở danh sách trong lúc tải, rồi Huỷ
+            page.reload(); page.wait_for_selector("#vlist li")
+            page.route("**/api/admin/video/*/chunk*", lambda route: None)
+            with page.expect_request(lambda q: "/chunk?off=" in q.url):
+                start(variant(2))
+            check(page.evaluate(guard) is True, "đang tải: cảnh báo rời trang đang bật")
+            page.select_option("#vlist select", "2026-10-17")
+            page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã chuyển')", timeout=10000)
+            check(page.is_visible("#vf-cancel") and page.evaluate(guard) is True, "đổi ngày xong: lượt tải vẫn chạy, cảnh báo vẫn bật")
+            page.click("#vf-cancel")
+            page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã huỷ')", timeout=10000)
+            check(page.is_enabled("#vf-go") and page.evaluate(guard) is False, "Huỷ sau khi đổi ngày: lượt tải bị dừng, cảnh báo tắt")
+            page.unroute("**/api/admin/video/*/chunk*")
+            # (4) /event lỗi sau finish thành công: giữ thành công + báo lỗi riêng. Phiên cũ (variant 2) giữ ngày 4/10; chọn 17/10 lần này
+            page.route("**/api/admin/video/*/event", lambda route: route.fulfill(status=500, content_type="application/json", body="{}"))
+            start(variant(2), "T2", "2026-10-17")
+            page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Xong')", timeout=60000)
+            check("chưa đổi được ngày" in page.inner_text("#vf-info") and "ô chọn ngày" in page.inner_text("#vf-info"), "/event lỗi: thông báo lỗi ngày riêng, chỉ dẫn dùng ô chọn ngày")
+            page.wait_for_function("document.querySelectorAll('#vlist li').length >= 2", timeout=10000)
+            check(True, "...video vẫn được đăng và danh sách làm mới")
+            page.unroute("**/api/admin/video/*/event")
+            # (5) gợi ý cũ khác uid bị bỏ qua
+            q5 = variant(5); sha5 = hashlib.sha256(open(q5, "rb").read()).hexdigest()
+            page.evaluate("([k]) => localStorage.setItem(k, JSON.stringify({ uid: 'f'.repeat(32), exp: Date.now() / 1000 + 9999, title: 'CŨ', ev: null }))", ["vidmeta:" + sha5])
+            page.route("**/api/admin/video/*/chunk*", lambda route: None)
+            with page.expect_request(lambda q: "/chunk?off=" in q.url):
+                start(q5)
+            check("CŨ" not in msg(page) and "nhớ" not in msg(page), "gợi ý khác uid bị bỏ qua: " + msg(page)[:60])
+            check("fffff" not in page.evaluate("k => localStorage.getItem(k)", "vidmeta:" + sha5), "gợi ý cũ bị thay bằng gợi ý theo uid mới")
+            page.click("#vf-cancel"); page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã huỷ')", timeout=10000)
+            # hết hạn: sửa exp về quá khứ → bị bỏ, không hiện "nhớ"
+            page.evaluate("k => { const m = JSON.parse(localStorage.getItem(k)); m.exp = 1; localStorage.setItem(k, JSON.stringify(m)); }", "vidmeta:" + sha5)
+            with page.expect_request(lambda q: "/chunk?off=" in q.url):
+                page.click("#vf-go")
+            check("nhớ" not in msg(page) and page.evaluate("k => JSON.parse(localStorage.getItem(k)).exp", "vidmeta:" + sha5) > 1000, "gợi ý hết hạn bị bỏ và thay mới")
+            page.click("#vf-cancel"); page.wait_for_function("document.querySelector('#vf-msg').textContent.startsWith('Đã huỷ')", timeout=10000)
     finally:
         br.close()
         srv.terminate()
