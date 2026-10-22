@@ -37,23 +37,32 @@ def box(typ, payload=b"", large=False, zero=False):
     return struct.pack(">I4s", 0 if zero else n, typ) + payload
 
 
+class Crash(BaseException):
+    """Mô phỏng process chết: không bị `except Exception` của server bắt nên không có rollback nào chạy."""
+
+
+def crash():
+    raise Crash()
+
+
 def tkhd(w, h, rot=0):
-    mat = {0: (0x10000, 0, 0, 0, 0x10000, 0), 90: (0, 0x10000, 0, -0x10000, 0, 0), 180: (-0x10000, 0, 0, 0, -0x10000, 0),
+    mat = rot if isinstance(rot, tuple) else {0: (0x10000, 0, 0, 0, 0x10000, 0), 90: (0, 0x10000, 0, -0x10000, 0, 0), 180: (-0x10000, 0, 0, 0, -0x10000, 0),
            270: (0, -0x10000, 0, 0x10000, 0, 0)}[rot]
     return box(b"tkhd", struct.pack(">I5I8s4H", 3, 0, 0, 1, 0, 1000, b"", 0, 0, 0, 0) + struct.pack(">9i", *mat[:6], 0, 0, 0x40000000)
                + struct.pack(">II", w << 16, h << 16))
 
 
-def trak(kind, codec, w=0, h=0, rot=0):
+def trak(kind, codec, w=0, h=0, rot=0, stsd_payload=None):
     mdhd = box(b"mdhd", struct.pack(">I4I2H", 0, 0, 0, 1000, 1000, 0, 0))
     hdlr = box(b"hdlr", struct.pack(">I4s4s12s", 0, b"", kind, b"") + b"\0")
-    stsd = box(b"stsd", struct.pack(">II", 0, 1) + box(codec, bytes(78)))
+    codecs = codec if isinstance(codec, list) else [codec]
+    stsd = box(b"stsd", stsd_payload if stsd_payload is not None else struct.pack(">II", 0, len(codecs)) + b"".join(box(c, bytes(78)) for c in codecs))
     return box(b"trak", tkhd(w, h, rot) + box(b"mdia", mdhd + hdlr + box(b"minf", box(b"stbl", stsd))))
 
 
-def make_mp4(w=320, h=240, rot=0, vcodec=b"avc1", audio=b"mp4a", faststart=True, seed=b"x", mdat="normal", extra=b"", two_video=False, pad=b""):
+def make_mp4(w=320, h=240, rot=0, vcodec=b"avc1", audio=b"mp4a", faststart=True, seed=b"x", mdat="normal", extra=b"", two_video=False, pad=b"", vtrak=None):
     mvhd = box(b"mvhd", struct.pack(">I4I", 0, 0, 0, 1000, 2500) + bytes(80))
-    traks = trak(b"vide", vcodec, w, h, rot) + (trak(b"vide", vcodec, w, h) if two_video else b"") + (trak(b"soun", audio) if audio else b"")
+    traks = (vtrak or trak(b"vide", vcodec, w, h, rot)) + (trak(b"vide", vcodec, w, h) if two_video else b"") + (trak(b"soun", audio) if audio else b"")
     moov = box(b"moov", mvhd + traks)
     payload = hashlib.sha256(seed).digest() * 40 + pad
     md = box(b"mdat", payload, large=mdat == "large", zero=mdat == "zero")
@@ -471,23 +480,83 @@ class Mp4BoxTests(unittest.TestCase):
         self.bad(bad, "moov")  # size 0 nuốt hết phần còn lại → không thấy moov
 
     def test_mdat_payload_never_read(self):
-        seen = []
-        real = open
+        class Spy:
+            def __init__(self, fh, reads):
+                self.fh, self.reads = fh, reads
 
-        def spy(p, *a, **k):
-            fh = real(p, *a, **k)
-            orig = fh.read
-            fh.read = lambda n=-1: (seen.append(n), orig(n))[1]
-            return fh
-        data = make_mp4() + b""
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        p = os.path.join(d, "a.mp4")
-        real(p, "wb").write(data)
-        with mock.patch("builtins.open", spy):
-            mp4box.probe(p)
-        self.assertTrue(seen and max(seen) <= 64 * 1024 * 1024)
-        self.assertNotIn(-1, seen)
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.fh.close()
+
+            def fileno(self):
+                return self.fh.fileno()
+
+            def seek(self, o, w=0):
+                return self.fh.seek(o, w)
+
+            def read(self, n=-1):
+                pos = self.fh.tell()
+                b = self.fh.read(n)
+                self.reads.append((pos, len(b)))
+                return b
+        real = open
+        for kind in ("normal", "large", "zero"):
+            with self.subTest(kind=kind):
+                data = make_mp4(mdat=kind, pad=bytes(100_000))
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                p = os.path.join(d, "a.mp4")
+                real(p, "wb").write(data)
+                start = data.find(b"mdat") - 4 + (16 if kind == "large" else 8)  # đầu phần dữ liệu mdat; đến hết file
+                reads = []
+                with mock.patch("builtins.open", lambda path, *a, **k: Spy(real(path, *a, **k), reads)):
+                    mp4box.probe(p)
+                self.assertTrue(reads)
+                for pos, n in reads:
+                    self.assertFalse(pos < len(data) and pos + n > start and n > 0, f"đọc [{pos},{pos + n}) chạm payload mdat từ {start}")
+                self.assertLess(max(pos + n for pos, n in reads), start + 1)
+
+    def test_stsd_entries_validated(self):
+        ent = box(b"avc1", bytes(78))
+        cases = {
+            "entry size 4": struct.pack(">II", 0, 1) + struct.pack(">I4s", 4, b"avc1") + bytes(12),
+            "count 2, one present": struct.pack(">II", 0, 2) + ent,
+            "count 0": struct.pack(">II", 0, 0) + ent,
+            "avc1 + hvc1": struct.pack(">II", 0, 2) + ent + box(b"hvc1", bytes(78)),
+            "trailing junk": struct.pack(">II", 0, 1) + ent + b"\0\0",
+            "size beyond stsd": struct.pack(">II", 0, 1) + struct.pack(">I4s", 500, b"avc1") + bytes(78),
+            "size 0": struct.pack(">II", 0, 1) + struct.pack(">I4s", 0, b"avc1") + bytes(78),
+            "huge count": struct.pack(">II", 0, 2 ** 31) + ent,
+        }
+        for name, payload in cases.items():
+            with self.subTest(name):
+                self.bad(make_mp4(vtrak=trak(b"vide", b"avc1", 320, 240, stsd_payload=payload)))
+        self.assertEqual(self.probe(make_mp4(vtrak=trak(b"vide", [b"avc1", b"avc3"], 320, 240)))["codec"], "avc1")  # nhiều mẫu đều H.264 thì được
+        self.bad(make_mp4(vtrak=trak(b"vide", [b"avc1", b"hvc1"], 320, 240)), "H.264")
+        self.bad(make_mp4(vtrak=trak(b"vide", [b"hvc1", b"avc1"], 320, 240)), "H.264")
+
+    def test_audio_entries_must_all_be_mp4a(self):
+        mvhd = box(b"mvhd", struct.pack(">I4I", 0, 0, 0, 1000, 2500) + bytes(80))
+        for audio, ok in (([b"mp4a"], True), ([b"mp4a", b"mp4a"], True), ([b"mp4a", b"ac-3"], False), ([b"ac-3", b"mp4a"], False)):
+            with self.subTest(audio=audio):
+                moov = box(b"moov", mvhd + trak(b"vide", b"avc1", 320, 240) + trak(b"soun", audio))
+                data = box(b"ftyp", b"isom\0\0\2\0isomavc1") + moov + box(b"mdat", bytes(64))
+                if ok:
+                    self.assertTrue(self.probe(data)["audio"])
+                else:
+                    self.bad(data, "mp4a")
+
+    def test_tkhd_matrix_only_identity_and_quarter_turns(self):
+        one = 0x10000
+        for name, mat in (("45deg", (46341, 46341, 0, -46341, 46341, 0)), ("mirror", (-one, 0, 0, one, 0, 0)), ("flipv", (one, 0, 0, -one, 0, 0)),
+                          ("scale", (2 * one, 0, 0, one, 0, 0)), ("shear", (one, 0, 0, one // 2, one, 0)), ("zero", (0, 0, 0, 0, 0, 0)),
+                          ("perspective", (one, 0, 0, 0, one, 5))):
+            with self.subTest(name):
+                self.bad(make_mp4(rot=mat), "ma trận")
+        for rot in (0, 90, 180, 270):
+            self.assertEqual(self.probe(make_mp4(rot=rot))["w"], 320 if rot in (0, 180) else 240)
 
 
 class FinishTests(VBase):
@@ -587,28 +656,65 @@ class ServeTests(VBase):
         self.assertEqual(self.get(self.purl, method="HEAD")[0], 200)
 
     def test_ranges(self):
-        cases = {"bytes=0-9": (0, 10), "bytes=5-": (5, self.n), "bytes=-7": (self.n - 7, self.n), "bytes=3-3": (3, 4),
-                 f"bytes=10-{self.n + 500}": (10, self.n)}
+        n = self.n
+        cases = {"bytes=0-9": (0, 10), "bytes=5-": (5, n), "bytes=-7": (n - 7, n), "bytes=3-3": (3, 4), f"bytes=10-{n + 500}": (10, n),
+                 f"bytes=-{n}": (0, n), f"bytes=-{n + 200}": (0, n), "BYTES=1-2": (1, 3), f"bytes={n - 1}-": (n - 1, n)}
         for rng, (a, b) in cases.items():
             with self.subTest(rng=rng):
                 st, h, body, _ = self.get(self.url, headers={"Range": rng})
                 self.assertEqual((st, body), (206, self.data[a:b]))
                 self.assertEqual((h["content-range"], h["content-length"], h["accept-ranges"], h["cache-control"]),
-                                 (f"bytes {a}-{b - 1}/{self.n}", str(b - a), "bytes", server.IMMUTABLE))
+                                 (f"bytes {a}-{b - 1}/{n}", str(b - a), "bytes", server.IMMUTABLE))
         st, h, _, _ = self.get(self.url, headers={"Range": "bytes=0-4"}, method="HEAD")
-        self.assertEqual((st, h["content-length"], h["content-range"]), (206, "5", f"bytes 0-4/{self.n}"))
+        self.assertEqual((st, h["content-length"], h["content-range"]), (206, "5", f"bytes 0-4/{n}"))
+
+    def test_ignored_ranges_serve_full_200(self):
+        for rng in ("bytes=9-8", "bytes=0-1,5-6", "bytes=0-1,", "bytes=abc", "bytes=-", "bytes=", "items=0-1", "bytes=1-2-3", "0-5", "bytes= 5 -9"):
+            with self.subTest(rng=rng):
+                st, h, body, _ = self.get(self.url, headers={"Range": rng})
+                self.assertEqual((st, body, h["content-length"], h["content-type"]), (200, self.data, str(self.n), "video/mp4"))
+                self.assertNotIn("content-range", h)
+
+    def test_head_mirrors_get_headers(self):
+        for rng in (None, "bytes=2-9", "bytes=0-1,5-6", f"bytes={self.n}-"):
+            with self.subTest(rng=rng):
+                hd = {"Range": rng} if rng else None
+                sg, hg, bg, _ = self.get(self.url, headers=hd)
+                sh, hh, bh, _ = self.get(self.url, headers=hd, method="HEAD")
+                self.assertEqual((sg, bh), (sh, b""))
+                for k in ("content-length", "content-range", "accept-ranges", "content-type", "etag", "last-modified", "cache-control"):
+                    self.assertEqual(hg.get(k), hh.get(k), k)
+                if sg != 416:
+                    self.assertEqual(int(hg["content-length"]), len(bg))
+
+    def test_large_file_range_across_chunk_boundaries(self):
+        pad = bytes(i % 251 for i in range(700_000))
+        data = make_mp4(seed=b"big", pad=pad)
+        _, res = self.publish(data)
+        url = f"/v/{res['id']}-{res['v']}.mp4"
+        for a, b in ((262000, 262300), (0, 600_000), (len(data) - 300_000, len(data) - 1)):
+            st, h, body, _ = self.get(url, headers={"Range": f"bytes={a}-{b}"})
+            self.assertEqual((st, body, h["content-length"]), (206, data[a:b + 1], str(b - a + 1)))
+        self.assertEqual(self.get(url)[2], data)
 
     def test_unsatisfiable_416(self):
-        st, h, _, _ = self.get(self.url, headers={"Range": f"bytes={self.n}-"})
-        self.assertEqual((st, h["content-range"], h["cache-control"]), (416, f"*/{self.n}", "no-store"))
-        self.assertEqual(self.get(self.url, headers={"Range": f"bytes={self.n + 9}-{self.n + 20}"})[0], 416)
+        n = self.n
+        for rng in (f"bytes={n}-", f"bytes={n + 9}-{n + 20}", "bytes=-0", f"bytes={n}-{n + 5}", "bytes=99999999999999999999999-"):
+            with self.subTest(rng=rng):
+                st, h, body, _ = self.get(self.url, headers={"Range": rng})
+                self.assertEqual((st, h["content-range"], h["cache-control"]), (416, f"bytes */{n}", "no-store"))
+        self.assertEqual(self.get(self.url, headers={"Range": f"bytes={n}-"}, method="HEAD")[0], 416)
 
     def test_if_range(self):
         _, h, _, _ = self.get(self.url)
-        st, _, body, _ = self.get(self.url, headers={"Range": "bytes=0-3", "If-Range": h["etag"]})
-        self.assertEqual((st, body), (206, self.data[:4]))
-        st, _, body, _ = self.get(self.url, headers={"Range": "bytes=0-3", "If-Range": '"stale"'})
-        self.assertEqual((st, body), (200, self.data))
+        for validator in (h["etag"], h["last-modified"]):
+            st, _, body, _ = self.get(self.url, headers={"Range": "bytes=0-3", "If-Range": validator})
+            self.assertEqual((st, body), (206, self.data[:4]))
+        for bad in ('"stale"', "Mon, 01 Jan 2001 00:00:00 GMT", "W/" + h["etag"]):
+            st, hh, body, _ = self.get(self.url, headers={"Range": "bytes=0-3", "If-Range": bad})
+            self.assertEqual((st, body, "content-range" in hh), (200, self.data, False))
+        st, _, body, _ = self.get(self.url, headers={"Range": f"bytes={self.n}-", "If-Range": '"stale"'})
+        self.assertEqual((st, body), (200, self.data))  # validator sai → bỏ Range, kể cả Range không thoả
 
     def test_no_content_encoding(self):
         for u in (self.url, self.purl):
@@ -708,9 +814,11 @@ class RebuildTests(Base):
         res = json.loads(call(self.app, "POST", f"/api/admin/video/{uid}/finish", headers=h)[2])
         hide(self.app, ["a1"])
         post(self.app, "/api/admin/event", {"ids": [__import__("test_hidden").PID["s1"]], "event": E17})
+        self.assertEqual(post(self.app, f"/api/admin/video/{res['id']}/event", {"ev": E17})[0], 200)  # ngày đổi sau khi công bố
         db = sqlite3.connect(store.db_path(self.d))
         want = db.execute("SELECT * FROM videos").fetchall()
         db.close()
+        self.assertEqual(want[0][11], E17)
         from test_hidden import TagEngine
         with mock.patch.object(sys, "argv", ["index_photos.py", "--photos", self.orig, "--data-dir", self.d, "--rebuild"]), \
                 mock.patch.object(index_photos, "FaceEngine", TagEngine):
@@ -722,7 +830,7 @@ class RebuildTests(Base):
         self.assertTrue(os.path.exists(os.path.join(self.d, "videos", f"{res['id']}-{res['v']}.mp4")))
         self.assertTrue(os.path.exists(os.path.join(self.d, "videos", "posters", f"{res['id']}-{res['pv']}.jpg")))
         app2 = make_app(self.d)
-        self.assertEqual([r[0] for r in json.loads(gallery(app2)[2])["videos"]], [res["id"]])
+        self.assertEqual([(r[0], r[7]) for r in json.loads(gallery(app2)[2])["videos"]], [(res["id"], E17)])
         self.assertEqual(call(app2, "GET", f"/v/{res['id']}-{res['v']}.mp4")[2], data)
 
     def test_keep_and_restore_videos_roundtrip_and_owner_state_signature(self):
@@ -736,6 +844,458 @@ class RebuildTests(Base):
         db = store.connect(self.d)
         store.restore_owner_state(db, [], [])  # gọi 2 tham số như cũ vẫn chạy
         db.close()
+
+
+class RobustnessBase(VBase):
+    def ready(self, data=None, poster=None, **over):
+        """Phiên đã tải đủ + có poster, chưa finish."""
+        data = data or make_mp4()
+        poster = poster or jpeg_bytes()
+        uid = self.session(data, **over)
+        self.assertEqual(self.poster(uid, poster)[0], 200)
+        return uid, data, poster
+
+    def crash_finish(self, point, **kw):
+        uid, data, pb = self.ready(**kw)
+        self.app.state.video_hooks[point] = crash
+        with self.assertRaises(Crash):
+            self.finish(uid)
+        return uid, data, pb
+
+    def restart(self):
+        self.app = make_app(self.d)
+        return self.app
+
+    def assert_published_after_restart(self, uid, data, pb):
+        self.restart()
+        st, s = self.status(uid)
+        self.assertEqual((st, s["state"]), (200, "published"))
+        st, res = self.finish(uid)
+        self.assertEqual(st, 200, res)
+        self.assertEqual(res["pv"], sha(pb)[:10])
+        rows = self.vrows()
+        self.assertEqual([r[0] for r in rows], [res["id"]])
+        self.assertEqual(self.get(f"/v/{res['id']}-{res['v']}.mp4")[2], data)
+        self.assertEqual(self.get(f"/v/{res['id']}-{res['pv']}.jpg")[2], pb)
+        self.assertEqual(self.finish(uid), (200, res))
+        self.restart()  # khởi động lần nữa vẫn y nguyên
+        self.assertEqual(self.finish(uid), (200, res))
+        self.assertEqual(len(self.vrows()), 1)
+        return res
+
+
+class PublishSerializationTests(RobustnessBase):
+    def forge_twin(self, uid):
+        stage = os.path.join(self.d, "video-staging")
+        twin = "b" * 32
+        for ext in (".part", ".poster"):
+            shutil.copy(os.path.join(stage, uid + ext), os.path.join(stage, twin + ext))
+        meta = json.load(open(os.path.join(stage, uid + ".json")))
+        meta["uid"] = twin
+        json.dump(meta, open(os.path.join(stage, twin + ".json"), "w"))
+        return twin
+
+    def test_p1_1_interleaved_same_sha_first_published_file_survives(self):
+        uid, data, pb = self.ready()
+        twin = self.forge_twin(uid)  # hai phiên cùng sha256 (dựng tay: init đã không cho tạo)
+        app = self.restart()
+        out, started = [], []
+
+        def run_twin():
+            out.append(self.finish(twin, app=app))
+
+        def start_twin_inside_first_publication():  # B qua hết kiểm tra trước-khoá rồi chờ khoá công bố của A
+            t = threading.Thread(target=run_twin)
+            app.state.video_hooks.pop("moved")
+            t.start()
+            started.append(t)
+        app.state.video_hooks["moved"] = start_twin_inside_first_publication
+        st, res = self.finish(uid, app=app)
+        self.assertEqual(st, 200, res)
+        started[0].join(60)
+        self.assertEqual(out, [(409, dict(error="duplicate", id=res["id"]))])
+        self.assertEqual(open(os.path.join(self.d, "videos", f"{res['id']}-{res['v']}.mp4"), "rb").read(), data)
+        self.assertEqual(open(os.path.join(self.d, "videos", "posters", f"{res['id']}-{res['pv']}.jpg"), "rb").read(), pb)
+        self.assertEqual(self.get(f"/v/{res['id']}-{res['v']}.mp4")[2], data)
+        self.assertEqual([r[0] for r in self.vrows()], [res["id"]])
+        self.assertEqual(self.status(twin)[0], 404)  # phiên trùng đã được giải phóng
+
+    def test_p1_1_init_duplicate_check_is_serialized_with_publication(self):
+        uid, data, pb = self.ready()
+        app, holder = self.app, []
+
+        def init_mid_publication():  # init chen vào giữa lúc công bố: phải chờ khoá công bố, rồi thấy 409 (không tạo phiên thứ hai cùng sha)
+            app.state.video_hooks.pop("moved")
+            t = threading.Thread(target=lambda: holder.append(self.init(data)))
+            t.start()
+            holder.insert(0, t)
+        app.state.video_hooks["moved"] = init_mid_publication
+        st, res = self.finish(uid)
+        self.assertEqual(st, 200, res)
+        holder[0].join(60)
+        self.assertEqual(holder[1], (409, dict(error="duplicate", id=res["id"])))
+        self.assertEqual(len(app.state.video_sessions), 1)
+
+    def test_p1_1_rollback_never_touches_preexisting_foreign_file(self):
+        uid, data, pb = self.ready()
+        vid = hashlib.sha1(sha(data).encode()).hexdigest()[:16]
+        foreign = os.path.join(self.d, "videos", f"{vid}-{sha(data)[:10]}.mp4")
+        open(foreign, "wb").write(b"foreign content")
+        with self.assertRaises(Exception):
+            self.finish(uid)
+        self.assertEqual(open(foreign, "rb").read(), b"foreign content")
+        stage = os.path.join(self.d, "video-staging")
+        self.assertEqual(open(os.path.join(stage, uid + ".part"), "rb").read(), data)
+        self.assertEqual(open(os.path.join(stage, uid + ".poster"), "rb").read(), pb)
+        self.assertEqual(self.status(uid)[1]["state"], "ready")
+        self.assertEqual(self.vrows(), [])
+
+    def test_p1_1_rollback_after_db_failure_moves_back_only_own_files(self):
+        uid, data, pb = self.ready()
+        real = server.store.connect
+
+        def boom(d, init=True):
+            if init is False:
+                raise sqlite3.OperationalError("boom")
+            return real(d, init)
+        with mock.patch.object(server.store, "connect", boom), self.assertRaises(Exception):
+            self.finish(uid)
+        stage = os.path.join(self.d, "video-staging")
+        self.assertEqual(open(os.path.join(stage, uid + ".part"), "rb").read(), data)
+        self.assertEqual(os.listdir(os.path.join(self.d, "videos")), ["posters"])
+        self.assertEqual(json.load(open(os.path.join(stage, uid + ".json")))["state"], "uploading")
+        self.assertEqual(self.finish(uid)[0], 200)
+
+
+class CrashSafetyTests(RobustnessBase):
+    def test_p1_2_crash_after_publishing_saved_before_any_move(self):
+        self.assert_published_after_restart(*self.crash_finish("publishing_saved"))
+
+    def test_p1_2_crash_after_moves_before_db_commit(self):
+        uid, data, pb = self.crash_finish("moved")
+        self.assertEqual(self.vrows(), [])
+        self.assert_published_after_restart(uid, data, pb)
+
+    def test_p1_2_crash_after_commit_before_sidecar_save(self):
+        uid, data, pb = self.crash_finish("committed")
+        stage = os.path.join(self.d, "video-staging")
+        self.assertEqual(json.load(open(os.path.join(stage, uid + ".json")))["state"], "publishing")
+        self.assert_published_after_restart(uid, data, pb)
+
+    def test_p1_2_partial_move_rolls_forward(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        res = json.load(open(os.path.join(self.d, "video-staging", uid + ".json")))["result"]
+        os.replace(os.path.join(self.d, "video-staging", uid + ".part"), os.path.join(self.d, "videos", f"{res['id']}-{res['v']}.mp4"))  # mp4 đã sang, poster chưa
+        self.assert_published_after_restart(uid, data, pb)
+
+    def test_p1_2_old_uploading_sidecar_with_complete_final_files(self):
+        uid, data, pb = self.crash_finish("moved")
+        meta = os.path.join(self.d, "video-staging", uid + ".json")
+        s = json.load(open(meta))
+        s["state"], s["result"] = "uploading", None  # sidecar cũ hơn đĩa
+        json.dump(s, open(meta, "w"))
+        self.assert_published_after_restart(uid, data, pb)
+
+    def test_p1_2_corrupt_final_is_never_discarded_or_published(self):
+        uid, data, pb = self.crash_finish("moved")
+        res = json.load(open(os.path.join(self.d, "video-staging", uid + ".json")))["result"]
+        fmp4 = os.path.join(self.d, "videos", f"{res['id']}-{res['v']}.mp4")
+        open(fmp4, "ab").write(b"x")
+        self.restart()
+        self.assertTrue(os.path.exists(fmp4))
+        self.assertEqual(self.vrows(), [])
+        self.assertEqual(self.finish(uid)[0], 500)  # không công bố file sai hash, cũng không xoá nó
+
+    def test_p1_2_startup_never_discards_final_files(self):
+        _, res = self.publish()
+        junk = os.path.join(self.d, "videos", "f" * 16 + "-" + "0" * 10 + ".mp4")
+        open(junk, "wb").write(b"orphan")
+        self.restart()
+        self.assertTrue(os.path.exists(junk))
+        self.assertEqual(self.get(f"/v/{res['id']}-{res['v']}.mp4")[0], 200)
+
+    def test_p1_2_finish_after_clean_publish_survives_restart_not_404(self):
+        uid, res = self.publish()
+        self.restart()
+        self.assertEqual(self.finish(uid), (200, res))
+
+
+class DiskAccountingTests(RobustnessBase):
+    FLOOR = 5120 * 1024 ** 2
+
+    def disk(self, free):
+        return mock.patch.object(server.shutil, "disk_usage", return_value=types.SimpleNamespace(free=free, total=free * 2, used=0))
+
+    def photo(self):
+        return call(self.app, "POST", "/api/upload?name=p.jpg", headers=self.hdr(), body=jpeg_bytes(64, 48, (5, 6, 7)))[0]
+
+    def test_p1_3_photo_upload_subtracts_outstanding_video_reservation(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        with self.disk(self.FLOOR + 10):
+            self.assertEqual(self.photo(), 507)  # còn trên ngưỡng 10 byte nhưng phiên video còn nợ ~4 KB
+        self.chunk(uid, 0, data)  # nhận đủ → hết nợ
+        with self.disk(self.FLOOR + 10):
+            self.assertEqual(self.photo(), 200)
+
+    def test_p1_3_chunk_admission_checks_chunk_and_other_sessions(self):
+        d1, d2 = make_mp4(seed=b"1"), make_mp4(seed=b"2")
+        u1, u2 = self.init(d1)[1]["uid"], self.init(d2)[1]["uid"]
+        with self.disk(self.FLOOR + len(d1) + len(d2) - 1):
+            self.assertEqual(self.chunk(u1, 0, d1)[0], 507)
+        with self.disk(self.FLOOR + len(d1) + len(d2)):
+            self.assertEqual(self.chunk(u1, 0, d1)[0], 200)
+        with self.disk(self.FLOOR + 99):  # u1 đã đủ nên không còn nợ: chỉ cần chừa đúng độ dài chunk
+            self.assertEqual(self.chunk(u2, 0, d2[:100])[0], 507)
+
+    def test_p1_3_chunk_alone_needs_its_own_length(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        with self.disk(self.FLOOR + 99):
+            self.assertEqual(self.chunk(uid, 0, data[:100])[0], 507)
+        with self.disk(self.FLOOR + 100):
+            self.assertEqual(self.chunk(uid, 0, data[:100])[0], 200)
+
+    def test_p1_3_poster_put_checks_disk(self):
+        uid = self.session(make_mp4())
+        pb = jpeg_bytes()
+        with self.disk(self.FLOOR + len(pb) - 1):
+            self.assertEqual(self.poster(uid, pb)[0], 507)
+        self.assertFalse(self.status(uid)[1]["poster"])
+        with self.disk(self.FLOOR + len(pb)):
+            self.assertEqual(self.poster(uid, pb)[0], 200)
+
+    def test_p1_3_init_counts_other_reservations(self):
+        d1, d2 = make_mp4(seed=b"a"), make_mp4(seed=b"b")
+        self.init(d1)
+        with self.disk(self.FLOOR + len(d1) + len(d2) - 1):
+            self.assertEqual(self.init(d2)[0], 507)
+        with self.disk(self.FLOOR + len(d1) + len(d2)):
+            self.assertEqual(self.init(d2)[0], 200)
+
+
+class CleanupRaceTests(RobustnessBase):
+    def test_p2_6_cleanup_skips_busy_session_then_removes_it(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        part = os.path.join(self.d, "video-staging", uid + ".part")
+        with server_lock(self.app, uid):
+            with mock.patch.object(server.time, "time", return_value=server.time.time() + 25 * 3600):
+                self.app.state.video_cleanup(True)
+            self.assertIn(uid, self.app.state.video_sessions)
+            self.assertTrue(os.path.exists(part))
+        with mock.patch.object(server.time, "time", return_value=server.time.time() + 25 * 3600):
+            self.app.state.video_cleanup(True)
+        self.assertNotIn(uid, self.app.state.video_sessions)
+        self.assertFalse(os.path.exists(part))
+
+    def test_p2_6_publishing_session_never_expires(self):
+        uid, data, pb = self.crash_finish("publishing_saved")
+        with mock.patch.object(server.time, "time", return_value=server.time.time() + 72 * 3600):
+            self.app.state.video_cleanup(True)
+        self.assertIn(uid, self.app.state.video_sessions)
+        stage = os.path.join(self.d, "video-staging")
+        self.assertTrue(all(os.path.exists(os.path.join(stage, uid + e)) for e in (".json", ".part", ".poster")))
+        with mock.patch.object(server.time, "time", return_value=server.time.time() + 72 * 3600):
+            app2 = make_app(self.d)  # cả khi khởi động sau 3 ngày
+        self.assertEqual(len(json.loads(gallery(app2)[2])["videos"]), 1)
+
+    def test_p2_6_chunk_cannot_resurrect_session_deleted_before_lock(self):
+        data = make_mp4()
+        uid = self.init(data)[1]["uid"]
+        app = self.app
+
+        def expire_and_clean():
+            app.state.video_sessions[uid]["expires"] = 1
+            app.state.video_cleanup(True)
+        app.state.video_hooks["chunk_before_lock"] = expire_and_clean
+        self.assertEqual(self.chunk(uid, 0, data[:50])[0], 404)
+        stage = os.path.join(self.d, "video-staging")
+        self.assertEqual(os.listdir(stage), [])
+
+    def test_p2_6_finish_and_poster_cannot_resurrect_either(self):
+        uid, data, pb = self.ready()
+        app = self.app
+
+        def expire_and_clean():
+            app.state.video_sessions[uid]["expires"] = 1
+            app.state.video_cleanup(True)
+        app.state.video_hooks["finish_before_lock"] = expire_and_clean
+        self.assertEqual(self.finish(uid)[0], 404)
+        self.assertEqual(os.listdir(os.path.join(self.d, "video-staging")), [])
+        self.assertEqual(os.listdir(os.path.join(self.d, "videos")), ["posters"])
+        self.assertEqual(self.vrows(), [])
+
+    def test_p2_6_cleanup_runs_on_every_admin_video_request(self):
+        a = self.init(make_mp4(seed=b"A"))[1]["uid"]
+        b = self.init(make_mp4(seed=b"B"))[1]["uid"]
+        self.app.state.video_sessions[a]["expires"] = 1
+        self.assertEqual(self.status(b)[0], 200)  # request khác phiên → vẫn dọn phiên hết hạn
+        self.assertNotIn(a, self.app.state.video_sessions)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "video-staging", a + ".part")))
+
+    def test_security_poster_put_is_busy_while_session_lock_held(self):
+        uid = self.session(make_mp4())
+        with server_lock(self.app, uid):
+            self.assertEqual(self.poster(uid, jpeg_bytes())[0:2], (409, dict(error="busy", offset=server_offset(self.app, uid))))
+        self.assertEqual(self.poster(uid, jpeg_bytes())[0], 200)
+
+
+def server_offset(app, uid):
+    return app.state.video_sessions[uid]["offset"]
+
+
+class DurabilityTests(RobustnessBase):
+    def test_p2_7_directories_are_fsynced(self):
+        calls = []
+        real = server.fsync_path
+        with mock.patch.object(server, "fsync_path", lambda p: (calls.append(os.path.basename(p)), real(p))[1]):
+            data = make_mp4()
+            uid = self.init(data)[1]["uid"]
+            self.assertIn("video-staging", calls)  # sau khi đổi tên sidecar
+            calls.clear()
+            self.chunk(uid, 0, data)
+            self.assertIn("video-staging", calls)
+            calls.clear()
+            self.poster(uid, jpeg_bytes())
+            self.assertIn("video-staging", calls)
+            calls.clear()
+            self.assertEqual(self.finish(uid)[0], 200)
+        self.assertTrue({"videos", "posters", "video-staging"} <= set(calls), calls)
+
+    def test_p2_7_crash_between_poster_write_and_sidecar_save_keeps_old_poster(self):
+        data = make_mp4()
+        uid = self.session(data)
+        p1, p2 = jpeg_bytes(color=(1, 2, 3)), jpeg_bytes(color=(200, 100, 50))
+        self.poster(uid, p1)
+        self.app.state.video_hooks["poster_written"] = crash
+        with self.assertRaises(Crash):
+            self.poster(uid, p2)
+        self.restart()
+        self.assertTrue(self.status(uid)[1]["poster"])
+        self.assertFalse(os.path.exists(os.path.join(self.d, "video-staging", uid + ".poster.new")))
+        st, res = self.finish(uid)
+        self.assertEqual((st, res["pv"]), (200, sha(p1)[:10]))
+        self.assertEqual(open(os.path.join(self.d, "videos", "posters", f"{res['id']}-{res['pv']}.jpg"), "rb").read(), p1)
+
+    def test_p2_7_crash_after_sidecar_save_before_rename_completes_new_poster(self):
+        data = make_mp4()
+        uid = self.session(data)
+        p1, p2 = jpeg_bytes(color=(1, 2, 3)), jpeg_bytes(color=(200, 100, 50))
+        self.poster(uid, p1)
+        self.app.state.video_hooks["poster_saved"] = crash
+        with self.assertRaises(Crash):
+            self.poster(uid, p2)
+        self.restart()
+        self.assertFalse(os.path.exists(os.path.join(self.d, "video-staging", uid + ".poster.new")))
+        st, res = self.finish(uid)
+        self.assertEqual((st, res["pv"]), (200, sha(p2)[:10]))
+        self.assertEqual(open(os.path.join(self.d, "videos", "posters", f"{res['id']}-{res['pv']}.jpg"), "rb").read(), p2)
+
+    def test_p2_7_first_poster_crash_before_sidecar_leaves_no_poster(self):
+        uid = self.session(make_mp4())
+        self.app.state.video_hooks["poster_written"] = crash
+        with self.assertRaises(Crash):
+            self.poster(uid, jpeg_bytes())
+        self.restart()
+        self.assertFalse(self.status(uid)[1]["poster"])
+        self.assertEqual(self.finish(uid), (409, dict(error="no_poster")))
+
+    def test_p2_7_stale_psha_in_sidecar_is_recomputed_from_bytes(self):
+        uid = self.session(make_mp4())
+        pb = jpeg_bytes()
+        self.poster(uid, pb)
+        meta = os.path.join(self.d, "video-staging", uid + ".json")
+        s = json.load(open(meta))
+        s["psha"] = "0" * 64
+        json.dump(s, open(meta, "w"))
+        self.restart()
+        self.assertEqual(json.load(open(meta))["psha"], sha(pb))
+        st, res = self.finish(uid)
+        self.assertEqual((st, res["pv"]), (200, sha(pb)[:10]))
+
+    def test_p2_7_finish_uses_actual_poster_bytes_not_sidecar_hash(self):
+        uid = self.session(make_mp4())
+        pb = jpeg_bytes()
+        self.poster(uid, pb)
+        self.app.state.video_sessions[uid]["psha"] = "f" * 64
+        st, res = self.finish(uid)
+        self.assertEqual((st, res["pv"]), (200, sha(pb)[:10]))
+
+
+class EventTests(VBase):
+    def setUp(self):
+        super().setUp()
+        self.a = self.publish(make_mp4(seed=b"a"), ev=E17, title="a")[1]
+        self.b = self.publish(make_mp4(seed=b"b"), ev=E4, title="b")[1]
+
+    def ev(self, vid, body, headers=None, ctype="application/json", raw=None):
+        return post(self.app, f"/api/admin/video/{vid}/event", body, headers=headers, ctype=ctype, raw=raw)
+
+    def order(self):
+        return [(r[0], r[7], r[8]) for r in self.vrows()]
+
+    def test_auth_origin_and_format(self):
+        u = f"/api/admin/video/{self.a['id']}/event"
+        body = json.dumps({"ev": None}).encode()
+        jh = {"Content-Type": "application/json"}
+        self.assertEqual(call(self.app, "POST", u, headers=jh, body=body)[0], 401)
+        self.assertEqual(call(self.app, "POST", u, headers=dict(jh, **{"X-Album-Token": "bad"}), body=body)[0], 401)
+        self.assertEqual(self.ev(self.a["id"], {"ev": None}, headers=self.hdr(Origin="http://evil.example"))[0], 403)
+        self.assertEqual(self.ev(self.a["id"], {"ev": None}, headers=self.hdr(**{"Sec-Fetch-Site": "cross-site"}))[0], 403)
+        self.assertEqual(self.ev(self.a["id"], {"ev": None}, headers=self.hdr(Origin="http://localhost"))[0], 200)
+        self.assertEqual(self.ev(self.a["id"], None, ctype="text/plain", raw=b'{"ev":null}')[0], 400)
+        self.assertEqual(self.ev(self.a["id"], None, raw=b"[1]")[0], 400)
+        self.assertEqual(self.ev(self.a["id"], {"ev": None, "pad": "x" * 5000})[0], 413)
+        off = make_app(tempfile.mkdtemp(), admin_token="")
+        self.assertEqual(post(off, u, {"ev": None}, headers={})[0], 403)
+
+    def test_bad_id_404_and_bad_ev_400(self):
+        for vid in ("xyz", "0" * 16, "0" * 15, "G" * 16, self.a["id"].upper(), "0" * 17):
+            with self.subTest(vid=vid):
+                self.assertEqual(self.ev(vid, {"ev": E4})[0], 404)
+        for body in ({"ev": "2026-01-01"}, {"ev": 3}, {"ev": ["x"]}, {"ev": ""}, {}, {"event": E4}, {"ev": True}):
+            with self.subTest(body=body):
+                self.assertEqual(self.ev(self.a["id"], body)[0], 400)
+        self.assertEqual(self.order(), [(self.b["id"], E4, 1), (self.a["id"], E17, 1)])
+
+    def test_change_to_null_and_back_updates_gallery_and_etag(self):
+        seen = {gallery(self.app)[1]["etag"]}
+        st, _, out, _ = self.ev(self.a["id"], {"ev": None})
+        self.assertEqual((st, json.loads(out)), (200, dict(id=self.a["id"], ev=None)))
+        self.assertEqual(self.order(), [(self.b["id"], E4, 1), (self.a["id"], None, 1)])
+        e1 = gallery(self.app)[1]["etag"]
+        self.assertNotIn(e1, seen)
+        seen.add(e1)
+        st, _, out, _ = self.ev(self.a["id"], {"ev": E4})
+        self.assertEqual((st, json.loads(out)), (200, dict(id=self.a["id"], ev=E4)))
+        self.assertEqual(self.order(), [(self.a["id"], E4, 1), (self.b["id"], E4, 1)])  # cùng ngày + cùng sort: theo created
+        e2 = gallery(self.app)[1]["etag"]
+        self.assertNotIn(e2, seen)
+        self.assertEqual(gallery(self.app, {"If-None-Match": e1})[0], 200)  # validator cũ → 200
+        self.ev(self.a["id"], {"ev": E17})
+        self.assertEqual(self.order(), [(self.b["id"], E4, 1), (self.a["id"], E17, 1)])
+
+    def test_idempotent_and_sort_kept(self):
+        self.ev(self.a["id"], {"ev": None})
+        e1 = gallery(self.app)[1]["etag"]
+        self.assertEqual(self.ev(self.a["id"], {"ev": None})[0], 200)
+        self.assertEqual(gallery(self.app)[1]["etag"], e1)
+        self.assertEqual(self.order()[1][2], 1)
+        db = sqlite3.connect(store.db_path(self.d))
+        self.assertEqual(db.execute("SELECT count(*) FROM videos").fetchone()[0], 2)
+        db.close()
+
+    def test_cdn_host_cannot_reach_it(self):
+        st, _, _, _ = call(self.app, "POST", f"/api/admin/video/{self.a['id']}/event", host="cdn.example.com",
+                           headers=dict(self.hdr(), **{"Content-Type": "application/json"}), body=b'{"ev":null}')
+        self.assertEqual(st, 404)
+        self.assertEqual(self.order()[1][1], E17)
+
+    def test_no_other_mutation_routes(self):
+        for m, u in (("DELETE", f"/api/admin/video/{self.a['id']}"), ("POST", f"/api/admin/video/{self.a['id']}/hide"),
+                     ("POST", f"/api/admin/video/{self.a['id']}/delete")):
+            self.assertIn(call(self.app, m, u, headers=self.hdr())[0], (404, 405))
 
 
 if __name__ == "__main__":

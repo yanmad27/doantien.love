@@ -79,11 +79,13 @@ def _tkhd(buf, s, e):
     mo, wo = (40, 76) if ver == 0 else (52, 88) if ver == 1 else (None, None)
     if mo is None or e - s < wo + 8:
         raise Mp4Error("tkhd không hợp lệ")
-    a, b, _, c, d = struct.unpack_from(">iiiii", buf, s + mo)
+    a, b, u, c, d, v, x, y, w9 = struct.unpack_from(">9i", buf, s + mo)
+    one = 0x10000
+    if (u, v, x, y, w9) != (0, 0, 0, 0, 0x40000000) or (a, b, c, d) not in (
+            (one, 0, 0, one), (0, one, -one, 0), (-one, 0, 0, -one), (0, -one, one, 0)):  # chỉ đơn vị và xoay đúng 90/180/270
+        raise Mp4Error("ma trận tkhd không phải góc xoay chuẩn (0/90/180/270)")
     w, h = _u32(buf, s + wo) / 65536.0, _u32(buf, s + wo + 4) / 65536.0
-    dw = abs(a * w + c * h) / 65536.0
-    dh = abs(b * w + d * h) / 65536.0
-    return dw, dh
+    return (h, w) if a == 0 else (w, h)
 
 
 def _trak(buf, s, e):
@@ -105,9 +107,22 @@ def _trak(buf, s, e):
     if len(stsd) != 1:
         raise Mp4Error("thiếu stsd")
     ss, se = stsd[0]
-    if se - ss < 16 or _u32(buf, ss + 4) < 1:
+    if se - ss < 8:
+        raise Mp4Error("stsd quá ngắn")
+    count, pos, codecs = _u32(buf, ss + 4), ss + 8, []
+    if count < 1:
         raise Mp4Error("stsd rỗng")
-    codec = bytes(buf[ss + 12:ss + 16])
+    for _ in range(count):  # duyệt đủ entry_count mẫu; mỗi mẫu ≥ 16 byte (header 8 + reserved 6 + data_reference_index 2) và nằm trong stsd
+        if se - pos < 16:
+            raise Mp4Error("stsd có ít mẫu hơn entry_count hoặc bị cắt cụt")
+        size = _u32(buf, pos)
+        if size < 16 or pos + size > se:
+            raise Mp4Error("kích thước mẫu trong stsd không hợp lệ")
+        codecs.append(bytes(buf[pos + 4:pos + 8]))
+        pos += size
+    if pos != se:
+        raise Mp4Error("stsd có dữ liệu thừa sau các mẫu")
+    codec = codecs
     return kind, codec, _tkhd(buf, *tk[0]), _fullbox_times(buf, *mh[0])
 
 
@@ -131,11 +146,14 @@ def parse_moov(buf):
         raise Mp4Error("cần đúng một track video")
     if len(audio) > 1:
         raise Mp4Error("chỉ nhận tối đa một track âm thanh")
-    codec, (dw, dh), (vts, vdur) = video[0]
-    if codec not in (b"avc1", b"avc3"):
-        raise Mp4Error(f"codec video {codec.decode('latin-1')!r} không được hỗ trợ (cần H.264: avc1/avc3)")
-    if audio and audio[0] != b"mp4a":
-        raise Mp4Error(f"codec âm thanh {audio[0].decode('latin-1')!r} không được hỗ trợ (cần mp4a)")
+    codecs, (dw, dh), (vts, vdur) = video[0]
+    for c in codecs:
+        if c not in (b"avc1", b"avc3"):
+            raise Mp4Error(f"codec video {c.decode('latin-1')!r} không được hỗ trợ (cần H.264: avc1/avc3)")
+    for c in audio[0] if audio else ():
+        if c != b"mp4a":
+            raise Mp4Error(f"codec âm thanh {c.decode('latin-1')!r} không được hỗ trợ (cần mp4a)")
+    codec = codecs[0]
     w, h = int(round(dw)), int(round(dh))
     if not (0 < w <= MAX_DIM and 0 < h <= MAX_DIM):
         raise Mp4Error("kích thước hình không hợp lệ")
