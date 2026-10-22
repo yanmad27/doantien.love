@@ -173,6 +173,26 @@ Mọi thứ nằm trong volume `album-data` (`/data`: `originals/`, `previews/`,
 - Đợt 17/10 ≈ 1637 ảnh × ~8 MB ≈ 13 GB: tải lên theo từng lô (vài trăm ảnh mỗi lần chọn) và để tab mở tới khi "Hoàn tất"; sau khi Xử lý xong, lưới /manage tự làm mới (không cần tải lại trang). Diễn tập trước: `album/dev/realrun/`.
 - Sau deploy: `GET /api/gallery` có `events` và mỗi hàng có 9 phần tử; chưa tải ảnh 17/10 thì `events[1].n` = 0.
 
+## 9d. Video (chủ nhà tải lên MP4 đã xử lý sẵn)
+
+Chỉ thêm, không đổi env/cấu hình/hạ tầng. Hằng số nằm trong code (`server.py`): `VIDEO_MAX_BYTES` 2 GiB mỗi file, `VIDEO_CHUNK_MAX` 16 MiB mỗi request (client mặc định 8 MiB, có thể giảm dần tới 1 MiB khi timeout), `POSTER_MAX_BYTES` 2 MiB và poster ≤ 4096 px mỗi cạnh, `MAX_VIDEO_SESSIONS` 2 phiên chưa xong cùng lúc, phiên hết hạn sau 24 giờ.
+
+**Endpoint (đều cần chủ nhà + kiểm Origin/Host như các POST khác; JSON ≤ 4 KB):**
+- `POST /api/admin/video/init` `{name (.mp4), size, sha256, ev (4/10, 17/10 hoặc null = không thuộc ngày nào), title ≤ 120}` → `{uid, offset, size, chunk_max, expires}`. Trùng sha256 đã công bố → 409 `{error:"duplicate", id}`; init lại cùng sha256 khi phiên chưa xong → trả lại phiên đó (nối lại); quá 2 phiên → 429; thiếu chỗ đĩa (giữ ngưỡng `ALBUM_MIN_FREE_MB`) → 507.
+- `GET /api/admin/video/{uid}` → `{uid, offset, size, poster, state: uploading|ready|published, id?, expires}`.
+- `PUT /api/admin/video/{uid}/chunk?off=N` (thân thô ≤ 16 MiB): chỉ nhận khi `N` = offset đã ghi nhận, ngược lại 409 `{offset}`; ghi + fsync rồi mới tăng offset, thân ngắt giữa chừng không để lại byte nào.
+- `PUT /api/admin/video/{uid}/poster` (JPEG thô ≤ 2 MiB, được giải mã kiểm tra; PUT lại = thay).
+- `POST /api/admin/video/{uid}/finish`: kiểm sha256 toàn file + duyệt box MP4 (moov trước mdat, đúng một track H.264 avc1/avc3, tối đa một track mp4a; không đọc mdat). Sai → 422 kèm `reason` và phiên bị xoá. Đúng → công bố nguyên tử, idempotent: `{id, v, pv, w, h, duration, title, ev}`.
+- Chưa có xoá/ẩn video trong bản này.
+
+**Lưu trữ:** `DATA_DIR/video-staging/` (phiên dở dang: `{uid}.part/.poster/.json`; KHÔNG phải `tmp/` nên sống qua restart; phiên hết hạn bị dọn khi khởi động và khi có request video), `DATA_DIR/videos/{id}-{v}.mp4`, `DATA_DIR/videos/posters/{id}-{pv}.jpg`, bảng SQLite `videos`. Video không tính vào hạn mức ảnh `ALBUM_MAX_TOTAL_GB`; staging + video bị chặn bởi ngưỡng đĩa trống và 2 GiB × 2 phiên. `index_photos.py --rebuild` giữ nguyên các dòng `videos` (file nằm ngoài những gì rebuild xoá). `--rebuild --discard-owner-state` thì bỏ cả các dòng `videos` (file vẫn còn trên đĩa).
+
+**Phục vụ:** `GET|HEAD /v/{id}-{v}.mp4` (video/mp4) và `/v/{id}-{pv}.jpg`, có Range (200/206/416, `Accept-Ranges: bytes`), `Cache-Control: public, max-age=31536000, immutable`, không nén. Query hoặc sai tên/phiên bản → 404 no-store. `/v/` KHÔNG nằm trong `PUBLIC_PREFIXES`: chỉ host của app (`ALBUM_APP_HOSTS`) phục vụ, host CDN trả 404 — router CDN không được thêm `/v/` (đó là thay đổi Traefik).
+
+**Cloudflare:** video đi qua tên miền chính đã proxy qua Cloudflare. Điều khoản của gói Cloudflare về phát video qua CDN cần chủ nhà xác nhận trước khi bật cho khách; mỗi request tải lên ≤ 16 MiB nên nằm dưới giới hạn ~100 MB/request và timeout ~60 s của Traefik.
+
+**Rollback = additive:** chỉ có bảng mới `videos` (`CREATE TABLE IF NOT EXISTS`, không ALTER bảng cũ), thư mục mới và route mới. Quay về bản trước: bản cũ bỏ qua bảng/thư mục, `/api/gallery` cũ không có khoá `videos`. Không cần xoá gì.
+
 ## 10. Kiểm tra sau deploy
 
 1. Logs không có `LỖI:`; `curl https://album.doantien.love/healthz` trả `ok:true`.

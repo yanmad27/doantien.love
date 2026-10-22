@@ -42,6 +42,7 @@ def main():
     if not os.path.isdir(root):
         sys.exit(f"Không thấy thư mục ảnh: {root}")
     owner_state = ([], [], [])
+    video_rows = []
     if a.rebuild:
         # Sao DB cũ (+ -wal/-shm) sang index.db.bak-<ts> TRƯỚC, đọc ảnh đã ẩn + cài đặt từ bản sao trên đĩa (không có đoạn chỉ nằm trong RAM);
         # DB cũ chỉ bị xoá sau khi đọc được. Hỏng/không đọc được → dừng, trỏ tới bản sao, trừ khi --discard-owner-state.
@@ -56,6 +57,7 @@ def main():
                     shutil.copy2(dbf + suffix, bak + suffix)
             try:
                 owner_state = store.keep_owner_state(bak)
+                video_rows = store.keep_videos(bak)
             except sqlite3.DatabaseError as e:
                 if not a.discard_owner_state:
                     sys.exit(f"DỪNG: không đọc được trạng thái ẩn/hiện + cài đặt + ngày (4/10, 17/10) của ảnh từ chỉ mục cũ ({e}). Chưa xoá gì; bản sao: {bak}. "
@@ -67,6 +69,7 @@ def main():
                     os.remove(dbf + suffix)
     db = store.connect(a.data_dir)
     store.restore_owner_state(db, *owner_state)
+    store.restore_videos(db, video_rows)
     old_root = db.execute("SELECT value FROM meta WHERE key='photos_root'").fetchone()
     if old_root and old_root[0] != root:
         sys.exit(f"Chỉ mục này lập cho {old_root[0]}, không phải {root}. "
