@@ -304,7 +304,7 @@ try:
         pg.wait_for_timeout(400)
         st1 = pg.evaluate("({ pending: gMain.pending, first: gMain.first, gen: gMain.gen })")
         check(st0 == st1 and st1["first"] is True, f"callback của lưới cũ không đổi pending/first của lưới mới ({st0} → {st1})")
-        check(pg.evaluate("[...document.querySelectorAll('#vg-main img.on')].every(i => (i.currentSrc || '').length === 0 || true)") and pg.evaluate("gMain.iq.run") <= 6, "hàng đợi không vượt 6 sau khi đổi lưới")
+        check(pg.evaluate("document.querySelectorAll('#vg-main img.on').length") == 0 and pg.evaluate("gMain.iq.run") <= 6, "ảnh cũ nhả muộn không đánh dấu ô nào của lưới mới là đã tải; hàng đợi không vượt 6")
         ctx.close()
 
         # 5c) ảnh treo quá 4 s vẫn không vượt 6 yêu cầu top cùng lúc
